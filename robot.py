@@ -52,6 +52,31 @@ class Robot:
         self.odom_theta = math.atan2(math.sin(self.odom_theta), math.cos(self.odom_theta))
         # 旋转在原地，不改变位置
         # 记录轨迹（仅当旋转也想记录，可选；此处不记录纯旋转的位移，因为位置未变）
+        
+    def move_to(self, target_x, target_y):
+        """
+        移动到指定的目标点(target_x, target_y)。
+        
+        注意：此方法假设机器人已经朝向目标点方向，
+        即在调用此方法前应先调用rotate使机器人朝向目标。
+        
+        返回实际移动的距离。
+        """
+        # 计算目标点的方向和距离
+        dx = target_x - self.x
+        dy = target_y - self.y
+        desired_theta = math.atan2(dy, dx)
+        distance = math.hypot(dx, dy)
+        
+        # 确保机器人朝向与目标方向一致（允许小误差）
+        angle_diff = abs(self.theta - desired_theta)
+        angle_diff = min(angle_diff, 2*math.pi - angle_diff)
+        if angle_diff > 0.1:  # 如果偏离超过0.1弧度（约5.7度），发出警告
+            print(f"警告：机器人朝向({self.theta:.2f})与目标方向({desired_theta:.2f})不一致，可能导致移动误差")
+        
+        # 执行移动
+        self.move(distance)
+        return distance
 
     def get_pose(self):
         """获取机器人真实位姿 (x, y, theta)。"""

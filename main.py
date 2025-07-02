@@ -25,6 +25,9 @@ def main():
     start_x, start_y = maze.start
     # 初始朝向设为0（朝向x正方向）
     start_pose = (start_x, start_y, 0.0)
+    # 安全移动参数
+    safety_distance_factor = 0.8  # 移动距离缩短为原来的80%，保持安全距离
+    min_safe_distance = 0.2  # 最小安全距离，小于此值时不缩短距离（单位：米）
     # 2. 初始化机器人、传感器、SLAM等模块
     robot = Robot(start_pose, odom_noise=(0.01, math.radians(1)))  # 设置一定里程计噪声
     lidar = Lidar(maze.walls, max_range=12.0, angle_resolution=1.0, noise=0.01)
@@ -98,11 +101,28 @@ def main():
                     slam.update((0.0, dtheta_odom), scan)
                     # 更新可视化
                     viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
-                # 前进到目标格中心
+                # 前进到目标格中心，但缩短距离以保持安全
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 if distance > 0:
+                    # 如果距离很小，则直接使用原始距离；否则应用安全系数
+                    if distance < min_safe_distance:
+                        # 目标距离很小时，使用原始距离，不缩短
+                        safe_distance = distance
+                        safe_target_x = target_x
+                        safe_target_y = target_y
+                    else:
+                        # 计算缩短后的安全目标点
+                        safe_distance = distance * safety_distance_factor
+                        # 使用目标方向计算安全目标点
+                        safe_target_x = robot.x + (target_x - robot.x) * safety_distance_factor
+                        safe_target_y = robot.y + (target_y - robot.y) * safety_distance_factor
+                    
+                    # 计算到安全目标点的实际距离
+                    actual_distance = math.hypot(safe_target_x - robot.x, safe_target_y - robot.y)
+                    
+                    # 执行移动
                     old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
-                    robot.move(distance)
+                    robot.move(actual_distance)  # 移动到安全位置
                     # 计算里程计距离增量（直线移动，朝向不变）
                     d_trans = math.hypot(robot.odom_x - old_odom_x, robot.odom_y - old_odom_y)
                     scan = lidar.scan(robot.get_pose())
@@ -137,8 +157,16 @@ def main():
                 viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
             distance = math.hypot(target_x - robot.x, target_y - robot.y)
             if distance > 1e-6:
+                # 缩短移动距离，保持安全距离
+                safe_distance = distance * safety_distance_factor
+                # 计算安全的目标位置 - 使用目标方向而不是当前朝向
+                direction_to_target = math.atan2(target_y - robot.y, target_x - robot.x)
+                safe_target_x = robot.x + safe_distance * math.cos(direction_to_target)
+                safe_target_y = robot.y + safe_distance * math.sin(direction_to_target)
+                
+                # 执行移动
                 old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
-                robot.move(distance)
+                robot.move(safe_distance)
                 d_trans = math.hypot(robot.odom_x - old_odom_x, robot.odom_y - old_odom_y)
                 scan = lidar.scan(robot.get_pose())
                 slam.update((d_trans, 0.0), scan)
