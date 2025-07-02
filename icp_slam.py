@@ -101,9 +101,11 @@ class ICPSlam:
         
         # 可以考虑在GPU上进行这部分计算，但由于涉及多重条件判断，目前在CPU上处理
         pts_local = []
+        # 计算80%的最大范围阈值
+        far_threshold = self.get_max_range() * 0.8
         for i, dist in enumerate(scan):
-            if dist >= self.get_max_range():
-                # 距离为最大范围，未击中障碍，跳过作为特征点（不加入ICP匹配）
+            if dist >= self.get_max_range() or dist > far_threshold:
+                # 距离为最大范围或超过80%最大范围，未击中障碍或距离太远，跳过作为特征点（不加入ICP匹配）
                 continue
             angle = self.theta + angles_np[i]
             px = self.x + dist * math.cos(angle)
@@ -221,6 +223,8 @@ class ICPSlam:
         # 获取机器人在栅格中的索引
         rx = int((self.x - self.min_x) / self.resolution)
         ry = int((self.y - self.min_y) / self.resolution)
+        # 80%的最大范围阈值
+        far_threshold = self.get_max_range() * 0.8
         # 更新占据栅格地图，根据扫描结果
         for i, dist in enumerate(scan):
             beam_angle = self.theta + (angles_np[i] if 'angles_np' in locals() else math.radians(i))
@@ -247,8 +251,8 @@ class ICPSlam:
             if ty > max_y_idx: ty = max_y_idx
             # 获取栅格直线路径
             line = self._bresenham(rx, ry, tx, ty)
-            if dist < self.get_max_range():
-                # 有障碍命中：最后一点为障碍
+            if dist < self.get_max_range() and dist <= far_threshold:
+                # 有障碍命中且在80%范围内：最后一点为障碍
                 for cell in line[:-1]:
                     cx, cy = cell
                     # 如果当前未知，则标记为空闲

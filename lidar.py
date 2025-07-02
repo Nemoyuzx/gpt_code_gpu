@@ -65,3 +65,18 @@ class Lidar:
                 measured_dist = self.max_range
             distances.append(measured_dist)
         return distances
+    
+        
+    def is_far_range(self, dist, threshold_ratio=0.8):
+        """
+        判断测量距离是否超出最大探测范围的指定比例
+        
+        参数:
+        - dist: 测量距离
+        - threshold_ratio: 阈值比例，默认为0.8（80%）
+        
+        返回:
+        - True: 如果距离超出最大范围的threshold_ratio
+        - False: 如果距离在范围内
+        """
+        return dist >= self.max_range * threshold_ratio
