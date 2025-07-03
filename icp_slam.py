@@ -2,6 +2,9 @@ import math
 import numpy as np
 import torch  # 引入 PyTorch 库以使用张量和GPU加速
 
+#超过最大范围比例
+MAX_RANGE_FACTOR = 0.6  # 超过最大范围的比例阈值，用于忽略远距离点
+
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
     def __init__(self, maze, init_pose):
@@ -102,7 +105,7 @@ class ICPSlam:
         # 可以考虑在GPU上进行这部分计算，但由于涉及多重条件判断，目前在CPU上处理
         pts_local = []
         # 计算80%的最大范围阈值
-        far_threshold = self.get_max_range() * 0.8
+        far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
         for i, dist in enumerate(scan):
             if dist >= self.get_max_range() or dist > far_threshold:
                 # 距离为最大范围或超过80%最大范围，未击中障碍或距离太远，跳过作为特征点（不加入ICP匹配）
@@ -224,7 +227,7 @@ class ICPSlam:
         rx = int((self.x - self.min_x) / self.resolution)
         ry = int((self.y - self.min_y) / self.resolution)
         # 80%的最大范围阈值
-        far_threshold = self.get_max_range() * 0.8
+        far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
         # 更新占据栅格地图，根据扫描结果
         for i, dist in enumerate(scan):
             beam_angle = self.theta + (angles_np[i] if 'angles_np' in locals() else math.radians(i))
