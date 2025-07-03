@@ -226,6 +226,91 @@ class FrontierExplorer:
         
         return None  # 无法找到路径
     
+    def plan_path_no_safety(self, occupancy, start, goal):
+        """
+        使用A*算法规划从start到goal的路径，不考虑安全距离，支持8方向移动（包括对角线）。
+        适用于返回起点时的紧急路径规划。
+        start: (x_idx, y_idx), goal: (x_idx, y_idx)
+        返回路径单元格坐标列表，包含start和goal。若无法到达返回None。
+        """
+        sx, sy = start
+        gx, gy = goal
+        if start == goal:
+            return [start]
+        
+        h, w = occupancy.shape
+        
+        # A*算法数据结构
+        open_set = []
+        heapq.heappush(open_set, (0.0, sx, sy))
+        
+        came_from = {}
+        g_score = {(sx, sy): 0.0}
+        f_score = {(sx, sy): self._heuristic((sx, sy), (gx, gy))}
+        
+        closed_set = set()
+        
+        # 8个方向的移动，包括对角线
+        directions = [
+            (-1, 0, 1.0),   # 左
+            (1, 0, 1.0),    # 右
+            (0, -1, 1.0),   # 上
+            (0, 1, 1.0),    # 下
+            (-1, -1, 1.414), # 左上对角线
+            (1, -1, 1.414),  # 右上对角线
+            (-1, 1, 1.414),  # 左下对角线
+            (1, 1, 1.414)    # 右下对角线
+        ]
+        
+        while open_set:
+            _, x, y = heapq.heappop(open_set)
+            
+            if (x, y) in closed_set:
+                continue
+                
+            closed_set.add((x, y))
+            
+            if (x, y) == (gx, gy):
+                # 重建路径
+                path = []
+                current = (x, y)
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(start)
+                path.reverse()
+                return path
+            
+            for dx, dy, cost in directions:
+                nx, ny = x + dx, y + dy
+                
+                # 检查边界
+                if not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                
+                # 只检查是否为可通行区域，不考虑安全距离
+                if occupancy[ny, nx] != 0:
+                    continue
+                
+                # 对于对角线移动，检查是否会穿过墙角
+                if abs(dx) == 1 and abs(dy) == 1:
+                    # 检查两个相邻的直角方向是否可通行
+                    if (occupancy[y, x + dx] != 0) or (occupancy[y + dy, x] != 0):
+                        continue
+                
+                if (nx, ny) in closed_set:
+                    continue
+                
+                tentative_g_score = g_score[(x, y)] + cost
+                
+                if (nx, ny) not in g_score or tentative_g_score < g_score[(nx, ny)]:
+                    came_from[(nx, ny)] = (x, y)
+                    g_score[(nx, ny)] = tentative_g_score
+                    f_score[(nx, ny)] = tentative_g_score + self._heuristic((nx, ny), (gx, gy))
+                    heapq.heappush(open_set, (f_score[(nx, ny)], nx, ny))
+        
+        return None  # 无法找到路径
+    
     def _heuristic(self, a, b):
         """计算两点间的启发式距离（对角线距离）"""
         dx = abs(a[0] - b[0])
@@ -299,3 +384,33 @@ class FrontierExplorer:
                                     frontiers.append((x, y))
                                     break
         return frontiers
+
+    def calculate_path_length(self, path, resolution):
+        """
+        计算路径的实际长度（米）
+        
+        参数:
+        - path: 路径点列表 [(x, y), ...]
+        - resolution: 栅格分辨率（米/栅格）
+        
+        返回:
+        - float: 路径长度（米）
+        """
+        if not path or len(path) < 2:
+            return 0.0
+        
+        total_length = 0.0
+        for i in range(len(path) - 1):
+            x1, y1 = path[i]
+            x2, y2 = path[i + 1]
+            
+            # 计算两点间的欧氏距离（栅格单位）
+            dx = x2 - x1
+            dy = y2 - y1
+            grid_distance = math.sqrt(dx * dx + dy * dy)
+            
+            # 转换为实际距离（米）
+            actual_distance = grid_distance * resolution
+            total_length += actual_distance
+        
+        return total_length

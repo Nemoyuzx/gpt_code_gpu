@@ -9,7 +9,7 @@ from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
 
-SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前80%
+SAFETY_DISTANCE_FACTOR = 0.75  # 路径截断百分比，表示只执行路径的前80%
 
 def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     """
@@ -90,7 +90,7 @@ def main():
     
     # 1. 加载迷宫地图和参数
     loader = MazeLoader()
-    maze = loader.load()  # 加载默认迷宫（可修改为自定义配置或文件路径）
+    maze = loader.load("3.json")  # 加载默认迷宫（可修改为自定义配置或文件路径）
     start_x, start_y = maze.start
     # 初始朝向设为0（朝向x正方向）
     start_pose = (start_x, start_y, 0.0)
@@ -116,8 +116,8 @@ def main():
     exploration_complete = False
     total_distance_traveled = 0.0  # 总移动距离
     frontiers_explored = 0  # 已探索的前沿数量
-    min_exploration_distance = 20.0  # 最小探索距离阈值
-    min_frontiers_to_explore = 3  # 最小探索前沿数量
+    min_exploration_distance = 10.0  # 最小探索距离阈值（降低）
+    min_frontiers_to_explore = 2  # 最小探索前沿数量（降低）
     
     # 4. 前沿探索主循环
     while True:
@@ -246,22 +246,129 @@ def main():
                 
     # 根据探索结束的原因决定后续行为
     if 'should_return_to_start' in locals() and should_return_to_start:
-        print(f"探索过程中检测到超过180度连续无障碍区域，现在返回起点...")
+        print(f"探索过程中检测到超过180度连续无障碍区域，现在检查是否有未探索区域...")
         print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
+        
+        # 计算已知障碍物区域的边界
+        occupancy = slam.get_occupancy()
+        obstacle_coords = []
+        
+        # 找到所有已知障碍物（值为1）的坐标
+        for y in range(occupancy.shape[0]):
+            for x in range(occupancy.shape[1]):
+                if occupancy[y, x] == 1:  # 障碍物
+                    # 转换为世界坐标
+                    world_x = maze.bounds[0] + x * maze.resolution
+                    world_y = maze.bounds[1] + y * maze.resolution
+                    obstacle_coords.append((world_x, world_y))
+        
+        if obstacle_coords:
+            # 计算障碍物区域的最小和最大坐标，并扩大搜索范围
+            min_obstacle_x = min(coord[0] for coord in obstacle_coords) - 5.0  # 扩大5米
+            max_obstacle_x = max(coord[0] for coord in obstacle_coords) + 5.0
+            min_obstacle_y = min(coord[1] for coord in obstacle_coords) - 5.0
+            max_obstacle_y = max(coord[1] for coord in obstacle_coords) + 5.0
+            
+            print(f"障碍物区域边界: X[{min_obstacle_x:.1f}, {max_obstacle_x:.1f}], Y[{min_obstacle_y:.1f}, {max_obstacle_y:.1f}]")
+            
+            # 转换为栅格索引
+            min_obs_x_idx = int((min_obstacle_x - maze.bounds[0]) / maze.resolution)
+            max_obs_x_idx = int((max_obstacle_x - maze.bounds[0]) / maze.resolution)
+            min_obs_y_idx = int((min_obstacle_y - maze.bounds[1]) / maze.resolution)
+            max_obs_y_idx = int((max_obstacle_y - maze.bounds[1]) / maze.resolution)
+            
+            # 在障碍物边界范围内寻找未探索区域
+            unexplored_in_range = []
+            for y in range(max(0, min_obs_y_idx), min(occupancy.shape[0], max_obs_y_idx + 1)):
+                for x in range(max(0, min_obs_x_idx), min(occupancy.shape[1], max_obs_x_idx + 1)):
+                    if occupancy[y, x] == -1:  # 未探索区域
+                        unexplored_in_range.append((x, y))
+            
+            print(f"在障碍物边界范围内发现 {len(unexplored_in_range)} 个未探索格子")
+            
+            if unexplored_in_range:
+                # 尝试找到最近的未探索区域并规划路径
+                current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
+                current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
+                
+                min_distance = float('inf')
+                closest_unexplored = None
+                
+                for ux, uy in unexplored_in_range:
+                    distance = math.hypot(ux - current_idx_x, uy - current_idx_y)
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_unexplored = (ux, uy)
+                
+                if closest_unexplored:
+                    print(f"尝试规划到最近未探索区域 {closest_unexplored} 的路径...")
+                    unexplored_path = explorer.plan_path(occupancy, (current_idx_x, current_idx_y), closest_unexplored)
+                    
+                    if unexplored_path and len(unexplored_path) > 1:
+                        print(f"找到通往未探索区域的路径，长度: {len(unexplored_path)-1} 步")
+                        print("前往未探索区域进行补充扫描...")
+                        
+                        # 移动到未探索区域并扫描
+                        for step in unexplored_path[1:]:
+                            ix, iy = step
+                            target_x = maze.bounds[0] + (ix + 0.5) * maze.resolution
+                            target_y = maze.bounds[1] + (iy + 0.5) * maze.resolution
+                            dx = target_x - robot.x
+                            dy = target_y - robot.y
+                            desired_theta = math.atan2(dy, dx)
+                            d_theta = desired_theta - robot.theta
+                            d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
+                            
+                            if abs(d_theta) > 1e-3:
+                                robot.rotate(d_theta)
+                                scan = lidar.scan(robot.get_pose())
+                                slam.update((0.0, d_theta), scan)
+                                viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
+                            
+                            distance = math.hypot(target_x - robot.x, target_y - robot.y)
+                            if distance > 1e-6:
+                                robot.move(distance)
+                                scan = lidar.scan(robot.get_pose())
+                                slam.update((distance, 0.0), scan)
+                                viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
+                        
+                        print("补充扫描完成，现在返回起点...")
+                    else:
+                        print("无法找到通往未探索区域的路径，直接返回起点")
+                else:
+                    print("未找到可达的未探索区域，直接返回起点")
+            else:
+                print("障碍物边界范围内没有未探索区域，直接返回起点")
+        else:
+            print("未发现障碍物区域，直接返回起点")
     else:
         print("探索完成：迷宫内部区域已完全探索。")
         print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
     
-    # 无论什么情况都尝试返回起点（除非程序因其他原因结束）
+    # 最后返回起点
     print("规划返回起点路径...")
     start_idx_x = int((maze.start[0] - maze.bounds[0]) / maze.resolution)
     start_idx_y = int((maze.start[1] - maze.bounds[1]) / maze.resolution)
     current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
     current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
+    
+    # 生成带安全距离的路径
     back_path = explorer.plan_path(slam.get_occupancy(), (current_idx_x, current_idx_y), (start_idx_x, start_idx_y))
+    
+    # 生成不带安全距离的路径用于显示
+    back_path_no_safety = explorer.plan_path_no_safety(slam.get_occupancy(), (current_idx_x, current_idx_y), (start_idx_x, start_idx_y))
+    
+    if back_path_no_safety:
+        # 计算无安全距离路径的长度
+        path_length_meters = explorer.calculate_path_length(back_path_no_safety, maze.resolution)
+        print(f"无安全距离最短路径长度: {path_length_meters:.2f} 米 ({len(back_path_no_safety)-1} 栅格步数)")
+        
+        # 在可视化中显示红色路径
+        viz.set_emergency_path(back_path_no_safety)
+    
     if back_path:
         print("Returning to start...")
-        print(f"返回路径长度: {len(back_path)-1} 步，直接走到起点")
+        print(f"安全返回路径长度: {len(back_path)-1} 步，直接走到起点")
         
         for step in back_path[1:]:
                 ix, iy = step

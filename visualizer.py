@@ -26,6 +26,8 @@ class Visualizer:
         self.paused = False
         # 按键事件绑定
         self.fig.canvas.mpl_connect('key_press_event', self._on_key_press)
+        # 存储紧急路径（红色显示）
+        self.emergency_path = None
 
     def _on_key_press(self, event):
         """键盘事件回调。'p'暂停/继续， 's'保存地图和路径。"""
@@ -82,13 +84,21 @@ class Visualizer:
             py = [self.maze.bounds[1] + (iy + 0.5) * self.maze.resolution for (ix, iy) in path]
             if len(px) > 1:
                 self.ax.plot(px, py, color='g', linestyle='--', label='Path')
+                
+        # 绘制紧急路径（红色线条）
+        if self.emergency_path:
+            epx = [self.maze.bounds[0] + (ix + 0.5) * self.maze.resolution for (ix, iy) in self.emergency_path]
+            epy = [self.maze.bounds[1] + (iy + 0.5) * self.maze.resolution for (ix, iy) in self.emergency_path]
+            if len(epx) > 1:
+                self.ax.plot(epx, epy, color='red', linewidth=2, label='Emergency Path (No Safety)')
         # 绘制激光雷达当前扫描点云
-        if scan:
+        if scan and self.slam:
             scan_pts_x = []
             scan_pts_y = []
             num_beams = len(scan)
+            max_range = 12.0  # 使用固定的最大范围
             for i, dist in enumerate(scan):
-                if dist < self.slam.get_max_range():
+                if dist < max_range:
                     angle = theta + math.radians(i * (360.0/num_beams))
                     sx = x + dist * math.cos(angle)
                     sy = y + dist * math.sin(angle)
@@ -106,6 +116,10 @@ class Visualizer:
         self.ax.legend(loc='upper right')
         plt.draw()
         plt.pause(0.0001)  # 大幅减少暂停时间，提高移动速度
+
+    def set_emergency_path(self, path):
+        """设置紧急路径（无安全距离的最短路径），用红色线条显示"""
+        self.emergency_path = path
 
     def save_map(self, filename):
         """将当前地图绘制保存为图像文件。"""

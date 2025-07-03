@@ -12,9 +12,9 @@ MAX_RANGE_FACTOR = 0.8  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.001  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 130  # ICP最大迭代次数
+ICP_MAX_ITER = 200  # ICP最大迭代次数
 ICP_TOLERANCE = 1e-6  # ICP收敛容忍
-ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
+ICP_CORRESPONDENCE_THRESH = 0.05  # ICP对应点匹配距离
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
