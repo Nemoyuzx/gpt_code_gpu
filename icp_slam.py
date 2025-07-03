@@ -12,7 +12,7 @@ MAX_RANGE_FACTOR = 0.8  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.001  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 100  # ICP最大迭代次数
+ICP_MAX_ITER = 130  # ICP最大迭代次数
 ICP_TOLERANCE = 1e-6  # ICP收敛容忍
 ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
 

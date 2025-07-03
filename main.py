@@ -124,7 +124,7 @@ def main():
         # 检查暂停状态
         if viz.paused:
             # 暂停循环，直到恢复
-            plt.pause(0.05)  # 减少暂停时的等待时间，提高响应速度
+            plt.pause(0.005)  # 减少暂停时的等待时间，提高响应速度
             continue
         
         # 注意：路径规划会保持与障碍物的安全距离，防止穿墙
@@ -261,15 +261,9 @@ def main():
     back_path = explorer.plan_path(slam.get_occupancy(), (current_idx_x, current_idx_y), (start_idx_x, start_idx_y))
     if back_path:
         print("Returning to start...")
-        # 对返回路径进行同样的百分比截断
-        if len(back_path) > 1:
-            path_length = len(back_path) - 1
-            truncated_length = max(1, int(path_length * safety_distance_factor))
-            truncated_path = back_path[:truncated_length+1]
-            print(f"返回路径截断: 原路径长度={path_length}，截断后长度={truncated_length} (保留{safety_distance_factor*100:.0f}%)")
-            back_path = truncated_path
-            
-            for step in back_path[1:]:
+        print(f"返回路径长度: {len(back_path)-1} 步，直接走到起点")
+        
+        for step in back_path[1:]:
                 ix, iy = step
                 target_x = maze.bounds[0] + (ix + 0.5) * maze.resolution
                 target_y = maze.bounds[1] + (iy + 0.5) * maze.resolution
@@ -282,8 +276,9 @@ def main():
                     old_odom_theta = robot.odom_theta
                     robot.rotate(d_theta)
                     dtheta_odom = robot.odom_theta - old_odom_theta
+                    # 返回时获取扫描数据但不用于SLAM建图，仅用于可视化
                     scan = lidar.scan(robot.get_pose())
-                    slam.update((0.0, dtheta_odom), scan)
+                    # slam.update((0.0, dtheta_odom), scan)  # 注释掉SLAM更新
                     viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 if distance > 1e-6:
@@ -291,8 +286,9 @@ def main():
                     old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
                     robot.move(distance)
                     d_trans = math.hypot(robot.odom_x - old_odom_x, robot.odom_y - old_odom_y)
+                    # 返回时获取扫描数据但不用于SLAM建图，仅用于可视化
                     scan = lidar.scan(robot.get_pose())
-                    slam.update((d_trans, 0.0), scan)
+                    # slam.update((d_trans, 0.0), scan)  # 注释掉SLAM更新
                     viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
         print("Robot returned to start.")
     else:
