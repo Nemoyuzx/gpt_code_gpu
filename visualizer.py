@@ -40,7 +40,7 @@ class Visualizer:
             self.save_path(path_file)
             print(f"[Visualizer] 当前地图已保存至 {map_file}, 路径已保存至 {path_file}")
 
-    def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None, truncated_points=None):
+    def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。
@@ -49,7 +49,6 @@ class Visualizer:
         target: 当前目标前沿栅格 (ix, iy) （可选，用于突出显示目标）。
         path: 导航路径栅格序列 [(ix,iy), ...] （可选，用于显示规划路径）。
         occupancy: 当前栅格地图 (numpy数组) （可选，用于绘制地图）。
-        truncated_points: 路径截断点列表 [(actual_x, actual_y, target_x, target_y), ...] （可选，记录实际达到点和原计划目标点）。
         """
         x, y, theta = robot_pose
         # 清除之前的绘图
@@ -69,7 +68,7 @@ class Visualizer:
             # 显示栅格地图
             min_x, min_y, max_x, max_y = self.maze.bounds
             res = self.maze.resolution
-            extent = (min_x, max_x, min_y, max_y)
+            extent = [min_x, max_x, min_y, max_y]
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
         
         # 绘制目标前沿
@@ -77,38 +76,19 @@ class Visualizer:
             tx = self.maze.bounds[0] + (target[0] + 0.5) * self.maze.resolution
             ty = self.maze.bounds[1] + (target[1] + 0.5) * self.maze.resolution
             self.ax.scatter([tx], [ty], c='r', marker='*', s=100, label='Target Frontier')
-        # 绘制规划路径和截断部分
+        # 绘制规划路径
         if path:
-            # 计算路径中栅格对应的世界坐标
             px = [self.maze.bounds[0] + (ix + 0.5) * self.maze.resolution for (ix, iy) in path]
             py = [self.maze.bounds[1] + (iy + 0.5) * self.maze.resolution for (ix, iy) in path]
-            
             if len(px) > 1:
-                # 首先绘制完整路径（绿色虚线）
-                self.ax.plot(px, py, color='g', linestyle='--', label='Planned Path')
-                
-                # 如果有截断点信息，绘制截断路径段（黄色虚线）
-                if truncated_points and len(truncated_points) > 0:
-                    # 只显示最近的几个截断点，避免图形过于复杂
-                    recent_truncated = truncated_points[-10:] if len(truncated_points) > 10 else truncated_points
-                    
-                    for actual_x, actual_y, target_x, target_y in recent_truncated:
-                        # 绘制从实际到达点到原计划目标点的黄色虚线
-                        # 这表示由于安全距离因子而被截断的路径段
-                        self.ax.plot([actual_x, target_x], [actual_y, target_y], 
-                                     color='y', linestyle='--', linewidth=1.5, alpha=0.8)
+                self.ax.plot(px, py, color='g', linestyle='--', label='Path')
         # 绘制激光雷达当前扫描点云
         if scan:
             scan_pts_x = []
             scan_pts_y = []
             num_beams = len(scan)
-            max_range = 12.0  # 默认最大范围
-            # 如果可能，从激光雷达对象获取最大范围
-            if hasattr(self, 'slam') and self.slam is not None and hasattr(self.slam, 'get_max_range'):
-                max_range = self.slam.get_max_range()
-            
             for i, dist in enumerate(scan):
-                if dist < max_range:
+                if dist < self.slam.get_max_range():
                     angle = theta + math.radians(i * (360.0/num_beams))
                     sx = x + dist * math.cos(angle)
                     sy = y + dist * math.sin(angle)
@@ -125,7 +105,7 @@ class Visualizer:
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.legend(loc='upper right')
         plt.draw()
-        plt.pause(0.001)  # 大幅减少暂停时间，提高移动速度
+        plt.pause(0.0001)  # 大幅减少暂停时间，提高移动速度
 
     def save_map(self, filename):
         """将当前地图绘制保存为图像文件。"""
