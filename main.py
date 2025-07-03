@@ -93,8 +93,9 @@ def main():
     # 初始朝向设为0（朝向x正方向）
     start_pose = (start_x, start_y, 0.0)
     # 安全移动参数
-    safety_distance_factor = 0.8  # 移动距离缩短为原来的80%，保持安全距离
-    min_safe_distance = 0.2  # 最小安全距离，小于此值时不缩短距离（单位：米）
+    safety_distance_factor = 0.5  # 移动距离缩短为原来的50%，保持安全距离
+    min_safe_distance = 0.5  # 小于此距离的移动不会被缩短
+    truncated_points = []  # 存储路径截断点信息 [(actual_x, actual_y, target_x, target_y), ...]
     # 2. 初始化机器人、传感器、SLAM等模块
     robot = Robot(start_pose, odom_noise=(0.01, math.radians(1)))  # 设置一定里程计噪声
     lidar = Lidar(maze.walls, max_range=12.0, angle_resolution=1.0, noise=0.01)
@@ -109,7 +110,7 @@ def main():
     frontiers = explorer.find_frontiers(slam.get_occupancy())
     target_cell = None
     path = None
-    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
     
     # 初始化探索状态标志
     exploration_complete = False
@@ -131,7 +132,7 @@ def main():
             slam.update((0.0, 0.0), scan)
             robot_pose = robot.get_pose()
             frontiers = explorer.find_frontiers(slam.get_occupancy())
-            viz.update(robot_pose, scan, frontiers=frontiers, target=None, path=None, occupancy=slam.get_occupancy())
+            viz.update(robot_pose, scan, frontiers=frontiers, target=None, path=None, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
             break
         
         # 查找最近的前沿
@@ -184,7 +185,7 @@ def main():
                     scan = lidar.scan(robot.get_pose())
                     slam.update((0.0, dtheta_odom), scan)
                     # 更新可视化
-                    viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                    viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
                 # 前进到目标格中心，但缩短距离以保持安全
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 if distance > 0:
@@ -207,6 +208,9 @@ def main():
                     # 执行移动
                     old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
                     robot.move(actual_distance)  # 移动到安全位置
+                    # 记录截断点和对应的目标点
+                    if distance >= min_safe_distance:  # 只有被截断的路径才记录
+                        truncated_points.append((safe_target_x, safe_target_y, target_x, target_y))
                     # 计算里程计距离增量（直线移动，朝向不变）
                     d_trans = math.hypot(robot.odom_x - old_odom_x, robot.odom_y - old_odom_y)
                     scan = lidar.scan(robot.get_pose())
@@ -217,7 +221,7 @@ def main():
                         print("移动过程中检测到已走出迷宫！")
                         robot_pose = robot.get_pose()
                         frontiers = explorer.find_frontiers(slam.get_occupancy())
-                        viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                        viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
                         # 设置标志表示已走出迷宫，但不直接返回
                         exploration_complete = True
                         break  # 跳出移动循环
@@ -225,7 +229,9 @@ def main():
                     # 更新可视化
                     robot_pose = robot.get_pose()
                     frontiers = explorer.find_frontiers(slam.get_occupancy())
-                    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
+                
+                # 删除这一行，因为我们已经在移动后添加截断点
             
             # 如果在移动过程中走出迷宫，跳出外层循环
             if 'exploration_complete' in locals() and exploration_complete:
@@ -262,7 +268,7 @@ def main():
                     dtheta_odom = robot.odom_theta - old_odom_theta
                     scan = lidar.scan(robot.get_pose())
                     slam.update((0.0, dtheta_odom), scan)
-                    viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
+                    viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 if distance > 1e-6:
                     # 缩短移动距离，保持安全距离
@@ -275,10 +281,14 @@ def main():
                     # 执行移动
                     old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
                     robot.move(safe_distance)
+                    # 记录截断点和对应的目标点
+                    if distance >= min_safe_distance:  # 只有被截断的路径才记录
+                        truncated_points.append((safe_target_x, safe_target_y, target_x, target_y))
+                    
                     d_trans = math.hypot(robot.odom_x - old_odom_x, robot.odom_y - old_odom_y)
                     scan = lidar.scan(robot.get_pose())
                     slam.update((d_trans, 0.0), scan)
-                    viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
+                    viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy(), truncated_points=truncated_points)
             print("Robot returned to start.")
         else:
             print("无法规划返回起点的路径。")
