@@ -9,7 +9,7 @@ from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
 
-SAFETY_DISTANCE_FACTOR = 0.6  # 路径截断百分比，表示只执行路径的前80%
+SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前80%
 
 def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     """
@@ -20,7 +20,7 @@ def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
         scan: 激光雷达扫描数据列表
         max_range: 激光雷达最大探测距离
         min_angle_range: 最小连续角度范围（度），超过此范围认为走出迷宫
-    
+     
     Returns:
         bool: True表示已走出迷宫，False表示仍在迷宫内
     """
@@ -97,8 +97,8 @@ def main():
     # 安全移动参数
     safety_distance_factor = SAFETY_DISTANCE_FACTOR  # 路径截断百分比，表示只执行路径的前50%
     # 2. 初始化机器人、传感器、SLAM等模块
-    robot = Robot(start_pose, odom_noise=(0.01, math.radians(1)))  # 设置一定里程计噪声
-    lidar = Lidar(maze.walls, max_range=12.0, angle_resolution=1.0, noise=0.01)
+    robot = Robot(start_pose, odom_noise=(0,0))  # 设置一定里程计噪声
+    lidar = Lidar(maze.walls, max_range=12.0, angle_resolution=1.0, noise=0)
     slam = ICPSlam(maze, start_pose)
     explorer = FrontierExplorer(safety_distance=6.0)  # 设置与障碍物的安全距离
     viz = Visualizer(maze, robot=robot, slam=slam)
@@ -112,8 +112,12 @@ def main():
     path = None
     viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
     
-    # 初始化探索状态标志
+    # 初始化探索状态标志和探索进度跟踪
     exploration_complete = False
+    total_distance_traveled = 0.0  # 总移动距离
+    frontiers_explored = 0  # 已探索的前沿数量
+    min_exploration_distance = 20.0  # 最小探索距离阈值
+    min_frontiers_to_explore = 3  # 最小探索前沿数量
     
     # 4. 前沿探索主循环
     while True:
@@ -124,15 +128,21 @@ def main():
             continue
         
         # 注意：路径规划会保持与障碍物的安全距离，防止穿墙
-        # 首先检查是否已经走出迷宫
+        # 只有在进行了充分探索后才检查是否检测到超过180度的连续无障碍区域
         scan = lidar.scan(robot.get_pose())
-        if check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=180.0):
-            print("检测到机器人已走出迷宫 - 探索完成！")
+        has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
+                                     frontiers_explored >= min_frontiers_to_explore)
+        
+        if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=180.0):
+            print(f"检测到超过180度的连续无障碍区域 - 已探索距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
+            print("探索充分，开始返回起点！")
             # 更新SLAM和可视化
             slam.update((0.0, 0.0), scan)
             robot_pose = robot.get_pose()
             frontiers = explorer.find_frontiers(slam.get_occupancy())
             viz.update(robot_pose, scan, frontiers=frontiers, target=None, path=None, occupancy=slam.get_occupancy())
+            # 设置标志表示需要返回起点
+            should_return_to_start = True
             break
         
         # 查找最近的前沿
@@ -160,6 +170,10 @@ def main():
         
         # 在可视化中标记当前目标前沿
         target_cell = frontier_cell
+        # 增加已探索前沿计数
+        frontiers_explored += 1
+        print(f"开始探索第 {frontiers_explored} 个前沿点: {frontier_cell}")
+        
         # 5. 沿规划路径移动机器人
         if path:  # 确保路径存在
             # 对路径进行百分比截断，只执行前safety_distance_factor比例的路径
@@ -203,17 +217,22 @@ def main():
                     robot.move(distance)  # 移动到目标位置
                     # 计算里程计距离增量（直线移动，朝向不变）
                     d_trans = math.hypot(robot.odom_x - old_odom_x, robot.odom_y - old_odom_y)
+                    total_distance_traveled += d_trans  # 累计总移动距离
                     scan = lidar.scan(robot.get_pose())
                     slam.update((d_trans, 0.0), scan)
                     
-                    # 每次移动后检查是否走出迷宫
-                    if check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=180.0):
-                        print("移动过程中检测到已走出迷宫！")
+                    # 只有在进行了充分探索后才检查180度条件
+                    has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
+                                                 frontiers_explored >= min_frontiers_to_explore)
+                    
+                    if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=180.0):
+                        print(f"移动过程中检测到超过180度连续无障碍区域！")
+                        print(f"探索统计 - 总距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
                         robot_pose = robot.get_pose()
                         frontiers = explorer.find_frontiers(slam.get_occupancy())
                         viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
-                        # 设置标志表示已走出迷宫，但不直接返回
-                        exploration_complete = True
+                        # 设置标志表示需要返回起点
+                        should_return_to_start = True
                         break  # 跳出移动循环
                     
                     # 更新可视化
@@ -221,33 +240,34 @@ def main():
                     frontiers = explorer.find_frontiers(slam.get_occupancy())
                     viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
             
-            # 如果在移动过程中走出迷宫，跳出外层循环
-            if 'exploration_complete' in locals() and exploration_complete:
+            # 如果在移动过程中检测到需要返回起点的条件，跳出外层循环
+            if 'should_return_to_start' in locals() and should_return_to_start:
                 break
                 
     # 根据探索结束的原因决定后续行为
-    if 'exploration_complete' in locals() and exploration_complete:
-        print("探索完成：机器人已成功走出迷宫！")
+    if 'should_return_to_start' in locals() and should_return_to_start:
+        print(f"探索过程中检测到超过180度连续无障碍区域，现在返回起点...")
+        print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
     else:
         print("探索完成：迷宫内部区域已完全探索。")
+        print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
     
-    # 6. 只有在没有走出迷宫的情况下才返回起点
-    if not ('exploration_complete' in locals() and exploration_complete):
-        print("规划返回起点路径...")
-        start_idx_x = int((maze.start[0] - maze.bounds[0]) / maze.resolution)
-        start_idx_y = int((maze.start[1] - maze.bounds[1]) / maze.resolution)
-        current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
-        current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
-        back_path = explorer.plan_path(slam.get_occupancy(), (current_idx_x, current_idx_y), (start_idx_x, start_idx_y))
-        if back_path:
-            print("Returning to start...")
-            # 对返回路径进行同样的百分比截断
-            if len(back_path) > 1:
-                path_length = len(back_path) - 1
-                truncated_length = max(1, int(path_length * safety_distance_factor))
-                truncated_path = back_path[:truncated_length+1]
-                print(f"返回路径截断: 原路径长度={path_length}，截断后长度={truncated_length} (保留{safety_distance_factor*100:.0f}%)")
-                back_path = truncated_path
+    # 无论什么情况都尝试返回起点（除非程序因其他原因结束）
+    print("规划返回起点路径...")
+    start_idx_x = int((maze.start[0] - maze.bounds[0]) / maze.resolution)
+    start_idx_y = int((maze.start[1] - maze.bounds[1]) / maze.resolution)
+    current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
+    current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
+    back_path = explorer.plan_path(slam.get_occupancy(), (current_idx_x, current_idx_y), (start_idx_x, start_idx_y))
+    if back_path:
+        print("Returning to start...")
+        # 对返回路径进行同样的百分比截断
+        if len(back_path) > 1:
+            path_length = len(back_path) - 1
+            truncated_length = max(1, int(path_length * safety_distance_factor))
+            truncated_path = back_path[:truncated_length+1]
+            print(f"返回路径截断: 原路径长度={path_length}，截断后长度={truncated_length} (保留{safety_distance_factor*100:.0f}%)")
+            back_path = truncated_path
             
             for step in back_path[1:]:
                 ix, iy = step
@@ -274,15 +294,13 @@ def main():
                     scan = lidar.scan(robot.get_pose())
                     slam.update((d_trans, 0.0), scan)
                     viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
-            print("Robot returned to start.")
-        else:
-            print("无法规划返回起点的路径。")
+        print("Robot returned to start.")
     else:
-        print("机器人已走出迷宫，无需返回起点。")
+        print("无法规划返回起点的路径。")
     
     # 根据结束条件输出相应信息
-    if 'exploration_complete' in locals() and exploration_complete:
-        print("仿真结束：机器人成功走出迷宫！")
+    if 'should_return_to_start' in locals() and should_return_to_start:
+        print("仿真结束：检测到超过180度连续无障碍区域，机器人已返回起点！")
     else:
         print("仿真结束：迷宫探索完成，机器人已返回起点。")
         
