@@ -3,7 +3,7 @@ import numpy as np
 import torch  # 引入 PyTorch 库以使用张量和GPU加速
 
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.4  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.7  # 超过最大范围的比例阈值，用于忽略远距离点
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
@@ -23,7 +23,7 @@ class ICPSlam:
         self.map_points_tensor = None  # 地图点云的PyTorch张量版本
         # ICP参数
         self.icp_max_iter = 10
-        self.icp_tolerance = 1e-3
+        self.icp_tolerance = 1e-4
         self.icp_correspondence_thresh = 1.0  # 匹配对应点的距离阈值 (米)
         
         # 设备检测与选择

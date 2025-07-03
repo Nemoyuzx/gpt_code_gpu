@@ -9,6 +9,8 @@ from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
 
+SAFETY_DISTANCE_FACTOR = 0.7
+
 def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     """
     检查机器人是否走出迷宫
@@ -93,7 +95,7 @@ def main():
     # 初始朝向设为0（朝向x正方向）
     start_pose = (start_x, start_y, 0.0)
     # 安全移动参数
-    safety_distance_factor = 0.7  # 路径截断百分比，表示只执行路径的前50%
+    safety_distance_factor = SAFETY_DISTANCE_FACTOR  # 路径截断百分比，表示只执行路径的前50%
     # 2. 初始化机器人、传感器、SLAM等模块
     robot = Robot(start_pose, odom_noise=(0.01, math.radians(1)))  # 设置一定里程计噪声
     lidar = Lidar(maze.walls, max_range=12.0, angle_resolution=1.0, noise=0.01)
