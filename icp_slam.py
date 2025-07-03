@@ -3,7 +3,7 @@ import numpy as np
 import torch  # 引入 PyTorch 库以使用张量和GPU加速
 
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.6  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.4  # 超过最大范围的比例阈值，用于忽略远距离点
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
