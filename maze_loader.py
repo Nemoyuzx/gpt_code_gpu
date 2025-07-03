@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import json  # 添加json模块导入
 
 class MazeLoader:
     """迷宫地图加载器。用于加载墙壁信息和起始/目标点。"""
@@ -47,20 +48,57 @@ class MazeLoader:
             goal = start
         return walls, start, goal
 
+    def _parse_json_file(self, file_path):
+        """
+        读取JSON格式的迷宫配置文件，解析起点和墙壁数据。
+        文件格式：
+        {
+          "segments": [
+            {"start": [x1, y1], "end": [x2, y2]},
+            ...
+          ],
+          "start_point": [start_x, start_y]
+        }
+        """
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        
+        # 解析墙壁线段
+        walls = []
+        if "segments" in data:
+            for segment in data["segments"]:
+                start = tuple(segment["start"])
+                end = tuple(segment["end"])
+                walls.append((start, end))
+        
+        # 解析起点
+        start = tuple(data.get("start_point", (0.0, 0.0)))
+        
+        # 由于JSON格式可能没有明确的终点，将终点设为与起点相同
+        goal = start
+        
+        return walls, start, goal
+
     def load(self, config=None):
         """
-        加载迷宫配置。如果提供文件路径或配置则解析，否则使用默认迷宫配置文件maze_config.txt。
+        加载迷宫配置。如果提供文件路径或配置则解析，否则使用默认迷宫配置文件maze.json。
         config: 可以是配置文件路径或配置数据(dict)。
         返回 Maze 实例。
         """
         # 根据config类型加载配置：字符串表示文件路径，dict表示配置数据，否则使用默认配置文件
         if isinstance(config, str) or config is None:
-            cfg_file = config if isinstance(config, str) else 'maze_config.txt'
-            walls, start, goal = self._parse_config_file(cfg_file)
+            cfg_file = config if isinstance(config, str) else 'maze.json'
+            
+            # 根据文件扩展名选择解析方法
+            if cfg_file.lower().endswith('.json'):
+                walls, start, goal = self._parse_json_file(cfg_file)
+            else:
+                walls, start, goal = self._parse_config_file(cfg_file)
         else:
             walls = config.get("walls", [])
             start = tuple(config.get("start", (0.0, 0.0)))
             goal = tuple(config.get("goal", start))
+            
         # 确保start和goal存在
         if start is None:
             start = (0.0, 0.0)

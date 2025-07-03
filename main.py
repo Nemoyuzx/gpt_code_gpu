@@ -194,7 +194,7 @@ def main():
                     viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
                 # 前进到目标格中心，不再缩短距离
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
-                print(f"目标点: ({target_x:.2f}, {target_y:.2f}), 距离: {distance:.2f}")
+                #print(f"目标点: ({target_x:.2f}, {target_y:.2f}), 距离: {distance:.2f}")
                 if distance > 0:
                     # 执行移动，使用完整距离
                     old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
