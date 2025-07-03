@@ -72,7 +72,7 @@ def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     angle_per_scan = 360.0 / len(scan)
     max_angle_range = max_consecutive * angle_per_scan
     
-    print(f"最大连续无障碍角度范围: {max_angle_range:.1f}度 (阈值: {min_angle_range}度)")
+    #print(f"最大连续无障碍角度范围: {max_angle_range:.1f}度 (阈值: {min_angle_range}度)")
     
     return max_angle_range >= min_angle_range
 

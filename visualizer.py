@@ -105,7 +105,7 @@ class Visualizer:
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.legend(loc='upper right')
         plt.draw()
-        plt.pause(0.0001)  # 大幅减少暂停时间，提高移动速度
+        plt.pause(0.001)  # 大幅减少暂停时间，提高移动速度
 
     def save_map(self, filename):
         """将当前地图绘制保存为图像文件。"""
