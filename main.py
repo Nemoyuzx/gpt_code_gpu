@@ -1,8 +1,6 @@
 import time
 import math
 import os
-import gc
-import psutil
 import matplotlib.pyplot as plt
 from maze_loader import MazeLoader
 from robot import Robot
@@ -10,35 +8,6 @@ from lidar import Lidar
 from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
-
-def get_memory_usage():
-    """获取当前内存使用情况"""
-    process = psutil.Process(os.getpid())
-    memory_info = process.memory_info()
-    return memory_info.rss / 1024 / 1024  # 转换为MB
-
-def get_gpu_memory_usage():
-    """获取GPU内存使用情况"""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            return torch.cuda.memory_allocated() / 1024 / 1024  # MB
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            # MPS没有直接的内存查询方法，返回0
-            return 0
-    except:
-        pass
-    return 0
-
-def cleanup_memory():
-    """清理内存"""
-    gc.collect()  # Python垃圾回收
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()  # 清空CUDA缓存
-    except:
-        pass
 
 def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     """
@@ -103,7 +72,7 @@ def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     angle_per_scan = 360.0 / len(scan)
     max_angle_range = max_consecutive * angle_per_scan
     
-    #print(f"最大连续无障碍角度范围: {max_angle_range:.1f}度 (阈值: {min_angle_range}度)")
+    print(f"最大连续无障碍角度范围: {max_angle_range:.1f}度 (阈值: {min_angle_range}度)")
     
     return max_angle_range >= min_angle_range
 
@@ -145,36 +114,8 @@ def main():
     # 初始化探索状态标志
     exploration_complete = False
     
-    # 内存监控变量
-    last_memory_check = 0
-    memory_check_interval = 50  # 每50次迭代检查一次内存
-    iteration_count = 0
-    
-    print(f"初始内存使用: {get_memory_usage():.1f}MB, GPU内存: {get_gpu_memory_usage():.1f}MB")
-    
     # 4. 前沿探索主循环
     while True:
-        iteration_count += 1
-        
-        # 定期检查内存使用情况
-        if iteration_count - last_memory_check >= memory_check_interval:
-            current_memory = get_memory_usage()
-            gpu_memory = get_gpu_memory_usage()
-            slam_stats = slam.get_memory_stats()
-            
-            print(f"[第{iteration_count}次迭代] 内存使用: {current_memory:.1f}MB, "
-                  f"GPU内存: {gpu_memory:.1f}MB, "
-                  f"地图点数: {slam_stats['map_points_count']}")
-            
-            # 如果内存使用过高，进行清理
-            if current_memory > 1000 or gpu_memory > 500:  # 内存超过1GB或GPU内存超过500MB
-                print("内存使用过高，执行清理...")
-                slam.cleanup_memory()
-                cleanup_memory()
-                print(f"清理后内存使用: {get_memory_usage():.1f}MB, GPU内存: {get_gpu_memory_usage():.1f}MB")
-            
-            last_memory_check = iteration_count
-        
         # 检查暂停状态
         if viz.paused:
             # 暂停循环，直到恢复
@@ -242,9 +183,8 @@ def main():
                     # 获取旋转后的扫描数据并更新SLAM
                     scan = lidar.scan(robot.get_pose())
                     slam.update((0.0, dtheta_odom), scan)
-                    # 减少可视化更新频率以节省内存
-                    if iteration_count % 5 == 0:  # 每5次更新才更新可视化
-                        viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                    # 更新可视化
+                    viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
                 # 前进到目标格中心，但缩短距离以保持安全
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 if distance > 0:
@@ -282,15 +222,10 @@ def main():
                         exploration_complete = True
                         break  # 跳出移动循环
                     
-                    # 更新可视化（减少频率）
-                    if iteration_count % 3 == 0:  # 每3次更新才更新可视化
-                        robot_pose = robot.get_pose()
-                        frontiers = explorer.find_frontiers(slam.get_occupancy())
-                        viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
-                    else:
-                        # 不更新可视化时，仍需要更新frontiers供下次使用
-                        robot_pose = robot.get_pose()
-                        frontiers = explorer.find_frontiers(slam.get_occupancy())
+                    # 更新可视化
+                    robot_pose = robot.get_pose()
+                    frontiers = explorer.find_frontiers(slam.get_occupancy())
+                    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
             
             # 如果在移动过程中走出迷宫，跳出外层循环
             if 'exploration_complete' in locals() and exploration_complete:
@@ -360,35 +295,9 @@ def main():
     viz.save_map("final_map.png")
     viz.save_path("final_path.csv")
     
-    # 全面清理资源
-    print("正在清理资源...")
-    
-    # 释放SLAM资源
+    # 释放GPU资源
     if hasattr(slam, 'release_resources'):
         slam.release_resources()
-    
-    # 清理地图点云
-    slam.map_points.clear()
-    if hasattr(slam, 'map_points_tensor') and slam.map_points_tensor is not None:
-        del slam.map_points_tensor
-        slam.map_points_tensor = None
-    
-    # 清理可视化资源
-    if hasattr(viz, 'cleanup'):
-        viz.cleanup()
-    
-    # 关闭所有matplotlib图形
-    plt.close('all')
-    
-    # 删除主要对象引用
-    del slam, viz, robot, lidar, explorer
-    
-    # 执行最终内存清理
-    cleanup_memory()
-    
-    final_memory = get_memory_usage()
-    final_gpu_memory = get_gpu_memory_usage()
-    print(f"清理完成 - 最终内存使用: {final_memory:.1f}MB, GPU内存: {final_gpu_memory:.1f}MB")
 
 if __name__ == "__main__":
     try:

@@ -122,16 +122,3 @@ class Visualizer:
                     f.write(f"{x:.3f},{y:.3f}\n")
         except Exception as e:
             print("Error saving path:", e)
-
-    def cleanup(self):
-        """清理可视化资源"""
-        try:
-            # 清除所有绘图元素
-            self.ax.clear()
-            # 关闭图形
-            plt.close(self.fig)
-            # 删除对图形对象的引用
-            del self.fig
-            del self.ax
-        except:
-            pass  # 忽略清理过程中的错误
