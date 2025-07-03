@@ -252,6 +252,12 @@ class ICPSlam:
             if tx > max_x_idx: tx = max_x_idx
             if ty < 0: ty = 0
             if ty > max_y_idx: ty = max_y_idx
+            
+            # 确保机器人位置也在栅格范围内
+            if rx < 0: rx = 0
+            if rx > max_x_idx: rx = max_x_idx
+            if ry < 0: ry = 0
+            if ry > max_y_idx: ry = max_y_idx
             # 获取栅格直线路径
             line = self._bresenham(rx, ry, tx, ty)
             if dist < self.get_max_range() and dist <= far_threshold:

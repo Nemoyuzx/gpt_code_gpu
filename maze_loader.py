@@ -109,6 +109,14 @@ class MazeLoader:
         min_y = min(min(p[1] for p in wall) for wall in walls)
         max_x = max(max(p[0] for p in wall) for wall in walls)
         max_y = max(max(p[1] for p in wall) for wall in walls)
+        
+        # 扩大地图边界，为SLAM探索提供更大的画布
+        map_buffer = 2.0  # 在每个方向扩展20米的缓冲区
+        min_x -= map_buffer
+        min_y -= map_buffer
+        max_x += map_buffer
+        max_y += map_buffer
+        
         # 将坐标平移使最小值为0（若为负）
         if min_x < 0 or min_y < 0:
             shift_x = -min_x if min_x < 0 else 0
