@@ -9,7 +9,7 @@ from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
 
-SAFETY_DISTANCE_FACTOR = 0.7
+SAFETY_DISTANCE_FACTOR = 0.7 # 路径截断百分比，表示只执行路径的前50%
 
 def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
     """

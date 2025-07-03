@@ -3,7 +3,9 @@ import numpy as np
 import torch  # 引入 PyTorch 库以使用张量和GPU加速
 
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.7  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.5  # 超过最大范围的比例阈值，用于忽略远距离点
+#相邻测距点差异阈值
+ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
@@ -106,10 +108,45 @@ class ICPSlam:
         pts_local = []
         # 计算80%的最大范围阈值
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
+        # 相邻测距点差异阈值 - 如果相邻两个点距离差超过此值，则忽略该点
+        adjacent_diff_threshold = ADJACENCY_DIFF_THRESHOLD  # 米，可根据实际情况调整
+        
         for i, dist in enumerate(scan):
             if dist >= self.get_max_range() or dist > far_threshold:
                 # 距离为最大范围或超过80%最大范围，未击中障碍或距离太远，跳过作为特征点（不加入ICP匹配）
                 continue
+                
+            # 检查与相邻点的距离差异，过滤掉跳跃点
+            should_skip = False
+            # 检查与前一个点的差异
+            if i > 0 and scan[i-1] < self.get_max_range() and scan[i-1] <= far_threshold:
+                diff_prev = abs(dist - scan[i-1])
+                if diff_prev > adjacent_diff_threshold:
+                    should_skip = True
+            
+            # 检查与后一个点的差异
+            if i < len(scan) - 1 and scan[i+1] < self.get_max_range() and scan[i+1] <= far_threshold:
+                diff_next = abs(dist - scan[i+1])
+                if diff_next > adjacent_diff_threshold:
+                    should_skip = True
+            
+            # 对于环形激光雷达，还要检查第一个和最后一个点的连接
+            if i == 0 and len(scan) > 1:  # 第一个点，检查与最后一个点的差异
+                last_dist = scan[-1]
+                if last_dist < self.get_max_range() and last_dist <= far_threshold:
+                    diff_wrap = abs(dist - last_dist)
+                    if diff_wrap > adjacent_diff_threshold:
+                        should_skip = True
+            elif i == len(scan) - 1 and len(scan) > 1:  # 最后一个点，检查与第一个点的差异
+                first_dist = scan[0]
+                if first_dist < self.get_max_range() and first_dist <= far_threshold:
+                    diff_wrap = abs(dist - first_dist)
+                    if diff_wrap > adjacent_diff_threshold:
+                        should_skip = True
+            
+            if should_skip:
+                continue
+                
             angle = self.theta + angles_np[i]
             px = self.x + dist * math.cos(angle)
             py = self.y + dist * math.sin(angle)
@@ -228,8 +265,39 @@ class ICPSlam:
         ry = int((self.y - self.min_y) / self.resolution)
         # 80%的最大范围阈值
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
+        # 相邻测距点差异阈值 - 与ICP部分保持一致
+        adjacent_diff_threshold = 2.0  # 米
+        
         # 更新占据栅格地图，根据扫描结果
         for i, dist in enumerate(scan):
+            # 应用相同的相邻点差异过滤逻辑
+            should_skip_map_update = False
+            if dist < self.get_max_range() and dist <= far_threshold:
+                # 检查与相邻点的距离差异
+                if i > 0 and scan[i-1] < self.get_max_range() and scan[i-1] <= far_threshold:
+                    diff_prev = abs(dist - scan[i-1])
+                    if diff_prev > adjacent_diff_threshold:
+                        should_skip_map_update = True
+                
+                if i < len(scan) - 1 and scan[i+1] < self.get_max_range() and scan[i+1] <= far_threshold:
+                    diff_next = abs(dist - scan[i+1])
+                    if diff_next > adjacent_diff_threshold:
+                        should_skip_map_update = True
+                
+                # 环形连接检查
+                if i == 0 and len(scan) > 1:
+                    last_dist = scan[-1]
+                    if last_dist < self.get_max_range() and last_dist <= far_threshold:
+                        diff_wrap = abs(dist - last_dist)
+                        if diff_wrap > adjacent_diff_threshold:
+                            should_skip_map_update = True
+                elif i == len(scan) - 1 and len(scan) > 1:
+                    first_dist = scan[0]
+                    if first_dist < self.get_max_range() and first_dist <= far_threshold:
+                        diff_wrap = abs(dist - first_dist)
+                        if diff_wrap > adjacent_diff_threshold:
+                            should_skip_map_update = True
+            
             beam_angle = self.theta + (angles_np[i] if 'angles_np' in locals() else math.radians(i))
             # 归一化角度
             beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))
@@ -260,8 +328,8 @@ class ICPSlam:
             if ry > max_y_idx: ry = max_y_idx
             # 获取栅格直线路径
             line = self._bresenham(rx, ry, tx, ty)
-            if dist < self.get_max_range() and dist <= far_threshold:
-                # 有障碍命中且在80%范围内：最后一点为障碍
+            if dist < self.get_max_range() and dist <= far_threshold and not should_skip_map_update:
+                # 有障碍命中且在80%范围内且未被过滤：最后一点为障碍
                 for cell in line[:-1]:
                     cx, cy = cell
                     # 如果当前未知，则标记为空闲
