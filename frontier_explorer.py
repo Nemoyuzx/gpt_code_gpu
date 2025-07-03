@@ -44,13 +44,24 @@ class FrontierExplorer:
 
     def find_nearest_frontier(self, occupancy, start):
         """
-        从start出发，使用BFS找到最近的前沿单元及路径。
-        start: (x_idx, y_idx) 起点栅格索引。
-        返回 (frontier_cell, path) ，如果没有前沿则返回 (None, None)。
+        从start出发，使用多策略方法找到最近的前沿单元及路径。
+        
+        策略顺序：
+        1. 局部BFS搜索 - 从起点开始在连通区域内搜索前沿
+        2. 全局前沿检测 - 如果局部搜索失败，寻找所有前沿并选择最近的
+        
+        参数:
+        - occupancy: 占用栅格地图
+        - start: (x_idx, y_idx) 起点栅格索引
+        
+        返回:
+        - (frontier_cell, path): 找到时返回目标前沿和路径
+        - (None, None): 未找到前沿时返回
         """
         h, w = occupancy.shape
         sx, sy = start
-        # BFS初始化
+
+        # 策略1: 局部BFS搜索
         visited = [[False]*w for _ in range(h)]
         parent = {}
         dq = deque()
@@ -58,39 +69,43 @@ class FrontierExplorer:
         visited[sy][sx] = True
         parent[(sx, sy)] = None
         frontier_cell = None
+        
         while dq:
             x, y = dq.popleft()
-            # 检查是否为前沿
+            # 检查当前点是否为前沿
             if occupancy[y, x] == 0:
-                # 自身空闲，若有未知邻居则为前沿
-                frontier_flag = False
-                for (nx, ny) in [(x-1,y), (x+1,y), (x,y-1), (x,y+1), (x-1,y-1), (x+1,y+1), (x-1,y+1), (x+1,y-1)]:
-                    if 0 <= nx < w and 0 <= ny < h:
-                        if occupancy[ny, nx] == -1:
-                            frontier_flag = True
-                            break
-                if frontier_flag and (x, y) != (sx, sy):
+                is_frontier = False
+                for (nx, ny) in [(x-1,y), (x+1,y), (x,y-1), (x,y+1),
+                                (x-1,y-1), (x+1,y+1), (x-1,y+1), (x+1,y-1)]:
+                    if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
+                        is_frontier = True
+                        break
+                if is_frontier and (x, y) != (sx, sy):
                     frontier_cell = (x, y)
                     break
-            # 继续BFS扩展，支持8个方向移动（包括对角线）
-            neighbors = [(x-1,y), (x+1,y), (x,y-1), (x,y+1), (x-1,y-1), (x+1,y+1), (x-1,y+1), (x+1,y-1)]
-            for nx, ny in neighbors:
-                if 0 <= nx < w and 0 <= ny < h:
-                    if not visited[ny][nx] and occupancy[ny, nx] == 0:
-                        # 检查是否与障碍物保持安全距离
-                        if not self._is_safe(occupancy, nx, ny, safety_distance=self.safety_distance):
+                    
+            # BFS扩展
+            for dx, dy in [(-1,0), (1,0), (0,-1), (0,1),
+                          (-1,-1), (1,1), (-1,1), (1,-1)]:
+                nx, ny = x + dx, y + dy
+                if (0 <= nx < w and 0 <= ny < h and 
+                    not visited[ny][nx] and
+                    (occupancy[ny, nx] == 0 or occupancy[ny, nx] == -1)):  # 允许扩展到未知区域
+                    
+                    # 检查安全距离
+                    if not self._is_safe(occupancy, nx, ny, safety_distance=max(0.5, self.safety_distance/2)):  # 降低安全距离要求
+                        continue
+                    
+                    # 对角线移动时检查墙角
+                    if abs(dx) == 1 and abs(dy) == 1:
+                        if (occupancy[y, x + dx] == 1) or (occupancy[y + dy, x] == 1):  # 只检查确定的障碍物
                             continue
-                            
-                        # 对于对角线移动，检查是否会穿过墙角
-                        dx, dy = nx - x, ny - y
-                        if abs(dx) == 1 and abs(dy) == 1:
-                            if (occupancy[y, x + dx] != 0) or (occupancy[y + dy, x] != 0):
-                                continue
-                                
-                        visited[ny][nx] = True
-                        parent[(nx, ny)] = (x, y)
-                        dq.append((nx, ny))
-        # 若找到前沿，重建路径
+                    
+                    visited[ny][nx] = True
+                    parent[(nx, ny)] = (x, y)
+                    dq.append((nx, ny))
+
+        # 如果BFS找到了前沿，构建路径并返回
         if frontier_cell is not None:
             path = []
             cur = frontier_cell
@@ -99,7 +114,29 @@ class FrontierExplorer:
                 cur = parent[cur]
             path.reverse()
             return frontier_cell, path
-        return None, None
+
+        # 策略2: 全局前沿检测
+        frontiers = self._find_all_frontiers(occupancy)
+        if not frontiers:
+            return None, None  # 没有找到任何前沿
+
+        # 计算到每个前沿的距离，选择最近的
+        best_frontier = None
+        best_path = None
+        min_dist = float('inf')
+
+        for frontier in frontiers:
+            # 使用A*算法尝试规划路径
+            path = self.plan_path(occupancy, start, frontier)
+            if path is not None:
+                # 计算路径长度
+                path_length = len(path)
+                if path_length < min_dist:
+                    min_dist = path_length
+                    best_frontier = frontier
+                    best_path = path
+
+        return best_frontier, best_path
 
     def plan_path(self, occupancy, start, goal):
         """
@@ -232,3 +269,33 @@ class FrontierExplorer:
                         return False
                         
         return True
+    
+    def _find_all_frontiers(self, occupancy):
+        """
+        遍历整张地图找出所有前沿点。
+        前沿定义为：已知空闲且邻接未知区域的栅格。
+        
+        参数:
+        - occupancy: 占用栅格地图
+        
+        返回:
+        - list of (x, y): 所有前沿点的坐标列表
+        """
+        h, w = occupancy.shape
+        frontiers = []
+        directions = [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (1,1), (-1,1), (1,-1)]
+        
+        for y in range(h):
+            for x in range(w):
+                # 只检查空闲格
+                if occupancy[y, x] == 0:
+                    # 检查周围8个方向是否有未知区域
+                    for dx, dy in directions:
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < w and 0 <= ny < h:
+                            if occupancy[ny, nx] == -1:  # -1表示未知区域
+                                # 检查安全距离
+                                if self._is_safe(occupancy, x, y, self.safety_distance):
+                                    frontiers.append((x, y))
+                                    break
+        return frontiers

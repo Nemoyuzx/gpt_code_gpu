@@ -3,7 +3,7 @@ import numpy as np
 import torch  # 引入 PyTorch 库以使用张量和GPU加速
 
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.5  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.7  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
 
