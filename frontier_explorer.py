@@ -93,7 +93,7 @@ class FrontierExplorer:
                     (occupancy[ny, nx] == 0 or occupancy[ny, nx] == -1)):  # 允许扩展到未知区域
                     
                     # 检查安全距离
-                    if not self._is_safe(occupancy, nx, ny, safety_distance=max(0.5, self.safety_distance/2)):  # 降低安全距离要求
+                    if not self._is_safe(occupancy, nx, ny, safety_distance=max(0.5, self.safety_distance)):  # 降低安全距离要求
                         continue
                     
                     # 对角线移动时检查墙角
