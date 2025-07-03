@@ -18,6 +18,12 @@ class ICPSlam:
         # 保存地图中的点云（全局坐标）用于ICP匹配
         self.map_points = []  # list of [x,y] obstacle points
         self.map_points_tensor = None  # 地图点云的PyTorch张量版本
+        
+        # 内存管理参数
+        self.max_map_points = 10000  # 最大地图点数，防止内存溢出
+        self.cleanup_interval = 100   # 每100次更新进行一次内存清理
+        self.update_count = 0        # 更新计数器
+        
         # ICP参数
         self.icp_max_iter = 10
         self.icp_tolerance = 1e-3
@@ -84,6 +90,13 @@ class ICPSlam:
         和激光扫描数据scan (距离列表) 更新SLAM估计和地图。
         返回更新后的位姿估计 (x, y, theta)。
         """
+        # 增加更新计数器
+        self.update_count += 1
+        
+        # 定期清理内存
+        if self.update_count % self.cleanup_interval == 0:
+            self.cleanup_memory()
+            
         d_trans, d_rot = odom_delta
         # 步骤1: 预测位姿 (根据里程计增量更新估计位姿)
         self.theta += d_rot
@@ -219,6 +232,15 @@ class ICPSlam:
                 pts_local_tensor = self.to_tensor(pts_local)
                 pts_local_transformed = (R @ pts_local_tensor.T).T + t
                 pts_local = self.to_numpy(pts_local_transformed)
+                
+                # 显式删除临时张量以释放GPU内存
+                del pts_local_tensor, pts_local_transformed
+                
+            # 删除ICP过程中使用的张量
+            del src, R, t
+            if hasattr(self, 'tgt') and 'tgt' in locals():
+                del tgt
+                
         # 步骤3: 更新地图（占据栅格和点云）
         # 获取机器人在栅格中的索引
         rx = int((self.x - self.min_x) / self.resolution)
@@ -263,14 +285,21 @@ class ICPSlam:
                 self.occupancy[oy, ox] = 1
                 # 记录障碍物点坐标（全局坐标）
                 new_point = [end_x, end_y]
-                self.map_points.append(new_point)
                 
-                # 更新张量版本的地图点云（增量更新）
-                if hasattr(self, 'map_points_tensor') and self.map_points_tensor is not None:
-                    # 如果已存在张量版本，追加新点
-                    new_point_tensor = self.to_tensor([new_point])
-                    self.map_points_tensor = torch.cat([self.map_points_tensor, new_point_tensor], dim=0)
-                # 如果张量版本不存在，下次ICP时会完整更新
+                # 检查是否超过最大点数，如果超过则不添加新点
+                if len(self.map_points) < self.max_map_points:
+                    self.map_points.append(new_point)
+                    
+                    # 更新张量版本的地图点云（批量更新而不是逐个追加）
+                    # 每100个点或者当张量不存在时才重新创建张量
+                    if (len(self.map_points) % 100 == 0 or 
+                        not hasattr(self, 'map_points_tensor') or 
+                        self.map_points_tensor is None):
+                        # 删除旧张量
+                        if hasattr(self, 'map_points_tensor') and self.map_points_tensor is not None:
+                            del self.map_points_tensor
+                        # 重新创建张量（批量转换更高效）
+                        self.map_points_tensor = self.to_tensor(self.map_points)
             else:
                 # 未命中障碍：整条射线区域均为空闲
                 for cell in line:
@@ -297,6 +326,46 @@ class ICPSlam:
         # 清空CUDA缓存
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
+
+    def cleanup_memory(self):
+        """清理内存和GPU资源"""
+        import gc
+        
+        # 限制地图点云大小
+        if len(self.map_points) > self.max_map_points:
+            # 保留最新的点云数据，删除旧数据
+            num_to_remove = len(self.map_points) - self.max_map_points
+            self.map_points = self.map_points[num_to_remove:]
+            
+            # 重新创建张量版本
+            if self.map_points_tensor is not None:
+                del self.map_points_tensor
+                self.map_points_tensor = None
+            
+            print(f"[ICPSlam] 地图点云数量过多，清理了 {num_to_remove} 个旧点")
+        
+        # 强制垃圾回收
+        gc.collect()
+        
+        # 清空GPU缓存
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+        
+    def get_memory_stats(self):
+        """获取当前内存统计信息"""
+        stats = {
+            'map_points_count': len(self.map_points),
+            'has_tensor_cache': self.map_points_tensor is not None,
+            'device': str(self.device)
+        }
+        
+        if self.map_points_tensor is not None:
+            stats['tensor_size'] = self.map_points_tensor.shape
+            if self.device.type == 'cuda':
+                # CUDA设备上的内存使用情况
+                stats['gpu_memory_mb'] = torch.cuda.memory_allocated() / 1024 / 1024
+        
+        return stats
 
     def _bresenham(self, x0, y0, x1, y1):
         """Bresenham算法获取两个格点之间的离散栅格线。"""
