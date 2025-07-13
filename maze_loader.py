@@ -87,7 +87,7 @@ class MazeLoader:
         """
         # 根据config类型加载配置：字符串表示文件路径，dict表示配置数据，否则使用默认配置文件
         if isinstance(config, str) or config is None:
-            cfg_file = config if isinstance(config, str) else '3.json'
+            cfg_file = config if isinstance(config, str) else '2.json'
             
             # 根据文件扩展名选择解析方法
             if cfg_file.lower().endswith('.json'):

@@ -8,10 +8,43 @@ from lidar import Lidar
 from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
+import numpy as np
 
-SAFETY_DISTANCE_FACTOR = 0.75  # 路径截断百分比，表示只执行路径的前80%
+# ==================== 系统参数配置 ====================
+# 路径规划参数
+SAFETY_DISTANCE_FACTOR = 0.75  # 路径截断百分比，表示只执行路径的前75%
+FRONTIER_SAFETY_DISTANCE = 6.0  # 前沿探索器与障碍物的安全距离
 
-def check_exit_condition(scan, max_range=12.0, min_angle_range=180.0):
+# 迷宫和机器人参数
+MAZE_FILE = "2.json"  # 默认迷宫文件
+ROBOT_ODOM_NOISE = (0, 0)  # 机器人里程计噪声 (x_noise, y_noise)
+VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
+VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
+
+# 激光雷达参数
+LIDAR_MAX_RANGE = 12.0  # 激光雷达最大探测距离
+LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率
+LIDAR_NOISE = 0  # 激光雷达噪声
+
+# 出口检测参数
+EXIT_DETECTION_MIN_ANGLE = 180.0  # 检测出口的最小连续角度范围（度）
+
+# 探索阈值参数
+MIN_EXPLORATION_DISTANCE = 10.0  # 最小探索距离阈值
+MIN_FRONTIERS_TO_EXPLORE = 2  # 最小探索前沿数量
+
+# 运动控制精度参数
+ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
+MOVEMENT_THRESHOLD = 1e-6  # 移动距离阈值
+
+# 可视化参数
+VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
+VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
+
+# 未探索区域搜索参数
+OBSTACLE_SEARCH_EXPANSION = 5.0  # 障碍物区域搜索范围扩大距离（米）
+
+def check_exit_condition(scan, max_range=LIDAR_MAX_RANGE, min_angle_range=EXIT_DETECTION_MIN_ANGLE):
     """
     检查机器人是否走出迷宫
     当有超过180度的连续角度范围没有激光雷达返回数据时，认为已走出迷宫
@@ -90,17 +123,45 @@ def main():
     
     # 1. 加载迷宫地图和参数
     loader = MazeLoader()
-    maze = loader.load("3.json")  # 加载默认迷宫（可修改为自定义配置或文件路径）
+    maze = loader.load(MAZE_FILE)  # 加载默认迷宫
+
+    # === 自动生成入口虚拟墙壁 ===
     start_x, start_y = maze.start
+    min_x, min_y, max_x, max_y = maze.bounds
+    eps = maze.resolution * VIRTUAL_WALL_RESOLUTION_FACTOR
+    is_left = abs(start_x - min_x) < eps
+    is_bottom = abs(start_y - min_y) < eps
+    virtual_walls = []
+    # 自动查找入口左右两侧最近的墙端点
+    left_candidates = []
+    right_candidates = []
+    for wall in maze.walls:
+        for pt in wall:
+            if abs(pt[1] - start_y) < eps:
+                if pt[0] < start_x:
+                    left_candidates.append(pt)
+                elif pt[0] > start_x:
+                    right_candidates.append(pt)
+    left_wall_x = max(left_candidates, default=(start_x - 1,))[0] if left_candidates else start_x - 1
+    right_wall_x = min(right_candidates, default=(start_x + 1,))[0] if right_candidates else start_x + 1
+    print(left_wall_x, right_wall_x)
+    # 生成虚拟墙
+    virtual_x1 = left_wall_x 
+    virtual_x2 = right_wall_x 
+    virtual_y = start_y + VIRTUAL_WALL_Y_OFFSET
+    virtual_walls.append(((virtual_x1, virtual_y), (virtual_x2, virtual_y)))
+    virtual_walls.append(((virtual_x1, virtual_y), (virtual_x1, start_y)))
+    virtual_walls.append(((virtual_x2, virtual_y), (virtual_x2, start_y)))
+    # 添加虚拟墙到maze.walls
+    maze.walls.extend(virtual_walls)
+
+    # 2. 初始化机器人、传感器、SLAM等模块
     # 初始朝向设为0（朝向x正方向）
     start_pose = (start_x, start_y, 0.0)
-    # 安全移动参数
-    safety_distance_factor = SAFETY_DISTANCE_FACTOR  # 路径截断百分比，表示只执行路径的前50%
-    # 2. 初始化机器人、传感器、SLAM等模块
-    robot = Robot(start_pose, odom_noise=(0,0))  # 设置一定里程计噪声
-    lidar = Lidar(maze.walls, max_range=12.0, angle_resolution=1.0, noise=0)
+    robot = Robot(start_pose, odom_noise=ROBOT_ODOM_NOISE)  # 设置一定里程计噪声
+    lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose)
-    explorer = FrontierExplorer(safety_distance=6.0)  # 设置与障碍物的安全距离
+    explorer = FrontierExplorer(safety_distance=FRONTIER_SAFETY_DISTANCE)  # 设置与障碍物的安全距离
     viz = Visualizer(maze, robot=robot, slam=slam)
     # 3. 初始扫描并建立初始地图
     scan = lidar.scan(robot.get_pose())
@@ -116,15 +177,18 @@ def main():
     exploration_complete = False
     total_distance_traveled = 0.0  # 总移动距离
     frontiers_explored = 0  # 已探索的前沿数量
-    min_exploration_distance = 10.0  # 最小探索距离阈值（降低）
-    min_frontiers_to_explore = 2  # 最小探索前沿数量（降低）
+    min_exploration_distance = MIN_EXPLORATION_DISTANCE  # 最小探索距离阈值
+    min_frontiers_to_explore = MIN_FRONTIERS_TO_EXPLORE  # 最小探索前沿数量
+    
+    # 安全移动参数
+    safety_distance_factor = SAFETY_DISTANCE_FACTOR  # 路径截断百分比
     
     # 4. 前沿探索主循环
     while True:
         # 检查暂停状态
         if viz.paused:
             # 暂停循环，直到恢复
-            plt.pause(0.005)  # 减少暂停时的等待时间，提高响应速度
+            plt.pause(VISUALIZATION_PAUSE_TIME)  # 减少暂停时的等待时间，提高响应速度
             continue
         
         # 注意：路径规划会保持与障碍物的安全距离，防止穿墙
@@ -133,7 +197,7 @@ def main():
         has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
                                      frontiers_explored >= min_frontiers_to_explore)
         
-        if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=180.0):
+        if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=EXIT_DETECTION_MIN_ANGLE):
             print(f"检测到超过180度的连续无障碍区域 - 已探索距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
             print("探索充分，开始返回起点！")
             # 更新SLAM和可视化
@@ -197,7 +261,7 @@ def main():
                 d_theta = desired_theta - robot.theta
                 # 将角度差规范化到[-pi, pi]
                 d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
-                if abs(d_theta) > 1e-3:
+                if abs(d_theta) > ROTATION_THRESHOLD:
                     # 执行旋转
                     old_odom_theta = robot.odom_theta
                     robot.rotate(d_theta)
@@ -225,7 +289,7 @@ def main():
                     has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
                                                  frontiers_explored >= min_frontiers_to_explore)
                     
-                    if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=180.0):
+                    if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=EXIT_DETECTION_MIN_ANGLE):
                         print(f"移动过程中检测到超过180度连续无障碍区域！")
                         print(f"探索统计 - 总距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
                         robot_pose = robot.get_pose()
@@ -264,10 +328,10 @@ def main():
         
         if obstacle_coords:
             # 计算障碍物区域的最小和最大坐标，并扩大搜索范围
-            min_obstacle_x = min(coord[0] for coord in obstacle_coords) - 5.0  # 扩大5米
-            max_obstacle_x = max(coord[0] for coord in obstacle_coords) + 5.0
-            min_obstacle_y = min(coord[1] for coord in obstacle_coords) - 5.0
-            max_obstacle_y = max(coord[1] for coord in obstacle_coords) + 5.0
+            min_obstacle_x = min(coord[0] for coord in obstacle_coords) - OBSTACLE_SEARCH_EXPANSION  # 扩大范围
+            max_obstacle_x = max(coord[0] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
+            min_obstacle_y = min(coord[1] for coord in obstacle_coords) - OBSTACLE_SEARCH_EXPANSION
+            max_obstacle_y = max(coord[1] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
             
             print(f"障碍物区域边界: X[{min_obstacle_x:.1f}, {max_obstacle_x:.1f}], Y[{min_obstacle_y:.1f}, {max_obstacle_y:.1f}]")
             
@@ -319,14 +383,14 @@ def main():
                             d_theta = desired_theta - robot.theta
                             d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
                             
-                            if abs(d_theta) > 1e-3:
+                            if abs(d_theta) > ROTATION_THRESHOLD:
                                 robot.rotate(d_theta)
                                 scan = lidar.scan(robot.get_pose())
                                 slam.update((0.0, d_theta), scan)
                                 viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
                             
                             distance = math.hypot(target_x - robot.x, target_y - robot.y)
-                            if distance > 1e-6:
+                            if distance > MOVEMENT_THRESHOLD:
                                 robot.move(distance)
                                 scan = lidar.scan(robot.get_pose())
                                 slam.update((distance, 0.0), scan)
@@ -379,7 +443,7 @@ def main():
                 desired_theta = math.atan2(dy, dx)
                 d_theta = desired_theta - robot.theta
                 d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
-                if abs(d_theta) > 1e-3:
+                if abs(d_theta) > ROTATION_THRESHOLD:
                     old_odom_theta = robot.odom_theta
                     robot.rotate(d_theta)
                     dtheta_odom = robot.odom_theta - old_odom_theta
@@ -388,7 +452,7 @@ def main():
                     # slam.update((0.0, dtheta_odom), scan)  # 注释掉SLAM更新
                     viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
-                if distance > 1e-6:
+                if distance > MOVEMENT_THRESHOLD:
                     # 执行移动，使用完整距离
                     old_odom_x, old_odom_y = robot.odom_x, robot.odom_y
                     robot.move(distance)

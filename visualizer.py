@@ -2,6 +2,10 @@ import matplotlib.pyplot as plt
 import math
 import numpy as np
 
+# 可视化参数
+VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
+LIDAR_DISPLAY_MAX_RANGE = 12.0  # 激光雷达显示的最大范围
+
 class Visualizer:
     """可视化模块：使用Matplotlib实时渲染机器人、地图和前沿探索状态。"""
     def __init__(self, maze, robot=None, slam=None):
@@ -13,8 +17,8 @@ class Visualizer:
         self.maze = maze
         self.robot = robot
         self.slam = slam
-        # Matplotlib绘图设置
-        self.fig, self.ax = plt.subplots(figsize=(6,6))
+        # 主SLAM窗口
+        self.fig, self.ax = plt.subplots(figsize=(8,8))
         plt.ion()
         plt.show()
         # 边界和刻度
@@ -70,7 +74,7 @@ class Visualizer:
             # 显示栅格地图
             min_x, min_y, max_x, max_y = self.maze.bounds
             res = self.maze.resolution
-            extent = [min_x, max_x, min_y, max_y]
+            extent = (min_x, max_x, min_y, max_y)
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
         
         # 绘制目标前沿
@@ -96,7 +100,7 @@ class Visualizer:
             scan_pts_x = []
             scan_pts_y = []
             num_beams = len(scan)
-            max_range = 12.0  # 使用固定的最大范围
+            max_range = LIDAR_DISPLAY_MAX_RANGE  # 使用固定的最大范围
             for i, dist in enumerate(scan):
                 if dist < max_range:
                     angle = theta + math.radians(i * (360.0/num_beams))
@@ -115,7 +119,7 @@ class Visualizer:
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.legend(loc='upper right')
         plt.draw()
-        plt.pause(0.0001)  # 大幅减少暂停时间，提高移动速度
+        plt.pause(VISUALIZATION_UPDATE_TIME)  # 大幅减少暂停时间，提高移动速度
 
     def set_emergency_path(self, path):
         """设置紧急路径（无安全距离的最短路径），用红色线条显示"""
