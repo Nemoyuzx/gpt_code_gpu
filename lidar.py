@@ -14,6 +14,9 @@ class Lidar:
         self.max_range = max_range
         self.angle_resolution = angle_resolution
         self.noise = noise
+        
+        # 降噪滤波器引用（由外部设置）
+        self.noise_filter = None
 
     def scan(self, pose):
         """
@@ -64,7 +67,16 @@ class Lidar:
             if measured_dist > self.max_range:
                 measured_dist = self.max_range
             distances.append(measured_dist)
+        
+        # 如果有滤波器，对扫描数据进行滤波
+        if self.noise_filter is not None:
+            distances = self.noise_filter.filter_lidar_data(distances)
+        
         return distances
+    
+    def set_noise_filter(self, noise_filter):
+        """设置降噪滤波器"""
+        self.noise_filter = noise_filter
     
         
     def is_far_range(self, dist, threshold_ratio=0.8):

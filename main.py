@@ -8,6 +8,7 @@ from lidar import Lidar
 from icp_slam import ICPSlam    
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
+from noise_filter import NoiseFilter
 import numpy as np
 
 # ==================== 系统参数配置 ====================
@@ -16,15 +17,15 @@ SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的
 FRONTIER_SAFETY_DISTANCE = 6.0  # 前沿探索器与障碍物的安全距离
 
 # 迷宫和机器人参数
-MAZE_FILE = "2.json"  # 默认迷宫文件
-ROBOT_ODOM_NOISE = (0, 0)  # 机器人里程计噪声 (x_noise, y_noise)
+MAZE_FILE = "3.json"  # 默认迷宫文件
+ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
 LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率
-LIDAR_NOISE = 0.03  # 激光雷达噪声
+LIDAR_NOISE = 0.035  # 激光雷达噪声
 
 # 出口检测参数
 MIN_NO_OBSTACLE_COUNT = 100  # 无障碍点数阈值，超过此数值认为走出迷宫
@@ -42,12 +43,24 @@ VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 
 # 未探索区域搜索参数
-OBSTACLE_SEARCH_EXPANSION = 2  # 障碍物区域搜索范围扩大距离（米）
+OBSTACLE_SEARCH_EXPANSION = 0.5  # 障碍物区域搜索范围扩大距离（米）
 
-def check_exit_condition(scan, max_range=12.0, min_no_obstacle_count=100):
+# ==================== 降噪滤波参数 ====================
+# 滤波器总开关
+NOISE_FILTER_ENABLED = False  # 是否启用降噪滤波器
+
+# 激光雷达降噪参数
+LIDAR_FILTER_TYPE = 'median'  # 激光雷达滤波类型: 'none', 'median', 'moving_average', 'gaussian'
+LIDAR_FILTER_WINDOW_SIZE = 5  # 激光雷达滤波窗口大小
+
+# 里程计降噪参数  
+ODOM_FILTER_TYPE = 'kalman'  # 里程计滤波类型: 'none', 'kalman', 'moving_average'
+ODOM_FILTER_WINDOW_SIZE = 3  # 里程计滤波窗口大小
+
+def check_exit_condition(scan, max_range=12.0, min_no_obstacle_count=97):
     """
     检查机器人是否走出迷宫
-    简化判断条件：无障碍点数为105及以上即判定为在终点
+    简化判断条件：无障碍点数为97及以上即判定为在终点
 
     Args:
         scan: 激光雷达扫描数据列表
@@ -133,6 +146,26 @@ def main():
     slam = ICPSlam(maze, start_pose)
     explorer = FrontierExplorer(safety_distance=FRONTIER_SAFETY_DISTANCE)  # 设置与障碍物的安全距离
     viz = Visualizer(maze, robot=robot, slam=slam)
+    
+    # 初始化降噪滤波器
+    noise_filter = NoiseFilter(
+        enabled=NOISE_FILTER_ENABLED,
+        lidar_filter_type=LIDAR_FILTER_TYPE,
+        odom_filter_type=ODOM_FILTER_TYPE,
+        lidar_window_size=LIDAR_FILTER_WINDOW_SIZE,
+        odom_window_size=ODOM_FILTER_WINDOW_SIZE
+    )
+    
+    # 将滤波器设置到传感器和机器人
+    robot.set_noise_filter(noise_filter)
+    lidar.set_noise_filter(noise_filter)
+    
+    # 输出滤波器状态信息
+    if NOISE_FILTER_ENABLED:
+        filter_status = noise_filter.get_status()
+        print(f"[降噪滤波器] 状态: {filter_status}")
+    else:
+        print("[降噪滤波器] 滤波器已禁用")
     # 3. 初始扫描并建立初始地图
     scan = lidar.scan(robot.get_pose())
     slam.update((0.0, 0.0), scan)
@@ -302,7 +335,7 @@ def main():
             max_obstacle_x = max(coord[0] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
             min_obstacle_y = min(coord[1] for coord in obstacle_coords) - OBSTACLE_SEARCH_EXPANSION
             max_obstacle_y = max(coord[1] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
-            
+            print("检测到障碍物区域，边界如下：")
             print(f"障碍物区域边界: X[{min_obstacle_x:.1f}, {max_obstacle_x:.1f}], Y[{min_obstacle_y:.1f}, {max_obstacle_y:.1f}]")
             
             # 转换为栅格索引

@@ -15,6 +15,9 @@ class Robot:
         self.odom_x, self.odom_y, self.odom_theta = self.x, self.y, self.theta
         # 噪声标准差
         self.trans_noise, self.rot_noise = odom_noise
+        
+        # 降噪滤波器引用（由外部设置）
+        self.noise_filter = None
 
     def move(self, distance):
         """
@@ -84,4 +87,15 @@ class Robot:
 
     def get_odom_pose(self):
         """获取机器人里程计估计的位姿 (x, y, theta)。"""
-        return (self.odom_x, self.odom_y, self.odom_theta)
+        # 如果有滤波器，使用滤波后的数据
+        if self.noise_filter is not None:
+            filtered_x, filtered_y, filtered_theta = self.noise_filter.filter_odometry_data(
+                self.odom_x, self.odom_y, self.odom_theta
+            )
+            return (filtered_x, filtered_y, filtered_theta)
+        else:
+            return (self.odom_x, self.odom_y, self.odom_theta)
+    
+    def set_noise_filter(self, noise_filter):
+        """设置降噪滤波器"""
+        self.noise_filter = noise_filter

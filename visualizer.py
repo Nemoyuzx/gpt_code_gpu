@@ -4,6 +4,7 @@ import numpy as np
 
 # 可视化参数
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
+LIDAR_DISPLAY_MAX_RANGE = 12.0  # 激光雷达显示最大范围
 LIDAR_DISPLAY_MAX_RANGE = 12.0  # 激光雷达显示的最大范围
 
 class Visualizer:
