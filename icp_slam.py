@@ -10,7 +10,7 @@ import gc   # 新增: 用于显式进行垃圾回收
 #超过最大范围比例
 MAX_RANGE_FACTOR = 0.6  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
-ADJACENCY_DIFF_THRESHOLD = 0.001  # 相邻测距点之间的差异阈值 (米)
+ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
 ICP_MAX_ITER = 200  # ICP最大迭代次数
 ICP_TOLERANCE = 1e-6  # ICP收敛容忍

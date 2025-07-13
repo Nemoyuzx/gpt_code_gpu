@@ -5,14 +5,14 @@ import matplotlib.pyplot as plt
 from maze_loader import MazeLoader
 from robot import Robot
 from lidar import Lidar
-from icp_slam import ICPSlam
+from icp_slam import ICPSlam    
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
 import numpy as np
 
 # ==================== 系统参数配置 ====================
 # 路径规划参数
-SAFETY_DISTANCE_FACTOR = 0.75  # 路径截断百分比，表示只执行路径的前75%
+SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
 FRONTIER_SAFETY_DISTANCE = 6.0  # 前沿探索器与障碍物的安全距离
 
 # 迷宫和机器人参数
@@ -22,16 +22,16 @@ VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数
-LIDAR_MAX_RANGE = 12.0  # 激光雷达最大探测距离
+LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
 LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率
-LIDAR_NOISE = 0  # 激光雷达噪声
+LIDAR_NOISE = 0.03  # 激光雷达噪声
 
 # 出口检测参数
-EXIT_DETECTION_MIN_ANGLE = 180.0  # 检测出口的最小连续角度范围（度）
+MIN_NO_OBSTACLE_COUNT = 100  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
-MIN_EXPLORATION_DISTANCE = 10.0  # 最小探索距离阈值
-MIN_FRONTIERS_TO_EXPLORE = 2  # 最小探索前沿数量
+MIN_EXPLORATION_DISTANCE = 20.0  # 最小探索距离阈值
+MIN_FRONTIERS_TO_EXPLORE = 10  # 最小探索前沿数量
 
 # 运动控制精度参数
 ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
@@ -42,18 +42,18 @@ VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 
 # 未探索区域搜索参数
-OBSTACLE_SEARCH_EXPANSION = 5.0  # 障碍物区域搜索范围扩大距离（米）
+OBSTACLE_SEARCH_EXPANSION = 2  # 障碍物区域搜索范围扩大距离（米）
 
-def check_exit_condition(scan, max_range=LIDAR_MAX_RANGE, min_angle_range=EXIT_DETECTION_MIN_ANGLE):
+def check_exit_condition(scan, max_range=12.0, min_no_obstacle_count=100):
     """
     检查机器人是否走出迷宫
-    当有超过180度的连续角度范围没有激光雷达返回数据时，认为已走出迷宫
-    
+    简化判断条件：无障碍点数为105及以上即判定为在终点
+
     Args:
         scan: 激光雷达扫描数据列表
         max_range: 激光雷达最大探测距离
-        min_angle_range: 最小连续角度范围（度），超过此范围认为走出迷宫
-     
+        min_no_obstacle_count: 最小无障碍点数阈值，超过此数值认为走出迷宫
+    
     Returns:
         bool: True表示已走出迷宫，False表示仍在迷宫内
     """
@@ -63,53 +63,23 @@ def check_exit_condition(scan, max_range=LIDAR_MAX_RANGE, min_angle_range=EXIT_D
     # 将扫描数据转换为布尔数组，True表示该角度没有检测到障碍物
     no_obstacle = [dist >= max_range for dist in scan]
     
-    # 寻找最长的连续True序列
-    max_consecutive = 0
-    current_consecutive = 0
+    # 统计无障碍点的数量
+    no_obstacle_count = sum(no_obstacle)
+    total_points = len(scan)
+    no_obstacle_ratio = no_obstacle_count / total_points
     
-    # 由于激光雷达是360度扫描，需要考虑环形连接
-    # 先处理普通的连续序列
-    for has_no_obstacle in no_obstacle:
-        if has_no_obstacle:
-            current_consecutive += 1
-            max_consecutive = max(max_consecutive, current_consecutive)
-        else:
-            current_consecutive = 0
+    # 添加调试信息
+    #print(f"[DEBUG] 扫描点总数: {total_points}, 无障碍点数: {no_obstacle_count}, 比例: {no_obstacle_ratio*100:.1f}%")
     
-    # 处理跨越0度的环形连续序列
-    # 从开头开始计算连续的True
-    start_consecutive = 0
-    for has_no_obstacle in no_obstacle:
-        if has_no_obstacle:
-            start_consecutive += 1
-        else:
-            break
+    # 简化判断条件：无障碍点数为110及以上
+    result = no_obstacle_count >= min_no_obstacle_count
     
-    # 从末尾开始计算连续的True
-    end_consecutive = 0
-    for has_no_obstacle in reversed(no_obstacle):
-        if has_no_obstacle:
-            end_consecutive += 1
-        else:
-            break
+    if result:
+        print(f"[EXIT DETECTED] 检测到出口！")
+        print(f"[EXIT DETECTED] - 无障碍点数: {no_obstacle_count} >= {min_no_obstacle_count}")
+        print(f"[EXIT DETECTED] - 无障碍比例: {no_obstacle_ratio*100:.1f}%")
     
-    # 如果开头和末尾都有连续的True，且它们可能是连接的
-    if start_consecutive > 0 and end_consecutive > 0:
-        # 检查是否整个扫描都是True（特殊情况）
-        if start_consecutive + end_consecutive >= len(no_obstacle):
-            max_consecutive = len(no_obstacle)
-        else:
-            # 跨越0度的连续长度
-            wrap_around_consecutive = start_consecutive + end_consecutive
-            max_consecutive = max(max_consecutive, wrap_around_consecutive)
-    
-    # 计算角度：假设激光雷达是360度均匀分布
-    angle_per_scan = 360.0 / len(scan)
-    max_angle_range = max_consecutive * angle_per_scan
-    
-    #print(f"最大连续无障碍角度范围: {max_angle_range:.1f}度 (阈值: {min_angle_range}度)")
-    
-    return max_angle_range >= min_angle_range
+    return result
 
 def main():
     # 检查是否有环境变量控制GPU使用
@@ -197,7 +167,7 @@ def main():
         has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
                                      frontiers_explored >= min_frontiers_to_explore)
         
-        if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=EXIT_DETECTION_MIN_ANGLE):
+        if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_no_obstacle_count=MIN_NO_OBSTACLE_COUNT):
             print(f"检测到超过180度的连续无障碍区域 - 已探索距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
             print("探索充分，开始返回起点！")
             # 更新SLAM和可视化
@@ -289,7 +259,7 @@ def main():
                     has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
                                                  frontiers_explored >= min_frontiers_to_explore)
                     
-                    if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_angle_range=EXIT_DETECTION_MIN_ANGLE):
+                    if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_no_obstacle_count=MIN_NO_OBSTACLE_COUNT):
                         print(f"移动过程中检测到超过180度连续无障碍区域！")
                         print(f"探索统计 - 总距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
                         robot_pose = robot.get_pose()
