@@ -48,38 +48,38 @@ ROTATION_THRESHOLD = 1e-3
 MOVEMENT_THRESHOLD = 1e-6
 
 # 测试参数
-NUM_TRIALS_PER_PARAM = 20  # 每组参数运行的试验次数（减少到20次以加速调优）
+NUM_TRIALS_PER_PARAM = 50  # 每组参数运行的试验次数
 ENABLE_PROCESS_VISUALIZATION = False  # 关闭过程可视化以加速
 
 # ==================== 待调优参数定义 ====================
 PARAM_CONFIGS = {
     'MAX_RANGE_FACTOR': {
-        'range': np.arange(0.30, 0.71, 0.05),  # 0.3到0.7，步长0.05，共9个点
+        'range': np.arange(0.10, 0.91, 0.02),  # 0.1到0.9，步长0.02，共40个点
         'default': 0.49,
         'description': '超过最大范围的比例阈值'
     },
     'ADJACENCY_DIFF_THRESHOLD': {
-        'range': np.arange(0.005, 0.051, 0.005),  # 0.005到0.05，步长0.005，共10个点
+        'range': np.arange(0.005, 0.51, 0.002),  # 0.005到0.51，步长0.002，共253个点
         'default': 0.01,
         'description': '相邻测距点之间的差异阈值 (米)'
     },
     'ICP_MAX_ITER': {
-        'range': np.arange(100, 1001, 100),  # 100到1000，步长100，共10个点
+        'range': np.arange(100, 2001, 10),  # 100到2000，步长10，共191个点
         'default': 500,
         'description': 'ICP最大迭代次数'
     },
     'SAFETY_DISTANCE_FACTOR': {
-        'range': np.arange(0.50, 0.91, 0.05),  # 0.5到0.9，步长0.05，共9个点
+        'range': np.arange(0.20, 0.91, 0.02),  # 0.2到0.9，步长0.02，共35个点
         'default': 0.7,
         'description': '路径截断百分比'
     },
     'MIN_EXPLORATION_DISTANCE': {
-        'range': np.arange(5, 26, 5),  # 5到25，步长5，共5个点
+        'range': np.arange(2, 35, 1),  # 2到34，步长1，共33个点
         'default': 10.0,
         'description': '最小探索距离阈值'
     },
     'MIN_FRONTIERS_TO_EXPLORE': {
-        'range': np.arange(2, 21, 2),  # 2到20，步长2，共10个点
+        'range': np.arange(2, 30, 1),  # 2到29，步长1，共28个点
         'default': 5,
         'description': '最小探索前沿数量'
     }
