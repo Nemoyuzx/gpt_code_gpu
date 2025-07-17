@@ -8,19 +8,24 @@ class NoiseFilter:
     支持多种滤波算法：移动平均、中值滤波、卡尔曼滤波等
     """
     
-    def __init__(self, enabled=True, lidar_filter_type='median', odom_filter_type='kalman',
+    def __init__(self, enabled=True, lidar_filter_enabled=True, odom_filter_enabled=True,
+                 lidar_filter_type='median', odom_filter_type='kalman',
                  lidar_window_size=5, odom_window_size=3):
         """
         初始化噪声滤波器
         
         Args:
-            enabled: 是否启用滤波器
+            enabled: 是否启用滤波器总开关
+            lidar_filter_enabled: 是否启用激光雷达滤波
+            odom_filter_enabled: 是否启用里程计滤波
             lidar_filter_type: 激光雷达滤波类型 ('none', 'median', 'moving_average', 'gaussian')
             odom_filter_type: 里程计滤波类型 ('none', 'kalman', 'moving_average')
             lidar_window_size: 激光雷达滤波窗口大小
             odom_window_size: 里程计滤波窗口大小
         """
         self.enabled = enabled
+        self.lidar_filter_enabled = lidar_filter_enabled
+        self.odom_filter_enabled = odom_filter_enabled
         self.lidar_filter_type = lidar_filter_type
         self.odom_filter_type = odom_filter_type
         self.lidar_window_size = lidar_window_size
@@ -39,8 +44,8 @@ class NoiseFilter:
         
         print(f"[NoiseFilter] 滤波器初始化 - 状态: {'启用' if enabled else '禁用'}")
         if enabled:
-            print(f"[NoiseFilter] 激光雷达滤波: {lidar_filter_type}, 窗口大小: {lidar_window_size}")
-            print(f"[NoiseFilter] 里程计滤波: {odom_filter_type}, 窗口大小: {odom_window_size}")
+            print(f"[NoiseFilter] 激光雷达滤波: {'启用' if lidar_filter_enabled else '禁用'} - 类型: {lidar_filter_type}, 窗口大小: {lidar_window_size}")
+            print(f"[NoiseFilter] 里程计滤波: {'启用' if odom_filter_enabled else '禁用'} - 类型: {odom_filter_type}, 窗口大小: {odom_window_size}")
     
     def _init_kalman_filter(self):
         """初始化卡尔曼滤波器参数"""
@@ -86,7 +91,7 @@ class NoiseFilter:
         Returns:
             filtered_data: 滤波后的扫描数据
         """
-        if not self.enabled or self.lidar_filter_type == 'none':
+        if not self.enabled or not self.lidar_filter_enabled or self.lidar_filter_type == 'none':
             return scan_data
         
         if not scan_data:
@@ -151,7 +156,7 @@ class NoiseFilter:
         Returns:
             filtered_x, filtered_y, filtered_theta: 滤波后的位置和角度
         """
-        if not self.enabled or self.odom_filter_type == 'none':
+        if not self.enabled or not self.odom_filter_enabled or self.odom_filter_type == 'none':
             return x, y, theta
         
         if self.odom_filter_type == 'kalman':
@@ -225,6 +230,8 @@ class NoiseFilter:
         """获取滤波器状态信息"""
         return {
             'enabled': self.enabled,
+            'lidar_filter_enabled': self.lidar_filter_enabled,
+            'odom_filter_enabled': self.odom_filter_enabled,
             'lidar_filter': self.lidar_filter_type,
             'odom_filter': self.odom_filter_type,
             'lidar_history_size': len(self.lidar_history),

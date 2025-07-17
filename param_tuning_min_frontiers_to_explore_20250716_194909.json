@@ -1,0 +1,1724 @@
+{
+  "parameter_results": [
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 2.0,
+      "param_index": 1,
+      "num_trials": 20,
+      "avg_accuracy": 0.7519120526172399,
+      "avg_coverage_rate": 0.13948090277777775,
+      "std_accuracy": 0.007449272930855946,
+      "trial_time": 1021.5544528961182,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7554801986193532,
+          "coverage_rate": 0.14335069444444445,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7629231333251864,
+          "coverage_rate": 0.14206597222222223,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7401414196355725,
+          "coverage_rate": 0.1276736111111111,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7617820324005891,
+          "coverage_rate": 0.14145833333333332,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7538461538461538,
+          "coverage_rate": 0.14331597222222223,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7617412630288167,
+          "coverage_rate": 0.14157986111111112,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7533730399902759,
+          "coverage_rate": 0.14282986111111112,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7585321100917432,
+          "coverage_rate": 0.14192708333333334,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.747917162580338,
+          "coverage_rate": 0.14586805555555554,
+          "total_distance": 2.3242640687119294,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7525823307813829,
+          "coverage_rate": 0.14286458333333332,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7528571428571429,
+          "coverage_rate": 0.14583333333333334,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7565574761271606,
+          "coverage_rate": 0.14362847222222222,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7563045586808923,
+          "coverage_rate": 0.14319444444444446,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7553469581749049,
+          "coverage_rate": 0.1461111111111111,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7404133804732118,
+          "coverage_rate": 0.1276736111111111,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7523427041499331,
+          "coverage_rate": 0.14265625,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7422150013539128,
+          "coverage_rate": 0.12822916666666667,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.754152018426476,
+          "coverage_rate": 0.14321180555555554,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7408561365483609,
+          "coverage_rate": 0.12815972222222222,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7388768312533912,
+          "coverage_rate": 0.1279861111111111,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 4.0,
+      "param_index": 2,
+      "num_trials": 20,
+      "avg_accuracy": 0.7569935961835041,
+      "avg_coverage_rate": 0.13848263888888887,
+      "std_accuracy": 0.006875423641513701,
+      "trial_time": 1178.445072889328,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7614835948644794,
+          "coverage_rate": 0.12170138888888889,
+          "total_distance": 1.8000000000000003,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7405602923264312,
+          "coverage_rate": 0.12828125,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7589883461443094,
+          "coverage_rate": 0.1400347222222222,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7755731922398589,
+          "coverage_rate": 0.118125,
+          "total_distance": 1.6,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7542836310608823,
+          "coverage_rate": 0.14286458333333332,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.765072463768116,
+          "coverage_rate": 0.11979166666666667,
+          "total_distance": 1.8000000000000003,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7616072522356977,
+          "coverage_rate": 0.14171875,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7622446468127,
+          "coverage_rate": 0.14107638888888888,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7507613594834938,
+          "coverage_rate": 0.1425173611111111,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7524076557357064,
+          "coverage_rate": 0.14241319444444445,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7519445794846864,
+          "coverage_rate": 0.1428472222222222,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7553580126643936,
+          "coverage_rate": 0.14256944444444444,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7546391752577319,
+          "coverage_rate": 0.14314236111111112,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7560620756547042,
+          "coverage_rate": 0.14319444444444446,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7568256279577721,
+          "coverage_rate": 0.14307291666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7564974495992227,
+          "coverage_rate": 0.1429513888888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7513952924047561,
+          "coverage_rate": 0.14309027777777777,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7551665451008995,
+          "coverage_rate": 0.1428125,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7641151255358236,
+          "coverage_rate": 0.14175347222222223,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7548856053384175,
+          "coverage_rate": 0.14569444444444443,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 6.0,
+      "param_index": 3,
+      "num_trials": 20,
+      "avg_accuracy": 0.7538172906350875,
+      "avg_coverage_rate": 0.14004947916666666,
+      "std_accuracy": 0.007849774913525289,
+      "trial_time": 756.1993319988251,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7419050188882893,
+          "coverage_rate": 0.12868055555555555,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7604306864064603,
+          "coverage_rate": 0.14189236111111111,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7534296467160374,
+          "coverage_rate": 0.14300347222222223,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.754520082514258,
+          "coverage_rate": 0.14307291666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.763215859030837,
+          "coverage_rate": 0.141875,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7600331478631467,
+          "coverage_rate": 0.14664930555555555,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7589070775156476,
+          "coverage_rate": 0.14423611111111112,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7517233039061555,
+          "coverage_rate": 0.14355902777777776,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.740418592008698,
+          "coverage_rate": 0.12774305555555557,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7622241190098769,
+          "coverage_rate": 0.14237847222222222,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7537883379803613,
+          "coverage_rate": 0.14321180555555554,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7569889870507079,
+          "coverage_rate": 0.1434548611111111,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7608510638297873,
+          "coverage_rate": 0.1427951388888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7373861009111927,
+          "coverage_rate": 0.12765625,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7407106048277733,
+          "coverage_rate": 0.12802083333333333,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7530624620982413,
+          "coverage_rate": 0.14314236111111112,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7610913112940887,
+          "coverage_rate": 0.1412673611111111,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7519680271284971,
+          "coverage_rate": 0.14335069444444445,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.762417421091265,
+          "coverage_rate": 0.14190972222222223,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7512739626304296,
+          "coverage_rate": 0.14309027777777777,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 8.0,
+      "param_index": 4,
+      "num_trials": 20,
+      "avg_accuracy": 0.7548833658515519,
+      "avg_coverage_rate": 0.1388324652777778,
+      "std_accuracy": 0.0084899689673703,
+      "trial_time": 745.4104897975922,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7527352297592997,
+          "coverage_rate": 0.1428125,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7541818181818182,
+          "coverage_rate": 0.14322916666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7409425224734405,
+          "coverage_rate": 0.12746527777777777,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7642883368008812,
+          "coverage_rate": 0.1418576388888889,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7534196828471129,
+          "coverage_rate": 0.14342013888888888,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7753601881799471,
+          "coverage_rate": 0.11809027777777778,
+          "total_distance": 1.6,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7544604927782498,
+          "coverage_rate": 0.14303819444444443,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7535792283426352,
+          "coverage_rate": 0.14309027777777777,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7505787742171317,
+          "coverage_rate": 0.1424826388888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7403651115618661,
+          "coverage_rate": 0.12838541666666667,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7631127450980392,
+          "coverage_rate": 0.14166666666666666,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.757250268528464,
+          "coverage_rate": 0.14546875,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7584036108801521,
+          "coverage_rate": 0.14616319444444445,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7530909090909091,
+          "coverage_rate": 0.14322916666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7616328514153808,
+          "coverage_rate": 0.14289930555555555,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7439254859611231,
+          "coverage_rate": 0.12861111111111112,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7623021229598724,
+          "coverage_rate": 0.14147569444444444,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7605340519353259,
+          "coverage_rate": 0.14173611111111112,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7422582826233942,
+          "coverage_rate": 0.12838541666666667,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7552456033959976,
+          "coverage_rate": 0.14314236111111112,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 10.0,
+      "param_index": 5,
+      "num_trials": 20,
+      "avg_accuracy": 0.7571500096199115,
+      "avg_coverage_rate": 0.14096440972222224,
+      "std_accuracy": 0.007113695227273292,
+      "trial_time": 746.1763062477112,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.754341226472374,
+          "coverage_rate": 0.14296875,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.752692075015124,
+          "coverage_rate": 0.14348958333333334,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7543753038405445,
+          "coverage_rate": 0.1428472222222222,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7642256610210796,
+          "coverage_rate": 0.1424826388888889,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7584221487198334,
+          "coverage_rate": 0.14171875,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7391481834263165,
+          "coverage_rate": 0.12758680555555554,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7557446808510638,
+          "coverage_rate": 0.1427951388888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7551190476190476,
+          "coverage_rate": 0.14583333333333334,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7535844471445929,
+          "coverage_rate": 0.14288194444444444,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.755348392494323,
+          "coverage_rate": 0.14526041666666667,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.76074445940982,
+          "coverage_rate": 0.14178819444444443,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7589592538046146,
+          "coverage_rate": 0.14145833333333332,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7776636336953331,
+          "coverage_rate": 0.1182986111111111,
+          "total_distance": 1.6,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7544772507260407,
+          "coverage_rate": 0.14347222222222222,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7553939393939394,
+          "coverage_rate": 0.14322916666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7520671206225681,
+          "coverage_rate": 0.14277777777777778,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7647274057811928,
+          "coverage_rate": 0.14234375,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.753621438918397,
+          "coverage_rate": 0.14381944444444444,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.759843002575739,
+          "coverage_rate": 0.1415451388888889,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7625015208662854,
+          "coverage_rate": 0.1426909722222222,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 12.0,
+      "param_index": 6,
+      "num_trials": 20,
+      "avg_accuracy": 0.7538648174227588,
+      "avg_coverage_rate": 0.14044184027777779,
+      "std_accuracy": 0.006412433358314183,
+      "trial_time": 840.6114439964294,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7560412871888281,
+          "coverage_rate": 0.14296875,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7419267299864315,
+          "coverage_rate": 0.12795138888888888,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7565270188221008,
+          "coverage_rate": 0.14296875,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7530684165755256,
+          "coverage_rate": 0.14286458333333332,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.755237979895846,
+          "coverage_rate": 0.14335069444444445,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7570593962999026,
+          "coverage_rate": 0.1426388888888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7587604290822407,
+          "coverage_rate": 0.14565972222222223,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7536337209302325,
+          "coverage_rate": 0.14333333333333334,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7538630003650079,
+          "coverage_rate": 0.1426909722222222,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7537584869059166,
+          "coverage_rate": 0.14319444444444446,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7397018970189702,
+          "coverage_rate": 0.128125,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7621371066113686,
+          "coverage_rate": 0.14232638888888888,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7596519181272214,
+          "coverage_rate": 0.14164930555555555,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7546251217137293,
+          "coverage_rate": 0.1426388888888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.753188388193854,
+          "coverage_rate": 0.14293402777777778,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7587504704554008,
+          "coverage_rate": 0.13838541666666668,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7394079304725693,
+          "coverage_rate": 0.12784722222222222,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7540983606557377,
+          "coverage_rate": 0.14296875,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7523716857212357,
+          "coverage_rate": 0.14274305555555555,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7634870034330554,
+          "coverage_rate": 0.14159722222222224,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 14.0,
+      "param_index": 7,
+      "num_trials": 20,
+      "avg_accuracy": 0.7560459413029905,
+      "avg_coverage_rate": 0.14042881944444444,
+      "std_accuracy": 0.004778277615370275,
+      "trial_time": 636.1949520111084,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7633179275115544,
+          "coverage_rate": 0.14274305555555555,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7521512543934069,
+          "coverage_rate": 0.14324652777777777,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7513395031660984,
+          "coverage_rate": 0.14256944444444444,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7587889223704979,
+          "coverage_rate": 0.12098958333333333,
+          "total_distance": 1.8000000000000003,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7515565864973752,
+          "coverage_rate": 0.1422048611111111,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7418221140848879,
+          "coverage_rate": 0.1284375,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.755802936996684,
+          "coverage_rate": 0.1465972222222222,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7612596118637862,
+          "coverage_rate": 0.14223958333333334,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7531253792936036,
+          "coverage_rate": 0.14303819444444443,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7625978473581213,
+          "coverage_rate": 0.14194444444444446,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.755753074394253,
+          "coverage_rate": 0.14258680555555556,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7572075291875149,
+          "coverage_rate": 0.14572916666666666,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7579963789981895,
+          "coverage_rate": 0.14383680555555556,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7619457069156124,
+          "coverage_rate": 0.14133680555555556,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7543475617171349,
+          "coverage_rate": 0.14276041666666667,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7546918513137184,
+          "coverage_rate": 0.14338541666666665,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7560363375567775,
+          "coverage_rate": 0.14524305555555556,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7578395135328485,
+          "coverage_rate": 0.1456076388888889,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7545498665372482,
+          "coverage_rate": 0.14309027777777777,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7587889223704979,
+          "coverage_rate": 0.12098958333333333,
+          "total_distance": 1.8000000000000003,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 16.0,
+      "param_index": 8,
+      "num_trials": 20,
+      "avg_accuracy": 0.755118700558493,
+      "avg_coverage_rate": 0.13822309027777777,
+      "std_accuracy": 0.008555874230999665,
+      "trial_time": 736.5005257129669,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7384240454914703,
+          "coverage_rate": 0.12822916666666667,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7734156741655639,
+          "coverage_rate": 0.11807291666666667,
+          "total_distance": 1.6,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.750962927298989,
+          "coverage_rate": 0.14423611111111112,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7582142857142857,
+          "coverage_rate": 0.14583333333333334,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7629205440229062,
+          "coverage_rate": 0.12126736111111111,
+          "total_distance": 1.8000000000000003,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7542517006802721,
+          "coverage_rate": 0.14291666666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.744195464362851,
+          "coverage_rate": 0.12861111111111112,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7604473942969519,
+          "coverage_rate": 0.14125,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7551367781155015,
+          "coverage_rate": 0.1427951388888889,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7409867172675522,
+          "coverage_rate": 0.1280902777777778,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7573047107930829,
+          "coverage_rate": 0.14557291666666666,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7578672366702291,
+          "coverage_rate": 0.14619791666666668,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.758523424086338,
+          "coverage_rate": 0.1415625,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7557575757575757,
+          "coverage_rate": 0.14322916666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7397186147186147,
+          "coverage_rate": 0.12833333333333333,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7529168692270296,
+          "coverage_rate": 0.1428472222222222,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7632673025189533,
+          "coverage_rate": 0.14197916666666666,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.756512430117759,
+          "coverage_rate": 0.1459548611111111,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7636029411764705,
+          "coverage_rate": 0.14166666666666666,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7579473746874628,
+          "coverage_rate": 0.14581597222222223,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 18.0,
+      "param_index": 9,
+      "num_trials": 20,
+      "avg_accuracy": 0.757340019009729,
+      "avg_coverage_rate": 0.1404453125,
+      "std_accuracy": 0.006547107494076326,
+      "trial_time": 768.9474890232086,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7520601934790397,
+          "coverage_rate": 0.14536458333333332,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7650454433800049,
+          "coverage_rate": 0.14135416666666667,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7645473477888032,
+          "coverage_rate": 0.14171875,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7455429497568882,
+          "coverage_rate": 0.12854166666666667,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7531492248062015,
+          "coverage_rate": 0.14333333333333334,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7560598859315589,
+          "coverage_rate": 0.1461111111111111,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7645177165354331,
+          "coverage_rate": 0.1411111111111111,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7632124984743074,
+          "coverage_rate": 0.14223958333333334,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7586001666468277,
+          "coverage_rate": 0.14585069444444446,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7535573358842521,
+          "coverage_rate": 0.14519097222222221,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7626997716894978,
+          "coverage_rate": 0.12166666666666667,
+          "total_distance": 1.8000000000000003,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7529769137302552,
+          "coverage_rate": 0.14288194444444444,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7613747553816047,
+          "coverage_rate": 0.14194444444444446,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7551390568319226,
+          "coverage_rate": 0.14357638888888888,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7624450951683748,
+          "coverage_rate": 0.14229166666666668,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7542753183747726,
+          "coverage_rate": 0.14314236111111112,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.7651957737725296,
+          "coverage_rate": 0.13967013888888888,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7612490779444308,
+          "coverage_rate": 0.1412152777777778,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7410256410256411,
+          "coverage_rate": 0.12864583333333332,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.754126213592233,
+          "coverage_rate": 0.14305555555555555,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    },
+    {
+      "param_name": "MIN_FRONTIERS_TO_EXPLORE",
+      "param_value": 20.0,
+      "param_index": 10,
+      "num_trials": 20,
+      "avg_accuracy": 0.7547412927924487,
+      "avg_coverage_rate": 0.1400329861111111,
+      "std_accuracy": 0.0076451538397363655,
+      "trial_time": 1483.3747589588165,
+      "detailed_trials": [
+        {
+          "trial": 1,
+          "accuracy": 0.7632238656304838,
+          "coverage_rate": 0.13850694444444445,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 2,
+          "accuracy": 0.7536266924564797,
+          "coverage_rate": 0.1436111111111111,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 3,
+          "accuracy": 0.7414283778289741,
+          "coverage_rate": 0.12810763888888888,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 4,
+          "accuracy": 0.7641497698718747,
+          "coverage_rate": 0.13956597222222222,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 5,
+          "accuracy": 0.7565000593612727,
+          "coverage_rate": 0.14623263888888888,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 6,
+          "accuracy": 0.7526060606060606,
+          "coverage_rate": 0.14322916666666666,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 7,
+          "accuracy": 0.7589487453918421,
+          "coverage_rate": 0.14598958333333334,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 8,
+          "accuracy": 0.7400271370420625,
+          "coverage_rate": 0.12795138888888888,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 9,
+          "accuracy": 0.7611445413238365,
+          "coverage_rate": 0.14137152777777778,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 10,
+          "accuracy": 0.7656826568265682,
+          "coverage_rate": 0.14114583333333333,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 11,
+          "accuracy": 0.7561441183488428,
+          "coverage_rate": 0.14552083333333332,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 12,
+          "accuracy": 0.7516085953623892,
+          "coverage_rate": 0.14300347222222223,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 13,
+          "accuracy": 0.7635143380109823,
+          "coverage_rate": 0.14227430555555556,
+          "total_distance": 2.082842712474619,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 14,
+          "accuracy": 0.7418784830773413,
+          "coverage_rate": 0.12772569444444445,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 15,
+          "accuracy": 0.7566028592197722,
+          "coverage_rate": 0.1432986111111111,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 16,
+          "accuracy": 0.7424735557363711,
+          "coverage_rate": 0.12802083333333333,
+          "total_distance": 2.1000000000000005,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 17,
+          "accuracy": 0.758818605763482,
+          "coverage_rate": 0.14519097222222221,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 18,
+          "accuracy": 0.7558070279928529,
+          "coverage_rate": 0.14574652777777777,
+          "total_distance": 2.2242640687119293,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 19,
+          "accuracy": 0.7546689303904923,
+          "coverage_rate": 0.14315972222222223,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        },
+        {
+          "trial": 20,
+          "accuracy": 0.7559714356069933,
+          "coverage_rate": 0.14100694444444445,
+          "total_distance": 2.1828427124746197,
+          "frontiers_explored": 1,
+          "iterations": 300
+        }
+      ]
+    }
+  ]
+}

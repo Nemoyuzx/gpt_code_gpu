@@ -38,10 +38,12 @@
 - `OBSTACLE_SEARCH_EXPANSION = 5.0` - 障碍物区域搜索范围扩大距离（米）
 
 ### 降噪滤波参数
-- `NOISE_FILTER_ENABLED = True` - 是否启用降噪滤波器
+- `NOISE_FILTER_ENABLED = True` - 降噪滤波器总开关
+- `LIDAR_FILTER_ENABLED = True` - 是否启用激光雷达降噪（独立控制）
 - `LIDAR_FILTER_TYPE = 'median'` - 激光雷达滤波类型: 'none', 'median', 'moving_average', 'gaussian'
 - `LIDAR_FILTER_WINDOW_SIZE = 5` - 激光雷达滤波窗口大小
-- `ODOM_FILTER_TYPE = 'kalman'` - 里程计滤波类型: 'none', 'kalman', 'moving_average'
+- `ODOM_FILTER_ENABLED = False` - 是否启用里程计降噪（独立控制）
+- `ODOM_FILTER_TYPE = 'none'` - 里程计滤波类型: 'none', 'kalman', 'moving_average'
 - `ODOM_FILTER_WINDOW_SIZE = 3` - 里程计滤波窗口大小
 
 ## 降噪滤波算法说明
@@ -58,8 +60,12 @@
 3. **移动平均 (`moving_average`)**: 使用历史数据的移动平均，角度使用圆形平均
 
 ### 使用建议
-- **高噪声环境**: 启用滤波器，使用较大的窗口大小
-- **实时性要求高**: 使用较小的窗口大小或禁用滤波器
+- **只处理激光雷达噪声**: 设置 `LIDAR_FILTER_ENABLED = True`, `ODOM_FILTER_ENABLED = False`
+- **只处理里程计噪声**: 设置 `LIDAR_FILTER_ENABLED = False`, `ODOM_FILTER_ENABLED = True`
+- **处理所有噪声**: 设置 `LIDAR_FILTER_ENABLED = True`, `ODOM_FILTER_ENABLED = True`
+- **禁用所有滤波**: 设置 `NOISE_FILTER_ENABLED = False`
+- **高噪声环境**: 启用对应滤波器，使用较大的窗口大小
+- **实时性要求高**: 使用较小的窗口大小或禁用对应滤波器
 - **精度要求高**: 推荐使用卡尔曼滤波处理里程计数据，中值滤波处理激光雷达数据
 
 ## 参数调整建议

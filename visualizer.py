@@ -20,8 +20,9 @@ class Visualizer:
         self.slam = slam
         # 主SLAM窗口
         self.fig, self.ax = plt.subplots(figsize=(8,8))
-        plt.ion()
-        plt.show()
+        # 不显示图形（避免warning）
+        # plt.ion()
+        # plt.show()
         # 边界和刻度
         min_x, min_y, max_x, max_y = maze.bounds
         self.ax.set_xlim(min_x, max_x)

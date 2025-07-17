@@ -28,11 +28,11 @@ LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率
 LIDAR_NOISE = 0.035  # 激光雷达噪声
 
 # 出口检测参数
-MIN_NO_OBSTACLE_COUNT = 100  # 无障碍点数阈值，超过此数值认为走出迷宫
+MIN_NO_OBSTACLE_COUNT = 95  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
-MIN_EXPLORATION_DISTANCE = 20.0  # 最小探索距离阈值
-MIN_FRONTIERS_TO_EXPLORE = 10  # 最小探索前沿数量
+MIN_EXPLORATION_DISTANCE = 10.0  # 最小探索距离阈值
+MIN_FRONTIERS_TO_EXPLORE = 5  # 最小探索前沿数量
 
 # 运动控制精度参数
 ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
@@ -41,20 +41,23 @@ MOVEMENT_THRESHOLD = 1e-6  # 移动距离阈值
 # 可视化参数
 VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
+ENABLE_PROCESS_VISUALIZATION = False  # 是否启用过程探索显示
 
 # 未探索区域搜索参数
 OBSTACLE_SEARCH_EXPANSION = 0.5  # 障碍物区域搜索范围扩大距离（米）
 
 # ==================== 降噪滤波参数 ====================
 # 滤波器总开关
-NOISE_FILTER_ENABLED = False  # 是否启用降噪滤波器
+NOISE_FILTER_ENABLED = True  # 是否启用降噪滤波器
 
 # 激光雷达降噪参数
-LIDAR_FILTER_TYPE = 'median'  # 激光雷达滤波类型: 'none', 'median', 'moving_average', 'gaussian'
+LIDAR_FILTER_ENABLED = False  # 是否启用激光雷达降噪
+LIDAR_FILTER_TYPE = 'gaussian'  # 激光雷达滤波类型: 'none', 'median', 'moving_average', 'gaussian'
 LIDAR_FILTER_WINDOW_SIZE = 5  # 激光雷达滤波窗口大小
 
 # 里程计降噪参数  
-ODOM_FILTER_TYPE = 'kalman'  # 里程计滤波类型: 'none', 'kalman', 'moving_average'
+ODOM_FILTER_ENABLED = False  # 是否启用里程计降噪
+ODOM_FILTER_TYPE = 'none'  # 里程计滤波类型: 'none', 'kalman', 'moving_average'
 ODOM_FILTER_WINDOW_SIZE = 3  # 里程计滤波窗口大小
 
 def check_exit_condition(scan, max_range=12.0, min_no_obstacle_count=97):
@@ -93,6 +96,160 @@ def check_exit_condition(scan, max_range=12.0, min_no_obstacle_count=97):
         print(f"[EXIT DETECTED] - 无障碍比例: {no_obstacle_ratio*100:.1f}%")
     
     return result
+
+def compare_maps(true_maze, slam_occupancy, maze_bounds, resolution):
+    """
+    比较真实地图和SLAM建模地图，计算偏差率
+    
+    Args:
+        true_maze: Maze对象，包含真实的墙壁信息
+        slam_occupancy: SLAM建模的占用栅格图
+        maze_bounds: 地图边界 (min_x, min_y, max_x, max_y)
+        resolution: 栅格分辨率
+    
+    Returns:
+        dict: 包含各种偏差指标的字典
+    """
+    print("\n==================== 地图比较分析 ====================")
+    
+    # 创建真实地图的占用栅格
+    height, width = slam_occupancy.shape
+    true_occupancy = np.full((height, width), -1, dtype=np.int8)  # -1表示未知，0表示自由，1表示障碍物
+    
+    min_x, min_y, max_x, max_y = maze_bounds
+    
+    # 将真实墙壁转换为栅格表示
+    for wall in true_maze.walls:
+        (x1, y1), (x2, y2) = wall
+        # 使用Bresenham算法在墙壁线段上生成栅格点
+        steps = max(abs(x2 - x1), abs(y2 - y1)) / resolution
+        steps = int(steps) + 1
+        
+        for i in range(steps):
+            t = i / max(1, steps - 1)
+            x = x1 + t * (x2 - x1)
+            y = y1 + t * (y2 - y1)
+            
+            # 转换为栅格索引
+            grid_x = int((x - min_x) / resolution)
+            grid_y = int((y - min_y) / resolution)
+            
+            # 检查边界
+            if 0 <= grid_x < width and 0 <= grid_y < height:
+                true_occupancy[grid_y, grid_x] = 1  # 标记为障碍物
+    
+    # 将真实地图中非障碍物区域标记为自由空间（简化处理）
+    for y in range(height):
+        for x in range(width):
+            if true_occupancy[y, x] == -1:  # 未标记的区域
+                # 检查是否在迷宫边界内的合理范围
+                world_x = min_x + x * resolution
+                world_y = min_y + y * resolution
+                if min_x <= world_x <= max_x and min_y <= world_y <= max_y:
+                    true_occupancy[y, x] = 0  # 标记为自由空间
+    
+    # 统计比较结果
+    total_cells = 0
+    correct_cells = 0
+    obstacle_mismatch = 0
+    free_mismatch = 0
+    slam_explored_cells = 0
+    
+    true_obstacles = 0
+    slam_obstacles = 0
+    true_free = 0
+    slam_free = 0
+    
+    for y in range(height):
+        for x in range(width):
+            true_val = true_occupancy[y, x]
+            slam_val = slam_occupancy[y, x]
+            
+            # 只比较SLAM已探索的区域
+            if slam_val != -1:  # SLAM已探索
+                slam_explored_cells += 1
+                total_cells += 1
+                
+                if true_val == 1:  # 真实障碍物
+                    true_obstacles += 1
+                elif true_val == 0:  # 真实自由空间
+                    true_free += 1
+                
+                if slam_val == 1:  # SLAM检测到障碍物
+                    slam_obstacles += 1
+                elif slam_val == 0:  # SLAM检测到自由空间
+                    slam_free += 1
+                
+                # 检查匹配情况
+                if true_val == slam_val:
+                    correct_cells += 1
+                else:
+                    if true_val == 1 and slam_val == 0:
+                        obstacle_mismatch += 1  # 真实障碍物被误判为自由空间
+                    elif true_val == 0 and slam_val == 1:
+                        free_mismatch += 1  # 真实自由空间被误判为障碍物
+    
+    # 计算各种指标
+    if total_cells > 0:
+        accuracy = correct_cells / total_cells
+        error_rate = 1 - accuracy
+        
+        # 障碍物检测精度
+        if true_obstacles > 0:
+            obstacle_detection_rate = (true_obstacles - obstacle_mismatch) / true_obstacles
+        else:
+            obstacle_detection_rate = 1.0
+        
+        # 自由空间检测精度
+        if true_free > 0:
+            free_detection_rate = (true_free - free_mismatch) / true_free
+        else:
+            free_detection_rate = 1.0
+    else:
+        accuracy = 0.0
+        error_rate = 1.0
+        obstacle_detection_rate = 0.0
+        free_detection_rate = 0.0
+    
+    # 输出详细结果
+    print(f"总栅格数量: {height * width}")
+    print(f"SLAM已探索栅格数: {slam_explored_cells}")
+    print(f"参与比较的栅格数: {total_cells}")
+    print(f"")
+    print(f"真实地图统计:")
+    print(f"  - 障碍物栅格数: {true_obstacles}")
+    print(f"  - 自由空间栅格数: {true_free}")
+    print(f"")
+    print(f"SLAM建模统计:")
+    print(f"  - 障碍物栅格数: {slam_obstacles}")
+    print(f"  - 自由空间栅格数: {slam_free}")
+    print(f"")
+    print(f"比较结果:")
+    print(f"  - 正确识别栅格数: {correct_cells}")
+    print(f"  - 障碍物误判数: {obstacle_mismatch} (真实障碍物→SLAM自由空间)")
+    print(f"  - 自由空间误判数: {free_mismatch} (真实自由空间→SLAM障碍物)")
+    print(f"")
+    print(f"精度指标:")
+    print(f"  - 总体准确率: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    print(f"  - 总体偏差率: {error_rate:.4f} ({error_rate*100:.2f}%)")
+    print(f"  - 障碍物检测率: {obstacle_detection_rate:.4f} ({obstacle_detection_rate*100:.2f}%)")
+    print(f"  - 自由空间检测率: {free_detection_rate:.4f} ({free_detection_rate*100:.2f}%)")
+    print("=" * 55)
+    
+    return {
+        'accuracy': accuracy,
+        'error_rate': error_rate,
+        'obstacle_detection_rate': obstacle_detection_rate,
+        'free_detection_rate': free_detection_rate,
+        'total_cells': total_cells,
+        'correct_cells': correct_cells,
+        'obstacle_mismatch': obstacle_mismatch,
+        'free_mismatch': free_mismatch,
+        'true_obstacles': true_obstacles,
+        'slam_obstacles': slam_obstacles,
+        'true_free': true_free,
+        'slam_free': slam_free
+    }
 
 def main():
     # 检查是否有环境变量控制GPU使用
@@ -150,6 +307,8 @@ def main():
     # 初始化降噪滤波器
     noise_filter = NoiseFilter(
         enabled=NOISE_FILTER_ENABLED,
+        lidar_filter_enabled=LIDAR_FILTER_ENABLED,
+        odom_filter_enabled=ODOM_FILTER_ENABLED,
         lidar_filter_type=LIDAR_FILTER_TYPE,
         odom_filter_type=ODOM_FILTER_TYPE,
         lidar_window_size=LIDAR_FILTER_WINDOW_SIZE,
@@ -174,7 +333,8 @@ def main():
     frontiers = explorer.find_frontiers(slam.get_occupancy())
     target_cell = None
     path = None
-    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+    if ENABLE_PROCESS_VISUALIZATION:
+        viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
     
     # 初始化探索状态标志和探索进度跟踪
     exploration_complete = False
@@ -207,7 +367,8 @@ def main():
             slam.update((0.0, 0.0), scan)
             robot_pose = robot.get_pose()
             frontiers = explorer.find_frontiers(slam.get_occupancy())
-            viz.update(robot_pose, scan, frontiers=frontiers, target=None, path=None, occupancy=slam.get_occupancy())
+            if ENABLE_PROCESS_VISUALIZATION:
+                viz.update(robot_pose, scan, frontiers=frontiers, target=None, path=None, occupancy=slam.get_occupancy())
             # 设置标志表示需要返回起点
             should_return_to_start = True
             break
@@ -274,7 +435,8 @@ def main():
                     scan = lidar.scan(robot.get_pose())
                     slam.update((0.0, dtheta_odom), scan)
                     # 更新可视化
-                    viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                    if ENABLE_PROCESS_VISUALIZATION:
+                        viz.update(robot.get_pose(), scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
                 # 前进到目标格中心，不再缩短距离
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 #print(f"目标点: ({target_x:.2f}, {target_y:.2f}), 距离: {distance:.2f}")
@@ -297,7 +459,8 @@ def main():
                         print(f"探索统计 - 总距离: {total_distance_traveled:.1f}m, 已探索前沿: {frontiers_explored}个")
                         robot_pose = robot.get_pose()
                         frontiers = explorer.find_frontiers(slam.get_occupancy())
-                        viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                        if ENABLE_PROCESS_VISUALIZATION:
+                            viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
                         # 设置标志表示需要返回起点
                         should_return_to_start = True
                         break  # 跳出移动循环
@@ -305,7 +468,8 @@ def main():
                     # 更新可视化
                     robot_pose = robot.get_pose()
                     frontiers = explorer.find_frontiers(slam.get_occupancy())
-                    viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
+                    if ENABLE_PROCESS_VISUALIZATION:
+                        viz.update(robot_pose, scan, frontiers=frontiers, target=target_cell, path=path, occupancy=slam.get_occupancy())
             
             # 如果在移动过程中检测到需要返回起点的条件，跳出外层循环
             if 'should_return_to_start' in locals() and should_return_to_start:
@@ -390,14 +554,16 @@ def main():
                                 robot.rotate(d_theta)
                                 scan = lidar.scan(robot.get_pose())
                                 slam.update((0.0, d_theta), scan)
-                                viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
+                                if ENABLE_PROCESS_VISUALIZATION:
+                                    viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
                             
                             distance = math.hypot(target_x - robot.x, target_y - robot.y)
                             if distance > MOVEMENT_THRESHOLD:
                                 robot.move(distance)
                                 scan = lidar.scan(robot.get_pose())
                                 slam.update((distance, 0.0), scan)
-                                viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
+                                if ENABLE_PROCESS_VISUALIZATION:
+                                    viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy())
                         
                         print("补充扫描完成，现在返回起点...")
                     else:
@@ -453,7 +619,8 @@ def main():
                     # 返回时获取扫描数据但不用于SLAM建图，仅用于可视化
                     scan = lidar.scan(robot.get_pose())
                     # slam.update((0.0, dtheta_odom), scan)  # 注释掉SLAM更新
-                    viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
+                    if ENABLE_PROCESS_VISUALIZATION:
+                        viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
                 distance = math.hypot(target_x - robot.x, target_y - robot.y)
                 if distance > MOVEMENT_THRESHOLD:
                     # 执行移动，使用完整距离
@@ -463,7 +630,8 @@ def main():
                     # 返回时获取扫描数据但不用于SLAM建图，仅用于可视化
                     scan = lidar.scan(robot.get_pose())
                     # slam.update((d_trans, 0.0), scan)  # 注释掉SLAM更新
-                    viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
+                    if ENABLE_PROCESS_VISUALIZATION:
+                        viz.update(robot.get_pose(), scan, frontiers=None, target=None, path=back_path, occupancy=slam.get_occupancy())
         print("Robot returned to start.")
     else:
         print("无法规划返回起点的路径。")
@@ -477,6 +645,9 @@ def main():
     # 导出最终地图和路径
     viz.save_map("final_map.png")
     viz.save_path("final_path.csv")
+    
+    # 进行地图比较分析
+    comparison_results = compare_maps(maze, slam.get_occupancy(), maze.bounds, maze.resolution)
     
     # 释放GPU资源
     if hasattr(slam, 'release_resources'):

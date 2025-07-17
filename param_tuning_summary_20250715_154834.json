@@ -1,0 +1,116 @@
+{
+  "config": {
+    "num_trials_per_param": 20,
+    "maze_file": "3.json",
+    "timestamp": "20250715_154834",
+    "total_parameters": 6,
+    "completed_parameters": 1,
+    "last_updated": "20250715_164809"
+  },
+  "parameter_configs": {
+    "MAX_RANGE_FACTOR": {
+      "range": [
+        0.3,
+        0.35,
+        0.39999999999999997,
+        0.44999999999999996,
+        0.49999999999999994,
+        0.5499999999999999,
+        0.5999999999999999,
+        0.6499999999999999,
+        0.7
+      ],
+      "default": 0.49,
+      "description": "\u8d85\u8fc7\u6700\u5927\u8303\u56f4\u7684\u6bd4\u4f8b\u9608\u503c"
+    },
+    "ADJACENCY_DIFF_THRESHOLD": {
+      "range": [
+        0.005,
+        0.01,
+        0.015,
+        0.02,
+        0.025,
+        0.03,
+        0.035,
+        0.04,
+        0.045,
+        0.05
+      ],
+      "default": 0.01,
+      "description": "\u76f8\u90bb\u6d4b\u8ddd\u70b9\u4e4b\u95f4\u7684\u5dee\u5f02\u9608\u503c (\u7c73)"
+    },
+    "ICP_MAX_ITER": {
+      "range": [
+        100,
+        200,
+        300,
+        400,
+        500,
+        600,
+        700,
+        800,
+        900,
+        1000
+      ],
+      "default": 500,
+      "description": "ICP\u6700\u5927\u8fed\u4ee3\u6b21\u6570"
+    },
+    "SAFETY_DISTANCE_FACTOR": {
+      "range": [
+        0.5,
+        0.55,
+        0.6000000000000001,
+        0.6500000000000001,
+        0.7000000000000002,
+        0.7500000000000002,
+        0.8000000000000003,
+        0.8500000000000003,
+        0.9000000000000004
+      ],
+      "default": 0.7,
+      "description": "\u8def\u5f84\u622a\u65ad\u767e\u5206\u6bd4"
+    },
+    "MIN_EXPLORATION_DISTANCE": {
+      "range": [
+        5,
+        10,
+        15,
+        20,
+        25
+      ],
+      "default": 10.0,
+      "description": "\u6700\u5c0f\u63a2\u7d22\u8ddd\u79bb\u9608\u503c"
+    },
+    "MIN_FRONTIERS_TO_EXPLORE": {
+      "range": [
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20
+      ],
+      "default": 5,
+      "description": "\u6700\u5c0f\u63a2\u7d22\u524d\u6cbf\u6570\u91cf"
+    }
+  },
+  "summary_results": {
+    "MAX_RANGE_FACTOR": {
+      "best_accuracy_param": 0.3,
+      "best_accuracy_value": 80.70551574547252,
+      "best_coverage_param": 0.49999999999999994,
+      "best_coverage_value": 14.394618055555556,
+      "description": "\u8d85\u8fc7\u6700\u5927\u8303\u56f4\u7684\u6bd4\u4f8b\u9608\u503c",
+      "num_tested_values": 9,
+      "value_range": [
+        0.3,
+        0.7
+      ],
+      "completed": 1
+    }
+  }
+}
