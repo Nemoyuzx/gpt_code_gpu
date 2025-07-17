@@ -35,27 +35,40 @@ class ICPSlam:
         self.icp_max_iter = ICP_MAX_ITER
         self.icp_tolerance = ICP_TOLERANCE  # 收敛容忍度
         self.icp_correspondence_thresh = ICP_CORRESPONDENCE_THRESH  # 对应点匹配距离阈值
-        
-        # 设备检测与选择
+          # 设备检测与选择
         self.device = torch.device("cpu")  # 默认使用CPU
         self.use_mps_fallback = False      # 标记是否MPS需要特殊处理
         
         try:
             # 检查是否有环境变量设置强制使用CPU
-            import os
             force_cpu = os.environ.get("FORCE_CPU", "0") == "1"
+            slam_device = os.environ.get("SLAM_DEVICE", "")
             
-            if not force_cpu and torch.cuda.is_available():
-                self.device = torch.device("cuda")
-                print(f"[ICPSlam] 使用CUDA设备: {torch.cuda.get_device_name(0)}")
-            elif not force_cpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                # 在MPS设备上，某些操作不支持，需要特殊处理
-                self.device = torch.device("mps")
-                self.use_mps_fallback = True
-                os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # 启用MPS降级
-                print("[ICPSlam] 使用MPS设备进行加速 (Apple Metal)，对不支持的操作将降级到CPU")
+            if not force_cpu:
+                if slam_device:
+                    # 使用环境变量指定的设备
+                    self.device = torch.device(slam_device.split(':')[0])  # 去掉设备索引
+                    if slam_device.startswith("cuda") and torch.cuda.is_available():
+                        print(f"[ICPSlam] 使用CUDA设备: {torch.cuda.get_device_name(0)}")
+                    elif slam_device == "mps":
+                        self.use_mps_fallback = True
+                        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+                        print("[ICPSlam] 使用MPS设备进行加速 (Apple Metal)")
+                    else:
+                        print(f"[ICPSlam] 使用指定设备: {slam_device}")
+                elif torch.cuda.is_available():
+                    self.device = torch.device("cuda")
+                    print(f"[ICPSlam] 使用CUDA设备: {torch.cuda.get_device_name(0)}")
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    # 在MPS设备上，某些操作不支持，需要特殊处理
+                    self.device = torch.device("mps")
+                    self.use_mps_fallback = True
+                    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # 启用MPS降级
+                    print("[ICPSlam] 使用MPS设备进行加速 (Apple Metal)，对不支持的操作将降级到CPU")
+                else:
+                    print("[ICPSlam] 使用CPU设备 (未检测到GPU)")
             else:
-                print("[ICPSlam] 使用CPU设备" + (" (用户强制)" if force_cpu else " (未检测到GPU)"))
+                print("[ICPSlam] 使用CPU设备 (用户强制)")
         except Exception as e:
             # 如果设备初始化失败，回退到CPU
             self.device = torch.device("cpu")
@@ -364,12 +377,68 @@ class ICPSlam:
         
     def release_resources(self):
         """释放GPU资源，在程序结束前调用"""
-        # 清除张量缓存
-        if hasattr(self, 'map_points_tensor') and self.map_points_tensor is not None:
-            del self.map_points_tensor
-        # 清空CUDA缓存
+        try:
+            # 清除张量缓存
+            if hasattr(self, 'map_points_tensor') and self.map_points_tensor is not None:
+                del self.map_points_tensor
+                self.map_points_tensor = None
+            
+            # 清除地图点列表
+            if hasattr(self, 'map_points'):
+                self.map_points.clear()
+            
+            # 清除其他可能的张量
+            for attr_name in ['occupancy', 'grid']:
+                if hasattr(self, attr_name):
+                    attr_value = getattr(self, attr_name)
+                    if torch.is_tensor(attr_value):
+                        del attr_value
+            
+            # 多次清空GPU缓存以确保彻底清理
+            if self.device.type == 'cuda':
+                for _ in range(3):
+                    torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                if hasattr(torch.cuda, 'ipc_collect'):
+                    torch.cuda.ipc_collect()  # 清理进程间通信缓存
+            elif self.device.type == 'mps' and hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+            
+            # 多次执行垃圾回收
+            for _ in range(3):
+                gc.collect()
+            
+        except Exception as e:
+            print(f"[ICPSlam] 释放资源时出错: {e}")
+    
+    @staticmethod
+    def clear_global_cache():
+        """清理全局缓存的静态方法"""
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                if hasattr(torch.cuda, 'ipc_collect'):
+                    torch.cuda.ipc_collect()
+                torch.cuda.synchronize()
+        except Exception as e:
+            print(f"[ICPSlam] 清理全局缓存时出错: {e}")
+    
+    def get_device_info(self):
+        """获取当前设备信息"""
+        info = {
+            'device': str(self.device),
+            'device_type': self.device.type
+        }
+        
         if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
+            info['cuda_available'] = torch.cuda.is_available()
+            if torch.cuda.is_available():
+                info['device_name'] = torch.cuda.get_device_name(0)
+                info['memory_allocated'] = torch.cuda.memory_allocated() / (1024**2)  # MB
+                info['memory_reserved'] = torch.cuda.memory_reserved() / (1024**2)  # MB
+                info['max_memory_allocated'] = torch.cuda.max_memory_allocated() / (1024**2)  # MB
+        
+        return info
 
     def _bresenham(self, x0, y0, x1, y1):
         """Bresenham算法获取两个格点之间的离散栅格线。"""

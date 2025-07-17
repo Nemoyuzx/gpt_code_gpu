@@ -20,13 +20,122 @@ from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from visualizer import Visualizer
 from noise_filter import NoiseFilter
+import psutil
+import gc
+import traceback
+import uuid
+import glob
+import icp_slam
 
 # 关闭matplotlib所有交互功能
 plt.ioff()
 
-# 强制使用MPS设备
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-print("强制启用MPS (Apple Metal) 加速")
+# 导入torch但延迟设备初始化
+import torch
+
+def initialize_device():
+    """初始化并检测最佳计算设备"""
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"使用CUDA加速: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        # 设置CUDA内存分配策略
+        torch.cuda.empty_cache()
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        print("使用MPS (Apple Metal) 加速")
+    else:
+        device = torch.device("cpu")
+        print("使用CPU计算")
+
+    # 全局设备配置
+    os.environ["SLAM_DEVICE"] = str(device)
+    return device
+
+# 延迟初始化设备，避免模块导入时的潜在问题
+device = None
+
+# ==================== 内存管理工具函数 ====================
+def get_memory_usage():
+    """获取当前内存和GPU显存使用情况"""
+    info = {"timestamp": time.strftime("%H:%M:%S")}
+    try:
+        process = psutil.Process(os.getpid())
+        info["cpu_memory_mb"] = process.memory_info().rss / (1024 * 1024)
+        info["cpu_memory_percent"] = process.memory_percent()
+    except:
+        info["cpu_memory_mb"] = 0
+        info["cpu_memory_percent"] = 0
+    
+    # GPU显存使用情况
+    if torch.cuda.is_available():
+        info["gpu_allocated_mb"] = torch.cuda.memory_allocated() / (1024 * 1024)
+        info["gpu_reserved_mb"] = torch.cuda.memory_reserved() / (1024 * 1024)
+        info["gpu_max_allocated_mb"] = torch.cuda.max_memory_allocated() / (1024 * 1024)
+    else:
+        info["gpu_allocated_mb"] = 0
+        info["gpu_reserved_mb"] = 0
+        info["gpu_max_allocated_mb"] = 0
+    
+    return info
+
+def force_cleanup():
+    """强制执行内存清理"""
+    try:
+        # 关闭所有matplotlib图形
+        plt.close('all')
+        
+        # GPU显存清理
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        
+        # 强制垃圾回收
+        gc.collect()
+        
+        # 清理临时文件
+        temp_patterns = ["trial_temp_*.json", "incremental_*.json", "temp_*.json"]
+        for pattern in temp_patterns:
+            for temp_file in glob.glob(pattern):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+                    
+    except Exception as e:
+        print(f"强制清理时出错: {e}")
+
+def monitor_memory_usage(operation_name="操作"):
+    """内存使用监控装饰器"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # 执行前记录
+            before = get_memory_usage()
+            
+            try:
+                result = func(*args, **kwargs)
+                return result
+            finally:
+                # 执行后记录和清理
+                after = get_memory_usage()
+                
+                # 计算内存变化
+                cpu_diff = after["cpu_memory_mb"] - before["cpu_memory_mb"]
+                gpu_diff = after["gpu_allocated_mb"] - before["gpu_allocated_mb"]
+                
+                if abs(cpu_diff) > 10 or abs(gpu_diff) > 10:  # 只在显著变化时打印
+                    print(f"  [{operation_name}] 内存变化: CPU {cpu_diff:+.1f}MB, GPU {gpu_diff:+.1f}MB")
+                
+                # 如果内存使用过高，执行清理
+                if after["cpu_memory_mb"] > 2000 or after["gpu_allocated_mb"] > 1000:
+                    print(f"  内存使用较高，执行清理...")
+                    force_cleanup()
+        
+        return wrapper
+    return decorator
 
 # ==================== 基础参数配置 ====================
 # 迷宫和机器人参数
@@ -162,9 +271,10 @@ def check_exit_condition(scan, max_range=12.0, min_no_obstacle_count=95):
     
     return no_obstacle_count >= min_no_obstacle_count
 
+@monitor_memory_usage("SLAM试验")
 def run_single_slam_trial(params):
     """
-    运行单次SLAM建模试验
+    运行单次SLAM建模试验，支持CUDA加速并自动释放显存
     
     Args:
         params: 参数字典，包含所有要测试的参数值
@@ -172,10 +282,21 @@ def run_single_slam_trial(params):
     Returns:
         dict: 包含准确度指标的字典
     """
+    # 记录GPU显存使用情况（如果使用CUDA）
+    initial_memory = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        initial_memory = torch.cuda.memory_allocated()
+    
+    # 创建变量追踪，用于异常时的清理
+    objects_to_cleanup = {}
+    
     try:
         # 1. 加载迷宫地图和参数
         loader = MazeLoader()
         maze = loader.load(MAZE_FILE)
+        objects_to_cleanup['loader'] = loader
+        objects_to_cleanup['maze'] = maze
 
         # === 自动生成入口虚拟墙壁 ===
         start_x, start_y = maze.start
@@ -209,11 +330,15 @@ def run_single_slam_trial(params):
         # 2. 初始化机器人、传感器、SLAM等模块
         start_pose = (start_x, start_y, 0.0)
         robot = Robot(start_pose, odom_noise=ROBOT_ODOM_NOISE)
+        objects_to_cleanup['robot'] = robot
+        
         lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
+        objects_to_cleanup['lidar'] = lidar
+        
         slam = ICPSlam(maze, start_pose)
+        objects_to_cleanup['slam'] = slam
         
         # 应用参数到SLAM算法（直接修改全局变量）
-        import icp_slam
         icp_slam.MAX_RANGE_FACTOR = params.get('MAX_RANGE_FACTOR', 0.49)
         icp_slam.ADJACENCY_DIFF_THRESHOLD = params.get('ADJACENCY_DIFF_THRESHOLD', 0.01)
         icp_slam.ICP_MAX_ITER = params.get('ICP_MAX_ITER', 500)
@@ -224,9 +349,11 @@ def run_single_slam_trial(params):
         # 设置前沿探索器安全距离
         frontier_safety_distance = 6.0
         explorer = FrontierExplorer(safety_distance=frontier_safety_distance)
+        objects_to_cleanup['explorer'] = explorer
         
         # 创建可视化器但不显示
         viz = Visualizer(maze, robot=robot, slam=slam)
+        objects_to_cleanup['viz'] = viz
         plt.close('all')  # 立即关闭所有图形窗口
         
         # 初始化降噪滤波器
@@ -235,6 +362,7 @@ def run_single_slam_trial(params):
             lidar_filter_enabled=False,
             odom_filter_enabled=False
         )
+        objects_to_cleanup['noise_filter'] = noise_filter
         
         robot.set_noise_filter(noise_filter)
         lidar.set_noise_filter(noise_filter)
@@ -327,6 +455,10 @@ def run_single_slam_trial(params):
                 slam.update(odometry, scan)
                 prev_pose = current_pose
                 
+                # 每10步清理一次显存
+                if iteration % 10 == 0 and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
                 # 检查是否满足退出条件
                 has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance and 
                                              frontiers_explored >= min_frontiers_to_explore)
@@ -345,22 +477,31 @@ def run_single_slam_trial(params):
         comparison_results['frontiers_explored'] = frontiers_explored
         comparison_results['iterations'] = iteration
         
-        # 释放GPU资源
-        if hasattr(slam, 'release_resources'):
-            slam.release_resources()
+        # 记录显存使用情况
+        if torch.cuda.is_available():
+            peak_memory = torch.cuda.max_memory_allocated()
+            comparison_results['peak_gpu_memory_mb'] = peak_memory / (1024 * 1024)
+            comparison_results['initial_gpu_memory_mb'] = initial_memory / (1024 * 1024) if initial_memory else 0
         
-        # 关闭matplotlib图形
-        plt.close('all')
-        
-        # 立即清理内存
-        del slam, robot, lidar, explorer, viz, noise_filter, maze, scan
-        import gc
-        gc.collect()
+        # 立即保存单次试验结果到临时文件
+        trial_data = {
+            'timestamp': time.strftime("%Y%m%d_%H%M%S"),
+            'params': params.copy(),
+            'results': comparison_results
+        }
+          # 生成唯一的试验文件名（使用time.time()获取微秒精度）
+        trial_filename = f"trial_temp_{time.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}.json"
+        try:
+            with open(trial_filename, 'w') as f:
+                json.dump(trial_data, f, indent=2)
+        except Exception as e:
+            print(f"保存试验临时文件失败: {e}")
         
         return comparison_results
         
     except Exception as e:
         print(f"试验出错: {e}")
+        traceback.print_exc()
         
         # 返回默认的错误结果
         return {
@@ -369,10 +510,80 @@ def run_single_slam_trial(params):
             'total_distance': 0.0,
             'frontiers_explored': 0,
             'iterations': 0,
-            'total_cells': 0,
-            'correct_cells': 0,
-            'slam_explored_cells': 0
+            'total_cells': 0,            'correct_cells': 0,
+            'slam_explored_cells': 0,
+            'error': str(e)
         }
+    
+    finally:
+        # 强制释放所有GPU资源和内存 - 在finally块中确保总是执行
+        try:
+            # 释放SLAM GPU资源
+            if 'slam' in objects_to_cleanup and hasattr(objects_to_cleanup['slam'], 'release_resources'):
+                objects_to_cleanup['slam'].release_resources()
+            
+            # 删除所有大对象
+            for obj_name, obj in objects_to_cleanup.items():
+                try:
+                    del obj
+                except:
+                    pass
+            objects_to_cleanup.clear()
+            
+            # 删除局部变量中的大对象
+            for var_name in ['scan', 'path', 'frontier_cell', 'trial_data', 'comparison_results']:
+                if var_name in locals():
+                    try:
+                        del locals()[var_name]
+                    except:
+                        pass
+            
+            # 清理matplotlib
+            plt.close('all')
+            
+            # 多次强制清理GPU缓存
+            if torch.cuda.is_available():
+                for _ in range(3):  # 多次清理以确保彻底
+                    torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # 等待所有GPU操作完成
+                torch.cuda.reset_peak_memory_stats()  # 重置峰值统计
+            
+            # 强制垃圾回收
+
+
+            gc.collect()
+            
+            # 检查GPU内存释放情况
+            if torch.cuda.is_available():
+                current_memory = torch.cuda.memory_allocated()
+                if current_memory > 0:
+                    print(f"警告: 试验结束后仍有 {current_memory / (1024*1024):.1f} MB GPU内存未释放")
+                    # 尝试更激进的清理
+
+                    if hasattr(icp_slam, 'clear_global_cache'):
+                        icp_slam.clear_global_cache()
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()  # 清理IPC缓存
+                    
+                    # 再次检查
+                    final_memory = torch.cuda.memory_allocated()
+                    if final_memory < current_memory:
+                        print(f"  已释放 {(current_memory - final_memory) / (1024*1024):.1f} MB GPU内存")
+                
+            # 清理临时试验文件
+            try:
+
+                temp_files = glob.glob("trial_temp_*.json")
+                for temp_file in temp_files:
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
+            except:
+                pass
+                
+        except Exception as cleanup_error:
+            print(f"资源清理时出错: {cleanup_error}")
 
 def load_checkpoint(checkpoint_filename):
     """加载检查点文件，恢复之前的测试进度"""
@@ -397,7 +608,6 @@ def save_checkpoint(checkpoint_filename, current_param, param_index, value_index
     }
     
     def convert_numpy(obj):
-        import numpy as np
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         elif isinstance(obj, (np.floating, float)):
@@ -455,8 +665,6 @@ def test_parameter(param_name, param_values, default_params, checkpoint_filename
     # 如果是断点续传，尝试从现有文件加载数据
     existing_data = {'parameter_results': []}
     if start_from_index > 0:
-        # 寻找已存在的结果文件
-        import glob
         existing_files = glob.glob(f'param_tuning_{param_name.lower()}_*.json')
         if existing_files:
             # 使用最新的文件
@@ -496,39 +704,88 @@ def test_parameter(param_name, param_values, default_params, checkpoint_filename
         trial_accuracies = []
         trial_coverage_rates = []
         trial_results = []  # 临时存储本组试验结果
-        
-        # 确定从哪个试验开始
+          # 确定从哪个试验开始
         trial_start_num = start_from_trial if i == start_from_index else 0
         
         trial_start_time = time.time()
         
         for trial in range(trial_start_num, NUM_TRIALS_PER_PARAM):
             if trial % 5 == 0:  # 更频繁显示进度
-                print(f"  试验进度: {trial+1}/{NUM_TRIALS_PER_PARAM}")
+                # 显示GPU显存使用情况（如果可用）
+                gpu_info = ""
+                if torch.cuda.is_available():
+                    current_memory = torch.cuda.memory_allocated() / (1024**2)  # MB
+                    max_memory = torch.cuda.max_memory_allocated() / (1024**2)  # MB
+                    gpu_info = f" [GPU: {current_memory:.0f}/{max_memory:.0f}MB]"
+                
+                print(f"  试验进度: {trial+1}/{NUM_TRIALS_PER_PARAM}{gpu_info}")
+            
+            # 在试验前清理显存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
             
             result = run_single_slam_trial(test_params)
             trial_accuracies.append(result['accuracy'])
             trial_coverage_rates.append(result['coverage_rate'])
             
             # 保存详细的单次试验结果到临时列表
-            trial_results.append({
+            trial_result_data = {
                 'trial': trial + 1,
                 'accuracy': result['accuracy'],
                 'coverage_rate': result['coverage_rate'],
                 'total_distance': result['total_distance'],
                 'frontiers_explored': result['frontiers_explored'],
                 'iterations': result['iterations']
-            })
+            }
+            
+            # 如果有GPU内存信息，也记录下来
+            if 'peak_gpu_memory_mb' in result:
+                trial_result_data['peak_gpu_memory_mb'] = result['peak_gpu_memory_mb']
+                trial_result_data['initial_gpu_memory_mb'] = result['initial_gpu_memory_mb']
+            
+            trial_results.append(trial_result_data)
+            
+            # 每次试验后立即保存到磁盘（增量保存）
+            incremental_filename = f'incremental_{param_name.lower()}_{i}_{trial}.json'
+            try:
+                with open(incremental_filename, 'w') as f:
+                    json.dump(trial_result_data, f, indent=2)
+            except Exception as e:
+                print(f"  保存增量结果失败: {e}")
             
             # 每次试验后保存检查点（仅当是断点续传的参数值时）
             if checkpoint_filename and i == start_from_index:
                 save_checkpoint(checkpoint_filename, param_name, 
                               list(PARAM_CONFIGS.keys()).index(param_name), i, trial + 1, {})
+              # 每次试验后进行内存清理和监控
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+                # 检查GPU内存泄漏
+                current_gpu_memory = torch.cuda.memory_allocated() / (1024**2)
+                if current_gpu_memory > 500:  # 如果GPU内存超过500MB，发出警告
+                    print(f"  警告: GPU内存使用较高 ({current_gpu_memory:.1f}MB)，执行深度清理...")
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    gc.collect()
             
-            # 每5次试验后进行一次垃圾回收
-            if (trial + 1) % 5 == 0:
-                import gc
-                gc.collect()
+            # 每10次试验执行一次深度清理
+            if (trial + 1) % 10 == 0:
+                force_cleanup()
+                print(f"  第{trial+1}次试验后执行深度清理")
+            
+            # 删除临时试验文件
+            try:
+                temp_files = glob.glob(f"trial_temp_*.json") + glob.glob(f"incremental_{param_name.lower()}_{i}_{trial}.json")
+                for temp_file in temp_files:
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
+            except:
+                pass
         
         trial_end_time = time.time()
         
@@ -574,7 +831,6 @@ def test_parameter(param_name, param_values, default_params, checkpoint_filename
         
         # 清理内存：删除试验结果数据
         del trial_results, trial_accuracies, trial_coverage_rates
-        import gc
         gc.collect()
         
         # 估算剩余时间
@@ -647,11 +903,24 @@ def plot_parameter_curves(param_name, param_values, accuracies, coverage_rates, 
 
 def main():
     """主函数：运行参数调优，支持断点续传"""
+    global device
+    
     print("开始SLAM参数调优 - 控制变量法")
-    print("使用MPS (Apple Metal) 加速")
+    
+    # 初始化设备
+    device = initialize_device()
+    
     print(f"每组参数运行 {NUM_TRIALS_PER_PARAM} 次试验")
     print("结果将立即保存到文件以节省内存")
     print("支持断点续传 - 可随时中断并恢复测试")
+    
+    # 显示初始内存使用情况
+    initial_memory = get_memory_usage()
+    print(f"初始内存: CPU {initial_memory['cpu_memory_mb']:.1f}MB, GPU {initial_memory['gpu_allocated_mb']:.1f}MB")
+    
+    # 执行初始清理
+    force_cleanup()
+    print("已执行初始内存清理")
     
     # 设置默认参数
     default_params = {param: config['default'] for param, config in PARAM_CONFIGS.items()}
@@ -662,7 +931,6 @@ def main():
     summary_filename = f'param_tuning_summary_{timestamp}.json'
     
     # 检查是否存在之前的检查点
-    import glob
     existing_checkpoints = glob.glob('slam_param_checkpoint_*.json')
     if existing_checkpoints:
         existing_checkpoints.sort()
@@ -750,8 +1018,7 @@ def main():
                 'best_accuracy_value': float(best_accuracy),
                 'best_coverage_param': float(best_coverage_param),
                 'best_coverage_value': float(best_coverage_rate),
-                'description': param_description,
-                'num_tested_values': len(values),
+                'description': param_description,                'num_tested_values': len(values),
                 'value_range': [float(values[0]), float(values[-1])],
                 'completed': True
             }
@@ -760,14 +1027,20 @@ def main():
             print(f"  最佳准确率: {best_param:.3f} -> {best_accuracy:.2f}%")
             print(f"  最佳覆盖率: {best_coverage_param:.3f} -> {best_coverage_rate:.2f}%")
             
+            # 显示内存使用情况
+            current_memory = get_memory_usage()
+            print(f"  当前内存: CPU {current_memory['cpu_memory_mb']:.1f}MB, GPU {current_memory['gpu_allocated_mb']:.1f}MB")
+            
         except KeyboardInterrupt:
             print(f"\n\n程序被用户中断")
             print(f"当前进度已保存到检查点文件: {checkpoint_filename}")
             print(f"可以随时重新运行程序并选择继续测试")
+            
+            # 执行最终清理
+            force_cleanup()
             return
         except Exception as e:
             print(f"\n参数 {param_name} 测试出错: {e}")
-            import traceback
             traceback.print_exc()
             print("继续下一个参数...")
             continue
@@ -814,7 +1087,6 @@ def main():
         
         # 清理内存
         del values, accuracies, coverage_rates
-        import gc
         gc.collect()
         
         print(f"参数 {param_name} 处理完成，总结已保存到: {summary_filename}")
@@ -866,8 +1138,7 @@ def main():
         print(f"  ✓ 内存优化: 详细试验数据保存到文件，内存占用最小化")
         print(f"  ✓ 断点续传: 可随时中断并从上次位置继续测试")
         print(f"  ✓ 实时保存: 每个参数值测试完成后立即保存结果")
-        
-        # 删除检查点文件（测试完成）
+          # 删除检查点文件（测试完成）
         try:
             os.remove(checkpoint_filename)
             print(f"  ✓ 测试完成，已清理检查点文件")
@@ -877,13 +1148,22 @@ def main():
         print("没有完成任何参数的测试")
     
     print(f"\n内存优化: 所有详细试验数据已保存到文件，内存占用已最小化")
+    
+    # 显示最终内存使用情况
+    final_memory = get_memory_usage()
+    print(f"最终内存: CPU {final_memory['cpu_memory_mb']:.1f}MB, GPU {final_memory['gpu_allocated_mb']:.1f}MB")
+    
+    # 执行最终清理
+    force_cleanup()
+    print("已执行最终内存清理")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\n程序被用户中断")
+        force_cleanup()  # 中断时也执行清理
     except Exception as e:
         print(f"\n程序出错: {e}")
-        import traceback
         traceback.print_exc()
+        force_cleanup()  # 出错时也执行清理
