@@ -138,7 +138,7 @@ class FrontierExplorer:
 
         return best_frontier, best_path
 
-    def plan_path(self, occupancy, start, goal):
+    def plan_path(self, occupancy, start, goal, safety_distance=None):
         """
         使用A*算法规划从start到goal的路径，支持8方向移动（包括对角线）。
         start: (x_idx, y_idx), goal: (x_idx, y_idx)
@@ -150,6 +150,8 @@ class FrontierExplorer:
             return [start]
         
         h, w = occupancy.shape
+        # 本次规划使用的安全距离（单位：栅格数）
+        sd = self.safety_distance if (safety_distance is None) else safety_distance
         
         # A*算法数据结构
         open_set = []
@@ -203,8 +205,8 @@ class FrontierExplorer:
                 if occupancy[ny, nx] != 0:
                     continue
                     
-                # 检查是否与障碍物保持足够的安全距离
-                if not self._is_safe(occupancy, nx, ny, safety_distance=self.safety_distance):
+                # 检查是否与障碍物保持足够的安全距离（按本次规划的安全距离）
+                if not self._is_safe(occupancy, nx, ny, safety_distance=sd):
                     continue
                 
                 # 对于对角线移动，检查是否会穿过墙角

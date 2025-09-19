@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 import math
 import numpy as np
 
@@ -47,7 +48,8 @@ class Visualizer:
             self.save_path(path_file)
             print(f"[Visualizer] 当前地图已保存至 {map_file}, 路径已保存至 {path_file}")
 
-    def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None):
+    def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
+               predicted_traj=None, robot_radius=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。
@@ -56,6 +58,8 @@ class Visualizer:
         target: 当前目标前沿栅格 (ix, iy) （可选，用于突出显示目标）。
         path: 导航路径栅格序列 [(ix,iy), ...] （可选，用于显示规划路径）。
         occupancy: 当前栅格地图 (numpy数组) （可选，用于绘制地图）。
+        predicted_traj: 由DWA预测的轨迹 (N×5 numpy数组，使用 [:,0],[ :,1 ] 作为XY)（可选）。
+        robot_radius: 机器人半径（米），若提供则以圆形边界显示机器人（可选）。
         """
         x, y, theta = robot_pose
         # 清除之前的绘图
@@ -63,18 +67,12 @@ class Visualizer:
         # 绘制栅格地图
         if occupancy is not None:
             h, w = occupancy.shape
-            # 构建显示矩阵：未知=灰(0.5), 空闲=白(1), 占据=黑(0)
-            display_grid = [[0.5]*w for _ in range(h)]
-            for j in range(h):
-                for i in range(w):
-                    if occupancy[j, i] == 0:
-                        display_grid[j][i] = 1.0
-                    elif occupancy[j, i] == 1:
-                        display_grid[j][i] = 0.0
-            display_grid = np.array(display_grid)
+            # 使用矢量化构建显示矩阵：未知=灰(0.5), 空闲=白(1), 占据=黑(0)
+            display_grid = np.full((h, w), 0.5, dtype=float)
+            display_grid[occupancy == 0] = 1.0
+            display_grid[occupancy == 1] = 0.0
             # 显示栅格地图
             min_x, min_y, max_x, max_y = self.maze.bounds
-            res = self.maze.resolution
             extent = (min_x, max_x, min_y, max_y)
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
         
@@ -110,11 +108,30 @@ class Visualizer:
                     scan_pts_x.append(sx)
                     scan_pts_y.append(sy)
             self.ax.scatter(scan_pts_x, scan_pts_y, c='b', s=5, label='Lidar Points')
+        # 绘制DWA预测轨迹（绿色折线）
+        if predicted_traj is not None and len(predicted_traj) >= 2:
+            try:
+                px = predicted_traj[:, 0]
+                py = predicted_traj[:, 1]
+                self.ax.plot(px, py, "-g", linewidth=2, alpha=0.8, label="Predicted Traj")
+            except Exception:
+                pass
         # 绘制机器人当前位置和朝向 (箭头表示朝向)
         arrow_length = 0.5
         self.ax.arrow(x, y, arrow_length * math.cos(theta), arrow_length * math.sin(theta),
                       head_width=0.2, head_length=0.2, fc='r', ec='r')
         self.ax.scatter([x], [y], c='r')  # 机器人位置
+        # 机器人圆形边界（若提供半径）
+        if robot_radius is not None and robot_radius > 0:
+            try:
+                circle = Circle((x, y), robot_radius, edgecolor='c', facecolor='none', linewidth=1.5, alpha=0.9)
+                self.ax.add_artist(circle)
+                # 朝向指示到圆周
+                hx = x + robot_radius * math.cos(theta)
+                hy = y + robot_radius * math.sin(theta)
+                self.ax.plot([x, hx], [y, hy], color='c', linewidth=1.2)
+            except Exception:
+                pass
         # 图例和标题
         self.ax.set_title("SLAM Exploration")
         self.ax.set_aspect('equal', adjustable='box')

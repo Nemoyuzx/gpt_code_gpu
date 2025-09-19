@@ -20,59 +20,52 @@ class Lidar:
 
     def scan(self, pose):
         """
-        模拟一次360度扫描。返回距离列表（长度为360/angle_resolution）。
-        pose: 机器人位姿 (x, y, theta) 用于确定激光雷达发射点和朝向。
+        返回 (noisy_distances, clean_distances)
+        clean_distances: 每束光在加噪前的最近交点距离
+        noisy_distances: 在 clean 的基础上加入噪声和截断后的测量值（与你原逻辑一致）
         """
         x, y, theta = pose
-        # 扫描角度范围0-360度
         num_beams = int(360 / self.angle_resolution)
-        distances = []
-        # 将角度转为弧度增量
         angle_step = math.radians(self.angle_resolution)
-        # 遍历每条激光束
+
+        clean = []
+        noisy = []
+
         for i in range(num_beams):
-            angle = theta + i * angle_step  # 全局参考系下光束角度
-            # 规范化角度0-2pi
+            angle = theta + i * angle_step
             angle = math.atan2(math.sin(angle), math.cos(angle))
-            # 射线方向向量
-            dx = math.cos(angle)
-            dy = math.sin(angle)
-            # 遍历所有墙，找到最近交点
+            dx, dy = math.cos(angle), math.sin(angle)
+
             closest_dist = self.max_range
             for (p1, p2) in self.walls:
-                # 计算射线与墙壁线段的交点
                 x1, y1 = p1
                 x2, y2 = p2
-                v_x, v_y = dx, dy  # 射线方向
-                w_x, w_y = (x2 - x1), (y2 - y1)  # 框壁段向量
-                # 计算叉积
+                v_x, v_y = dx, dy
+                w_x, w_y = (x2 - x1), (y2 - y1)
                 denom = v_x * w_y - v_y * w_x
                 if abs(denom) < 1e-6:
-                    # 射线与墙平行或重合，跳过
                     continue
-                # 计算参数t和u
                 t = ((x1 - x) * w_y - (y1 - y) * w_x) / denom
                 u = ((x1 - x) * v_y - (y1 - y) * v_x) / denom
                 if t >= 0 and 0 <= u <= 1:
-                    dist = t
-                    if dist < closest_dist:
-                        closest_dist = dist
-            # 添加噪声并截取最大距离
+                    if t < closest_dist:
+                        closest_dist = t
+
+            # 保存干净距离（未加噪）
+            clean.append(closest_dist)
+
+            # 构造含噪、截断测量
             measured_dist = closest_dist
             if self.noise > 0:
                 measured_dist += np.random.normal(0, self.noise)
-                # 防止噪声导致负或超出范围
                 if measured_dist < 0:
                     measured_dist = 0.0
             if measured_dist > self.max_range:
                 measured_dist = self.max_range
-            distances.append(measured_dist)
-        
-        # 如果有滤波器，对扫描数据进行滤波
-        if self.noise_filter is not None:
-            distances = self.noise_filter.filter_lidar_data(distances)
-        
-        return distances
+            noisy.append(measured_dist)
+
+        return noisy, clean
+
     
     def set_noise_filter(self, noise_filter):
         """设置降噪滤波器"""

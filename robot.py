@@ -1,101 +1,127 @@
 import math
 import numpy as np
 
+
 class Robot:
-    """机器人运动模型与控制器。支持简单前进/旋转运动，保留接口支持差速驱动。"""
+    """机器人运动模型与控制器。支持简单前进/旋转以及速度积分接口(DWA使用)。"""
+
     def __init__(self, start_pose, odom_noise=(0.0, 0.0)):
         """
-        start_pose: 起始位姿 (x, y, theta) （theta为朝向，弧度制）。
-        odom_noise: 里程计噪声标准差 (trans_noise, rot_noise)，用于模拟运动噪声。
+        start_pose: (x, y, theta)
+        odom_noise: (trans_noise, rot_noise) 里程计噪声标准差
         """
         self.x, self.y, self.theta = start_pose
-        # 轨迹记录（用于路径导出）
+        # 轨迹记录（用于最终路径导出/可视化）
         self.trajectory = [(self.x, self.y)]
         # 里程计读数（初始化为真值）
         self.odom_x, self.odom_y, self.odom_theta = self.x, self.y, self.theta
         # 噪声标准差
         self.trans_noise, self.rot_noise = odom_noise
-        
-        # 降噪滤波器引用（由外部设置）
+        # 当前速度（供DWA状态使用）
+        self.linear_vel = 0.0
+        self.angular_vel = 0.0
+        # 降噪滤波器引用
         self.noise_filter = None
 
-    def move(self, distance):
-        """
-        沿当前朝向前进一定距离。模拟实际移动并更新机器人真实位置和里程计读数。
-        """
-        # 更新真实位置 (无误差假设机器人实际移动即目标距离)
+    # ---------------- 直线 / 旋转 基础接口 ----------------
+    def move(self, distance: float):
+        """沿当前朝向前进 distance 米。"""
         self.x += distance * math.cos(self.theta)
         self.y += distance * math.sin(self.theta)
-        # 更新里程计读数，加入噪声
+        # 里程计（加噪声）
         if self.trans_noise > 0:
             distance_odom = distance + np.random.normal(0, self.trans_noise)
         else:
             distance_odom = distance
-        # 朝向theta在前进时不变
         self.odom_x += distance_odom * math.cos(self.odom_theta)
         self.odom_y += distance_odom * math.sin(self.odom_theta)
-        # 记录轨迹
         self.trajectory.append((self.x, self.y))
-        # 不返回值，更新内部状态
+        self.linear_vel = 0.0  # 该接口不维护瞬时速度，主要用于离散跳转
+        self.angular_vel = 0.0
 
-    def rotate(self, angle):
-        """
-        旋转机器人朝向angle（弧度）。正角度为逆时针转动。
-        """
-        # 更新真实朝向
-        self.theta += angle
-        # 归一化角度到[-pi, pi)
-        self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
-        # 更新里程计朝向，加入噪声
+    def rotate(self, angle: float):
+        """原地旋转 angle (rad)。"""
+        self.theta = math.atan2(math.sin(self.theta + angle), math.cos(self.theta + angle))
         if self.rot_noise > 0:
             angle_odom = angle + np.random.normal(0, self.rot_noise)
         else:
             angle_odom = angle
-        self.odom_theta += angle_odom
-        self.odom_theta = math.atan2(math.sin(self.odom_theta), math.cos(self.odom_theta))
-        # 旋转在原地，不改变位置
-        # 记录轨迹（仅当旋转也想记录，可选；此处不记录纯旋转的位移，因为位置未变）
-        
-    def move_to(self, target_x, target_y):
-        """
-        移动到指定的目标点(target_x, target_y)。
-        
-        注意：此方法假设机器人已经朝向目标点方向，
-        即在调用此方法前应先调用rotate使机器人朝向目标。
-        
-        返回实际移动的距离。
-        """
-        # 计算目标点的方向和距离
+        self.odom_theta = math.atan2(math.sin(self.odom_theta + angle_odom), math.cos(self.odom_theta + angle_odom))
+        self.linear_vel = 0.0
+        self.angular_vel = 0.0
+
+    def move_to(self, target_x: float, target_y: float):
         dx = target_x - self.x
         dy = target_y - self.y
         desired_theta = math.atan2(dy, dx)
+        angle_diff = math.atan2(math.sin(desired_theta - self.theta), math.cos(desired_theta - self.theta))
+        if abs(angle_diff) > 0.1:
+            print(f"警告：朝向({self.theta:.2f})与目标方向({desired_theta:.2f})偏差较大")
         distance = math.hypot(dx, dy)
-        
-        # 确保机器人朝向与目标方向一致（允许小误差）
-        angle_diff = abs(self.theta - desired_theta)
-        angle_diff = min(angle_diff, 2*math.pi - angle_diff)
-        if angle_diff > 0.1:  # 如果偏离超过0.1弧度（约5.7度），发出警告
-            print(f"警告：机器人朝向({self.theta:.2f})与目标方向({desired_theta:.2f})不一致，可能导致移动误差")
-        
-        # 执行移动
         self.move(distance)
         return distance
 
+    # ---------------- 查询接口 ----------------
     def get_pose(self):
-        """获取机器人真实位姿 (x, y, theta)。"""
         return (self.x, self.y, self.theta)
 
     def get_odom_pose(self):
-        """获取机器人里程计估计的位姿 (x, y, theta)。"""
-        # 如果有滤波器，使用滤波后的数据
         if self.noise_filter is not None:
-            filtered_x, filtered_y, filtered_theta = self.noise_filter.filter_odometry_data(
-                self.odom_x, self.odom_y, self.odom_theta
-            )
-            return (filtered_x, filtered_y, filtered_theta)
-        else:
-            return (self.odom_x, self.odom_y, self.odom_theta)
-    
+            fx, fy, fth = self.noise_filter.filter_odometry_data(self.odom_x, self.odom_y, self.odom_theta)
+            return (fx, fy, fth)
+        return (self.odom_x, self.odom_y, self.odom_theta)
+
     def set_noise_filter(self, noise_filter):
-        """设置降噪滤波器"""
         self.noise_filter = noise_filter
+
+    # ---------------- 速度积分接口 (DWA 使用) ----------------
+    def velocity_step(self, v_cmd: float, w_cmd: float, dt: float):
+        """按 (v,w) 指令积分 dt，更新真实与里程计位姿。
+        返回 (平移距离, 旋转角度) 供 SLAM 使用。"""
+        theta0 = self.theta
+        if abs(w_cmd) < 1e-8:
+            dx = v_cmd * dt * math.cos(theta0)
+            dy = v_cmd * dt * math.sin(theta0)
+            dtheta = 0.0
+        else:
+            dtheta = w_cmd * dt
+            theta1 = theta0 + dtheta
+            R = v_cmd / w_cmd if abs(w_cmd) > 1e-8 else 0.0
+            dx = R * (math.sin(theta1) - math.sin(theta0))
+            dy = -R * (math.cos(theta1) - math.cos(theta0))
+        # 真实位姿
+        self.x += dx
+        self.y += dy
+        self.theta = math.atan2(math.sin(self.theta + dtheta), math.cos(self.theta + dtheta))
+        self.linear_vel = v_cmd
+        self.angular_vel = w_cmd
+        self.trajectory.append((self.x, self.y))
+        # 噪声里程计（保持平移符号）：用弧长 v*dt 作为带符号的平移增量
+        distance_signed = v_cmd * dt
+        rot = dtheta
+        if self.trans_noise > 0:
+            distance_odom = distance_signed + np.random.normal(0, self.trans_noise)
+        else:
+            distance_odom = distance_signed
+        if self.rot_noise > 0:
+            rot_odom = rot + np.random.normal(0, self.rot_noise)
+        else:
+            rot_odom = rot
+        if abs(rot_odom) < 1e-8:
+            dx_o = distance_odom * math.cos(self.odom_theta)
+            dy_o = distance_odom * math.sin(self.odom_theta)
+        else:
+            if dt > 0:
+                v_odom = distance_odom / dt  # 可能为负，保持符号
+                R_o = v_odom / (rot_odom / dt) if abs(rot_odom/dt) > 1e-8 else 0.0
+            else:
+                R_o = 0.0
+            theta_new_o = self.odom_theta + rot_odom
+            dx_o = R_o * (math.sin(theta_new_o) - math.sin(self.odom_theta))
+            dy_o = -R_o * (math.cos(theta_new_o) - math.cos(self.odom_theta))
+            self.odom_theta = theta_new_o
+        self.odom_theta = math.atan2(math.sin(self.odom_theta), math.cos(self.odom_theta))
+        self.odom_x += dx_o
+        self.odom_y += dy_o
+        # 返回带符号的平移增量，供 SLAM 正确区分前进/倒车
+        return distance_signed, rot

@@ -1,20 +1,27 @@
 import math
 import numpy as np
 import torch
-import os   # 新增: 用于文件读写操作
+import os   # 新增: 用于环境变量和设备判断
 import gc   # 新增: 用于显式进行垃圾回收
+import resource  # 新增: 获取内存占用（Unix/macOS）
+import datetime  # 新增: 时间戳
+import csv       # 新增: 写入CSV
 
 
 
 #0.49
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.49  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.6  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 300  # ICP最大迭代次数
+ICP_MAX_ITER = 60  # 降低ICP最大迭代次数，避免过高峰值内存
 ICP_TOLERANCE = 1e-7  # ICP收敛容忍
 ICP_CORRESPONDENCE_THRESH = 0.000001  # ICP对应点匹配距离
+
+# 为了限制内存：ICP匹配时目标点云的最大样本数，以及全局地图点云的上限
+MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "5000"))
+MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "20000"))
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
@@ -62,6 +69,109 @@ class ICPSlam:
             self.device = torch.device("cpu")
             print(f"[ICPSlam] GPU初始化失败，回退到CPU: {str(e)}")
             
+    def _print_memory_usage(self):
+        """打印当前进程与设备的内存占用信息。"""
+        # 进程常驻内存（RSS）—注意：ru_maxrss 是“峰值RSS”(high-water mark)
+        try:
+            # macOS 上 resource.ru_maxrss 单位为字节，Linux 为 KB；这里做两种情况的兼容
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            ru_maxrss = usage.ru_maxrss
+            # 粗略判断：若值很大且不太可能是 KB，则按字节处理，否则按 KB 处理
+            if ru_maxrss > 1e9:  # 明显是字节
+                rss_mb = ru_maxrss / (1024.0 * 1024.0)
+            else:  # 可能是 KB
+                rss_mb = ru_maxrss / 1024.0
+        except Exception:
+            rss_mb = float('nan')
+
+        # 可选：当前RSS（需要 psutil，若不可用则忽略）
+        rss_cur_mb = None
+        try:
+            import psutil  # 可选依赖
+            proc = psutil.Process(os.getpid())
+            rss_cur_mb = proc.memory_info().rss / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+        # 设备显存（CUDA/MPS）
+        cuda_alloc_mb = cuda_reserved_mb = None
+        mps_current_mb = mps_driver_mb = None
+        try:
+            if self.device.type == 'cuda' and torch.cuda.is_available():
+                cuda_alloc_mb = torch.cuda.memory_allocated(self.device) / (1024.0 * 1024.0)
+                cuda_reserved_mb = torch.cuda.memory_reserved(self.device) / (1024.0 * 1024.0)
+        except Exception:
+            pass
+        try:
+            # 仅在支持的 PyTorch 版本有效
+            if self.device.type == 'mps' and hasattr(torch, 'mps'):
+                if hasattr(torch.mps, 'current_allocated_memory'):
+                    mps_current_mb = torch.mps.current_allocated_memory() / (1024.0 * 1024.0)
+                if hasattr(torch.mps, 'driver_allocated_memory'):
+                    mps_driver_mb = torch.mps.driver_allocated_memory() / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+        # 地图相关内存估计
+        map_pts = 0
+        map_pts_mb = 0.0
+        if self.map_points_tensor is not None:
+            try:
+                map_pts = int(self.map_points_tensor.shape[0])
+                map_pts_mb = float(self.map_points_tensor.element_size() * self.map_points_tensor.nelement()) / (1024.0 * 1024.0)
+            except Exception:
+                pass
+        occ_mb = 0.0
+        try:
+            if isinstance(self.occupancy, np.ndarray):
+                occ_mb = self.occupancy.nbytes / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+        if rss_cur_mb is not None:
+            parts = [f"RSS(cur/peak): {rss_cur_mb:.1f}/{rss_mb:.1f} MB"]
+        else:
+            parts = [f"RSS_peak: {rss_mb:.1f} MB"]
+        if cuda_alloc_mb is not None:
+            parts.append(f"CUDA alloc/resv: {cuda_alloc_mb:.1f}/{cuda_reserved_mb:.1f} MB")
+        if mps_current_mb is not None:
+            if mps_driver_mb is not None:
+                parts.append(f"MPS curr/driver: {mps_current_mb:.1f}/{mps_driver_mb:.1f} MB")
+            else:
+                parts.append(f"MPS curr: {mps_current_mb:.1f} MB")
+        parts.append(f"map_points: {map_pts} (~{map_pts_mb:.1f} MB)")
+        parts.append(f"occupancy: ~{occ_mb:.1f} MB")
+        line = "[ICPSlam][Mem] " + " | ".join(parts)
+        print(line)
+
+        # 追加写入CSV（可通过环境变量 MEMLOG_CSV 指定路径）
+        try:
+            csv_path = os.environ.get("MEMLOG_CSV", "mem_usage_log.csv")
+            # 准备行数据
+            ts = datetime.datetime.now().isoformat(timespec='seconds')
+            row = {
+                'timestamp': ts,
+                'rss_cur_mb': round(rss_cur_mb, 3) if rss_cur_mb is not None else None,
+                'rss_peak_mb': round(rss_mb, 3) if rss_mb is not None else None,
+                'cuda_alloc_mb': round(cuda_alloc_mb, 3) if cuda_alloc_mb is not None else None,
+                'cuda_reserved_mb': round(cuda_reserved_mb, 3) if cuda_reserved_mb is not None else None,
+                'mps_current_mb': round(mps_current_mb, 3) if mps_current_mb is not None else None,
+                'mps_driver_mb': round(mps_driver_mb, 3) if mps_driver_mb is not None else None,
+                'map_points': map_pts,
+                'map_points_mb': round(map_pts_mb, 6),
+                'occupancy_mb': round(occ_mb, 6),
+            }
+            # 若文件不存在或为空，写入表头
+            need_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                if need_header:
+                    writer.writeheader()
+                writer.writerow(row)
+        except Exception:
+            # 日志写入失败不影响主流程
+            pass
+
     def to_tensor(self, data):
         """将NumPy数组转换为PyTorch张量并移到当前设备"""
         if isinstance(data, torch.Tensor):
@@ -152,23 +262,20 @@ class ICPSlam:
             return (self.x, self.y, self.theta)
         pts_local = np.array(pts_local, dtype=np.float32)
 
-        # 如果存在已有地图点云，则进行 ICP 匹配校正
-        if (len(self.map_points) > 0 or os.path.exists("map_points.npy")) and pts_local.size > 0:
+        # 如果存在已有地图点云（仅内存中保留一份），则进行 ICP 匹配校正
+        if (self.map_points_tensor is not None and self.map_points_tensor.numel() > 0) and pts_local.size > 0:
             # 开始 ICP 前，将地图点云加载至 GPU/CPU 张量
             # 将新扫描点转换为 PyTorch 张量
             src = self.to_tensor(pts_local)  # 源点云 (shape: [N_src, 2])
             # 准备目标点云张量 (地图点)
-            if self.map_points_tensor is not None and len(self.map_points) > 0:
-                tgt = self.map_points_tensor  # 若内存中已有张量版本则直接使用
-            else:
-                # 从磁盘加载已有地图点（如果存在）
-                map_points_np = None
-                try:
-                    map_points_np = np.load("map_points.npy").astype(np.float32)
-                except FileNotFoundError:
-                    map_points_np = np.array(self.map_points, dtype=np.float32)
-                tgt = self.to_tensor(map_points_np)  # 转为张量送入设备
-                del map_points_np  # 释放CPU内存
+            tgt = self.map_points_tensor  # 仅使用内存中的最新地图点云
+            # 若目标点云过大，则随机子采样到上限，限制 cdist 峰值内存
+            try:
+                if tgt.shape[0] > MAX_TGT_POINTS_FOR_ICP:
+                    idx = torch.randperm(tgt.shape[0], device=self.device)[:MAX_TGT_POINTS_FOR_ICP]
+                    tgt = tgt.index_select(0, idx)
+            except Exception:
+                pass
             # 在 no_grad 环境下进行 ICP 迭代，以减少显存开销
             with torch.no_grad():
                 # 提前初始化 R 和 t，若 ICP 对应点不足可保持单位变换
@@ -254,13 +361,14 @@ class ICPSlam:
             self.y += t_cpu[1]
             # 使用修正后的位姿更新当前激光点的全局坐标（numpy 计算）
             pts_local = pts_local.dot(R_cpu.T) + t_cpu
-        # （若未进入 ICP，例如地图为空，仅根据里程计预测，则直接使用预测位姿进行建图）
+    # （若未进入 ICP，例如地图为空，仅根据里程计预测，则直接使用预测位姿进行建图）
 
-        # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图）
+        # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
         rx = int((self.x - self.min_x) / self.resolution)
         ry = int((self.y - self.min_y) / self.resolution)
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
         adjacent_diff_threshold = 2.0  # 与ICP部分一致或更宽松的阈值
+        new_points = []  # 本次扫描新增的障碍点（全局坐标）
         for i, dist in enumerate(scan):
             should_skip_map_update = False
             if dist < self.get_max_range() and dist <= far_threshold:
@@ -318,39 +426,36 @@ class ICPSlam:
                 if self.occupancy[oy, ox] != 1:
                     self.occupancy[oy, ox] = 1
                     new_point = [end_x, end_y]
-                    self.map_points.append(new_point)
-                    # （不再这里增量更新 map_points_tensor，改为统一在磁盘保存）
+                    new_points.append(new_point)
             else:
                 # 未命中障碍（或被过滤）：该射线经过区域均标记为空闲
                 for cx, cy in line:
                     if self.occupancy[cy, cx] == -1:
                         self.occupancy[cy, cx] = 0
-
-        # 将地图点云数据保存到磁盘，释放内存（历史点云不常驻内存）
-        if len(self.map_points) > 0:
-            # 将当前新增的点与已有点云合并保存
-            if os.path.exists("map_points.npy"):
-                try:
-                    old_points = np.load("map_points.npy").astype(np.float32)
-                except Exception:
-                    old_points = np.empty((0, 2), dtype=np.float32)
-                if len(old_points) > 0:
-                    new_points = np.array(self.map_points, dtype=np.float32)
-                    all_points = np.concatenate((old_points, new_points), axis=0)
-                else:
-                    # 若旧文件存在但无数据（或读取失败），直接使用新点
-                    all_points = np.array(self.map_points, dtype=np.float32)
-                np.save("map_points.npy", all_points)
+        # 将本次新增点与内存中的最新地图合并，仅保留一份张量
+        if len(new_points) > 0:
+            new_pts_np = np.array(new_points, dtype=np.float32)
+            new_pts_tensor = self.to_tensor(new_pts_np)
+            if self.map_points_tensor is not None and self.map_points_tensor.numel() > 0:
+                self.map_points_tensor = torch.cat([self.map_points_tensor, new_pts_tensor], dim=0)
             else:
-                # 若不存在旧文件，直接保存当前点云
-                np.save("map_points.npy", np.array(self.map_points, dtype=np.float32))
-        # 清理内存中的点云列表和张量缓存
-        self.map_points.clear()
-        if hasattr(self, 'map_points_tensor') and self.map_points_tensor is not None:
-            del self.map_points_tensor
-            self.map_points_tensor = None
-        # 最后再显式调用垃圾回收，释放Python对象占用的内存
+                self.map_points_tensor = new_pts_tensor
+            # 释放中间变量
+            del new_pts_np, new_pts_tensor
+            # 控制全局地图点云上限，避免无限增长导致内存持续上升
+            try:
+                if self.map_points_tensor.shape[0] > MAX_MAP_POINTS_GLOBAL:
+                    perm = torch.randperm(self.map_points_tensor.shape[0], device=self.device)[:MAX_MAP_POINTS_GLOBAL]
+                    self.map_points_tensor = self.map_points_tensor.index_select(0, perm)
+            except Exception:
+                pass
+        # 清理临时列表，尽快释放内存
+        new_points.clear()
+
+        # 显式调用垃圾回收，释放Python对象占用的内存
         gc.collect()
+        # 每次更新后打印内存使用量
+        self._print_memory_usage()
         return (self.x, self.y, self.theta)
     
     def get_max_range(self):
