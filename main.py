@@ -26,11 +26,12 @@ VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
-LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率
+LIDAR_ANGLE_RESOLUTION = 3.0  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
 LIDAR_NOISE = 0.03  # 激光雷达噪声
 
 # 出口检测参数
-MIN_NO_OBSTACLE_COUNT = 100  # 无障碍点数阈值，超过此数值认为走出迷宫
+# 之前在1°分辨率下为100/360≈27.8%；改为3°约120束后按比例取34，保持相近比例
+MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
 MIN_EXPLORATION_DISTANCE = 30.0  # 最小探索距离阈值
@@ -190,6 +191,11 @@ def main():
     # 3. 初始扫描并建立初始地图
     noisy, clean = lidar.scan(robot.get_pose())
     scan = noisy
+    # 打印一次雷达束数用于验证分辨率变更
+    try:
+        print(f"[LIDAR] beams={len(scan)}  resolution={LIDAR_ANGLE_RESOLUTION}°  (expect≈{int(360/LIDAR_ANGLE_RESOLUTION)})")
+    except Exception:
+        pass
     est_pose = slam.update((0.0, 0.0), scan)  # 使用SLAM返回的估计位姿
     # 初始可视化
     robot_pose = robot.get_pose()
