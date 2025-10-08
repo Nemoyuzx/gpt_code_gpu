@@ -1,4 +1,5 @@
 import math
+import time
 import numpy as np
 from dataclasses import dataclass
 from typing import Tuple
@@ -173,12 +174,16 @@ class DWAPlanner:
         self.last_dw = None  # [v_min, v_max, w_min, w_max]
         self.last_dw_detail = None  # 记录Vs/Vd/制动上限等细节
         self._last_brake_v_cap = None
+        self.last_timing = {}
 
     def plan(self, state: np.ndarray, goal: Tuple[float, float], obstacles: np.ndarray, path_hint: np.ndarray | None = None):
         """核心规划：返回平滑后的控制 (v, w) 及最佳轨迹。"""
+        start_time = time.perf_counter()
+        timing = {}
         if not hasattr(self, '_global_step'):
             self._global_step = 0
     # --- 1. 前向清距 & 动态窗口 ---
+        precalc_start = start_time
         self._front_clearance_cache = self._front_clearance(state, obstacles)
         self._front_gap_cache = self._front_clearance_cache - self.cfg.robot_radius
         gdx = goal[0] - state[0]; gdy = goal[1] - state[1]
@@ -195,7 +200,10 @@ class DWAPlanner:
             self._path_align_diff_for_dw = pa
         # 直接倒车区域判定（前向gap不足）
         direct_reverse_zone = (self.cfg.direct_reverse_enabled and self._front_gap_cache < self.cfg.direct_reverse_gap_threshold)
+        timing['pre_calc'] = (time.perf_counter() - precalc_start) * 1000.0
+        dw_start = time.perf_counter()
         dw = self._calc_dynamic_window(state)
+        timing['dynamic_window'] = (time.perf_counter() - dw_start) * 1000.0
 
         best_cost = float('inf')
         best_u = (0.0, 0.0)
@@ -223,6 +231,7 @@ class DWAPlanner:
 
         any_candidate = False
         dynamic_allow_reverse = self.cfg.allow_reverse and self._reverse_block_count <= 0
+        sample_main_start = time.perf_counter()
 
         # --- 3. 采样评估 ---
         for v in np.arange(dw[0], dw[1] + 1e-9, self.cfg.v_resolution):
@@ -392,9 +401,12 @@ class DWAPlanner:
                         'fwd_pref': forward_pref_c, 'wall_reward': wall_reward,
                         'path_align': path_align_c, 'path_dev': path_dev_c, 'path_prog': -path_prog_c
                     }
+        timing['sample_main'] = (time.perf_counter() - sample_main_start) * 1000.0
+        timing['sample_relax'] = 0.0
 
         # --- 4. 二次放宽采样或回退 ---
         if not any_candidate and best_traj is None:
+            fallback_start = time.perf_counter()
             if self.cfg.disable_fallback:
                 if self.cfg.debug:
                     print("[RELAX] 首次采样无候选，放宽过滤重新采样 (禁用fallback)")
@@ -438,8 +450,10 @@ class DWAPlanner:
                             best_u = (v, w)
                             best_traj = traj
                             best_components = {'fallback': True}
+            timing['sample_relax'] = (time.perf_counter() - fallback_start) * 1000.0
 
         # --- 5. stuck补偿与平滑 ---
+        smooth_start = time.perf_counter()
         if abs(best_u[0]) < self.cfg.stuck_vel and abs(state[3]) < self.cfg.stuck_vel:
             best_u = (0.0, self.cfg.max_delta_yaw_rate * 0.5)
         # 全局倒车死区：若选择了微幅倒车且不在直接倒车区域，改为不倒车（消除微幅来回）
@@ -473,8 +487,10 @@ class DWAPlanner:
         out_traj = best_traj
         if best_traj is not None and (abs(sm_v - best_u[0]) > 1e-9 or abs(sm_w - best_u[1]) > 1e-9):
             out_traj = self._predict_trajectory(state, sm_v, sm_w)
+        timing['smoothing'] = (time.perf_counter() - smooth_start) * 1000.0
 
         # --- 6. dwell计数 ---
+        post_start = time.perf_counter()
         if abs(best_u[0]) < self.cfg.dwell_speed_threshold:
             self._dwell_count += 1
         else:
@@ -499,6 +515,9 @@ class DWAPlanner:
             print(f"[DWA] v={best_u[0]:.2f} w={best_u[1]:.2f} cost={best_cost:.3f} comps={best_components}")
         # 全局步计数（用于启动阶段前进优先策略）
         self._global_step += 1
+        timing['post_update'] = (time.perf_counter() - post_start) * 1000.0
+        timing['total'] = (time.perf_counter() - start_time) * 1000.0
+        self.last_timing = timing
         return self._last_u, out_traj
 
     def _path_hint_components(self, end_state: np.ndarray, path_hint: np.ndarray):

@@ -495,6 +495,24 @@ def main():
         ])
         (v_cmd, w_cmd), _traj = dwa_planner.plan(state, (gx, gy), obstacles, path_hint=path_hint_world)
 
+        dwa_elapsed = (time.perf_counter() - t_section) * 1000.0
+        section_times.append(("dwa_plan", dwa_elapsed))
+        dwa_detail = getattr(dwa_planner, "last_timing", None)
+        if isinstance(dwa_detail, dict) and dwa_detail:
+            detail_order = [
+                ("pre_calc", "dwa_pre"),
+                ("dynamic_window", "dwa_dw"),
+                ("sample_main", "dwa_sample"),
+                ("sample_relax", "dwa_resample"),
+                ("smoothing", "dwa_smooth"),
+                ("post_update", "dwa_post"),
+                ("total", "dwa_internal_total")
+            ]
+            for key, label in detail_order:
+                if key in dwa_detail:
+                    section_times.append((label, float(dwa_detail[key])))
+        t_section = time.perf_counter()
+
         if v_cmd > 1e-6:
             dw_max = None
             if hasattr(dwa_planner, "last_dw") and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
@@ -510,8 +528,7 @@ def main():
                 if step_counter % 40 == 0:
                     dw_max_disp = dw_max if (dw_max is not None and math.isfinite(dw_max)) else float('nan')
                     print(f"[探索] 提升前进速度 -> {v_cmd:.2f} m/s (dw_max={dw_max_disp:.2f} dist_to_goal={dist_to_goal:.2f}m)")
-        section_times.append(("dwa_plan", (time.perf_counter() - t_section) * 1000.0))
-        t_section = time.perf_counter()
+
         # 先用当前估计位姿绘制预测轨迹（起点一致，避免视觉错位）
         viz.update(
             est_pose,
@@ -846,8 +863,22 @@ def main():
 
             state = np.array([est_pose[0], est_pose[1], est_pose[2], robot.linear_vel, robot.angular_vel], dtype=float)
             (v_cmd, w_cmd), traj = dwa_planner.plan(state, (gx, gy), obstacles, path_hint=path_hint_world)
-
-            section_times.append(("dwa_plan", (time.perf_counter() - t_section) * 1000.0))
+            dwa_elapsed = (time.perf_counter() - t_section) * 1000.0
+            section_times.append(("dwa_plan", dwa_elapsed))
+            dwa_detail = getattr(dwa_planner, "last_timing", None)
+            if isinstance(dwa_detail, dict) and dwa_detail:
+                detail_order = [
+                    ("pre_calc", "dwa_pre"),
+                    ("dynamic_window", "dwa_dw"),
+                    ("sample_main", "dwa_sample"),
+                    ("sample_relax", "dwa_resample"),
+                    ("smoothing", "dwa_smooth"),
+                    ("post_update", "dwa_post"),
+                    ("total", "dwa_internal_total")
+                ]
+                for key, label in detail_order:
+                    if key in dwa_detail:
+                        section_times.append((label, float(dwa_detail[key])))
             t_section = time.perf_counter()
 
             if v_cmd > 1e-6:
