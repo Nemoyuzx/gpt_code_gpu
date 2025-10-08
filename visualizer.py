@@ -49,7 +49,8 @@ class Visualizer:
             print(f"[Visualizer] 当前地图已保存至 {map_file}, 路径已保存至 {path_file}")
 
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
-               predicted_traj=None, robot_radius=None, actual_traj=None):
+               predicted_traj=None, robot_radius=None, actual_traj=None, actual_traj_style=None,
+               extra_trajs=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。
@@ -120,9 +121,36 @@ class Visualizer:
         if actual_traj is not None and len(actual_traj) >= 2:
             try:
                 traj_arr = np.asarray(actual_traj, dtype=float)
-                self.ax.plot(traj_arr[:, 0], traj_arr[:, 1], color='orange', linewidth=2, alpha=0.9, label='Actual Traj')
+                style = {
+                    'color': 'orange',
+                    'linewidth': 1.2,
+                    'alpha': 0.9,
+                    'label': 'Actual Traj'
+                }
+                if isinstance(actual_traj_style, dict):
+                    style.update(actual_traj_style)
+                self.ax.plot(traj_arr[:, 0], traj_arr[:, 1], **style)
             except Exception:
                 pass
+        if extra_trajs:
+            for entry in extra_trajs:
+                try:
+                    pts = entry.get('points', None)
+                    if pts is None or len(pts) < 2:
+                        continue
+                    pts_arr = np.asarray(pts, dtype=float)
+                    style = {
+                        'color': 'orange',
+                        'linewidth': 1.2,
+                        'alpha': 0.8,
+                        'label': 'Trajectory'
+                    }
+                    custom_style = entry.get('style')
+                    if isinstance(custom_style, dict):
+                        style.update(custom_style)
+                    self.ax.plot(pts_arr[:, 0], pts_arr[:, 1], **style)
+                except Exception:
+                    continue
         # 绘制机器人当前位置和朝向 (箭头表示朝向)
         arrow_length = 0.5
         self.ax.arrow(x, y, arrow_length * math.cos(theta), arrow_length * math.sin(theta),
@@ -144,8 +172,8 @@ class Visualizer:
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.legend(loc='upper right')
         plt.draw()
-        plt.pause(VISUALIZATION_UPDATE_TIME)  # 大幅减少暂停时间，提高移动速度
-
+        plt.pause(VISUALIZATION_UPDATE_TIME)  
+        
     def set_emergency_path(self, path):
         """设置紧急路径（无安全距离的最短路径），用红色线条显示"""
         self.emergency_path = path

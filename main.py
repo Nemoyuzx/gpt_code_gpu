@@ -62,7 +62,7 @@ VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 OBSTACLE_SEARCH_EXPANSION = 0.5  # 障碍物区域搜索范围扩大距离（米）
 
 # 前沿探索节流参数
-FRONTIER_LONG_PATH_THRESHOLD_CELLS = 150  # A*规划路径超过该栅格数，则触发短期冷却
+FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 40              # 冷却期间暂停A*与前沿刷新（冻结提示）
 
 # ==================== 降噪滤波参数 ====================
@@ -168,6 +168,24 @@ def main():
     slam = ICPSlam(maze, start_pose)
     explorer = FrontierExplorer(safety_distance=FRONTIER_SAFETY_DISTANCE)  # 设置与障碍物的安全距离
     viz = Visualizer(maze, robot=robot, slam=slam)
+    explore_traj_style = {
+        "color": "orange",
+        "linewidth": 1.2,
+        "alpha": 0.85,
+        "label": "Explore Traj"
+    }
+    return_traj_style = {
+        "color": "deepskyblue",
+        "linewidth": 1.2,
+        "alpha": 0.85,
+        "label": "Return Traj"
+    }
+    def log_section_times(tag, timings):
+        if not timings:
+            return
+        summary = " | ".join(f"{name}={elapsed:.2f}ms" for name, elapsed in timings)
+        print(f"[Timing] {tag} {summary}")
+    return_traj_split_idx = None
     
     # 初始化降噪滤波器
     noise_filter = NoiseFilter(
@@ -207,7 +225,8 @@ def main():
     path = None         # 到该自由格的路径（A*或BFS重建）
     # 初始绘制：此时尚未创建DWA实例，先不显示机器人半径
     viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=slam.get_occupancy(),
-               predicted_traj=None, robot_radius=None, actual_traj=robot.trajectory)
+               predicted_traj=None, robot_radius=None, actual_traj=robot.trajectory,
+               actual_traj_style=explore_traj_style)
     
     # 初始化探索状态标志和探索进度跟踪
     exploration_complete = False
@@ -331,17 +350,30 @@ def main():
         if viz.paused:
             plt.pause(VISUALIZATION_PAUSE_TIME)
             continue
+        loop_step_label = f"step={step_counter}"
+        loop_start = time.perf_counter()
+        section_times = []
+        t_section = loop_start
         # 2. 采样扫描并更新探索距离条件
         noisy, clean = lidar.scan(robot.get_pose())
         scan = noisy
         has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance)
+        section_times.append(("scan", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
         # 3. 出口检测
+        exit_triggered = False
         if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_no_obstacle_count=MIN_NO_OBSTACLE_COUNT):
             print(f"检测到超过180度的连续无障碍区域 - 已探索距离: {total_distance_traveled:.1f}m")
             est_pose = slam.update((0.0, 0.0), scan)
             viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=slam.get_occupancy(),
-                       actual_traj=robot.trajectory)
+                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
             should_return_to_start = True
+            exit_triggered = True
+        section_times.append(("exit_check_pre", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
+        if exit_triggered:
+            section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+            log_section_times(loop_step_label, section_times)
             break
         # 4. 前沿与路径更新（增加节流逻辑）
         # 使用SLAM估计位姿计算所在栅格
@@ -355,6 +387,9 @@ def main():
             target_cell_latest, unknown_neighbor_new, _ = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
             if target_cell_latest is None:
                 print("没有可达的未知区域，探索结束。")
+                section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
+                section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+                log_section_times(loop_step_label, section_times)
                 break
             frontier_hint_cell = target_cell_latest
             current_unknown_neighbor = unknown_neighbor_new
@@ -383,6 +418,8 @@ def main():
                 else:
                     msg_len = "无A*路径与前沿提示，使用当前位置作为临时目标"
                 print(f"[前沿节流] 冷却中({frontier_cooldown_steps}步剩余)，暂停A*与前沿刷新，{msg_len}")
+        section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
 
         # 选择DWA子目标：若存在A*路径（无论是否冷却中）均基于路径最近点+前瞻；否则用前沿提示
         if current_path and len(current_path) > 1:
@@ -413,6 +450,8 @@ def main():
             viz_target_cell = follow_cell
         if step_counter % 20 == 0 or same_target_counter == 0:
             print(f"[目标] 自由格: {prev_target_cell} 邻接未知: {current_unknown_neighbor} (忽略A*:{'是' if frontier_cooldown_steps>0 or current_path is None else '否'}) 连续相同={same_target_counter}")
+        section_times.append(("target_selection", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
 
         # 将跟随的栅格点转换为世界坐标，作为DWA目标点（挤出模式下由临时目标覆盖）
         if recovery_active and recovery_target_world is not None:
@@ -443,6 +482,8 @@ def main():
                 fx = maze.bounds[0] + (frontier_hint_cell[0] + 0.5) * maze.resolution
                 fy = maze.bounds[1] + (frontier_hint_cell[1] + 0.5) * maze.resolution
                 path_hint_world = np.asarray([(est_pose[0], est_pose[1]), (fx, fy)], dtype=float)
+        section_times.append(("path_prepare", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
         # --- DWA 执行 (保持在 while True 循环内) ---
         # 使用SLAM估计位姿 + 机器人当前速度作为DWA状态
         state = np.array([
@@ -469,6 +510,8 @@ def main():
                 if step_counter % 40 == 0:
                     dw_max_disp = dw_max if (dw_max is not None and math.isfinite(dw_max)) else float('nan')
                     print(f"[探索] 提升前进速度 -> {v_cmd:.2f} m/s (dw_max={dw_max_disp:.2f} dist_to_goal={dist_to_goal:.2f}m)")
+        section_times.append(("dwa_plan", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
         # 先用当前估计位姿绘制预测轨迹（起点一致，避免视觉错位）
         viz.update(
             est_pose,
@@ -479,8 +522,11 @@ def main():
             occupancy=slam.get_occupancy(),
             predicted_traj=_traj,
             robot_radius=dwa_planner.cfg.robot_radius,
-            actual_traj=robot.trajectory
+            actual_traj=robot.trajectory,
+            actual_traj_style=explore_traj_style
         )
+        section_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
         # 再执行控制并更新SLAM
         d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
         if (step_counter % 20 == 0) or (v_cmd < -1e-3):
@@ -489,6 +535,8 @@ def main():
         noisy, clean = lidar.scan(robot.get_pose())
         scan = noisy
         est_pose = slam.update((d_trans, d_rot), scan)
+        section_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
 
         step_counter += 1
         if dwa_cfg.debug and step_counter % 15 == 0:
@@ -559,11 +607,22 @@ def main():
                     # 无足够净空，跳过本次挤出并进入短冷却
                     print(f"[恢复-挤出] 判定卡住但净空不足(max={max_clear:.2f}m, 需>{safe_margin+RECOVERY_MIN_ADVANCE:.2f}m)，跳过")
                     stuck_cooldown_steps = max(stuck_cooldown_steps, STUCK_WINDOW_STEPS)
+        section_times.append(("stuck_recovery", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
         # 7. 再次出口检测（单步后）
+        exit_triggered_post = False
         if total_distance_traveled >= min_exploration_distance and check_exit_condition(scan, max_range=lidar.max_range, min_no_obstacle_count=MIN_NO_OBSTACLE_COUNT):
             print("DWA控制过程中检测到超过180度连续无障碍区域！")
             should_return_to_start = True
+            exit_triggered_post = True
+        section_times.append(("exit_check_post", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
+        if exit_triggered_post:
+            section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+            log_section_times(loop_step_label, section_times)
             break
+        section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+        log_section_times(loop_step_label, section_times)
                 
     # 根据探索结束的原因决定后续行为
     if 'should_return_to_start' in locals() and should_return_to_start:
@@ -646,7 +705,7 @@ def main():
                                 scan = noisy
                                 slam.update((0.0, d_theta), scan)
                                 viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy(),
-                                           actual_traj=robot.trajectory)
+                                           actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
                             
                             distance = math.hypot(target_x - robot.x, target_y - robot.y)
                             if distance > MOVEMENT_THRESHOLD:
@@ -655,7 +714,7 @@ def main():
                                 scan = noisy
                                 slam.update((distance, 0.0), scan)
                                 viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy(),
-                                           actual_traj=robot.trajectory)
+                                           actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
                         
                         print("补充扫描完成，现在返回起点...")
                     else:
@@ -731,7 +790,7 @@ def main():
         viz.set_emergency_path(back_path_no_safety)
 
     def drive_path_with_dwa(path_cells, label="返回路径"):
-        nonlocal est_pose, scan, total_distance_traveled, step_counter
+        nonlocal est_pose, scan, total_distance_traveled, step_counter, return_traj_split_idx
         if not path_cells or len(path_cells) < 2:
             return False
         path_cells = list(path_cells)
@@ -758,9 +817,17 @@ def main():
         stall_counter = 0
 
         for idx in range(max_iters):
-            est_pose = robot.get_pose()
             while viz.paused:
                 plt.pause(VISUALIZATION_PAUSE_TIME)
+
+            loop_label = f"{label} idx={idx}"
+            loop_start = time.perf_counter()
+            section_times = []
+            t_section = loop_start
+
+            est_pose = robot.get_pose()
+            section_times.append(("pose_fetch", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
             nearest_idx = int(np.argmin(dists))
@@ -774,8 +841,14 @@ def main():
             # 构造与探索阶段一致的路径提示（世界坐标路径）
             path_hint_world = path_arr
 
+            section_times.append(("target_prepare", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
+
             state = np.array([est_pose[0], est_pose[1], est_pose[2], robot.linear_vel, robot.angular_vel], dtype=float)
             (v_cmd, w_cmd), traj = dwa_planner.plan(state, (gx, gy), obstacles, path_hint=path_hint_world)
+
+            section_times.append(("dwa_plan", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             if v_cmd > 1e-6:
                 dw_min = dw_max = None
@@ -828,7 +901,21 @@ def main():
                     print(f"[{label}] 强制解除滞留 -> {v_cmd:.2f} m/s (dw=[{dw_min_disp:.2f},{dw_max_disp:.2f}] dist_to_start={dist_to_start:.2f}m)")
                     stall_counter = 0
 
+            section_times.append(("post_plan_adjust", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
+
             viz_target_cell = path_cells[min(follow_idx, len(path_cells) - 1)]
+            explore_segment = []
+            return_segment = robot.trajectory
+            extra_trajs = None
+            if return_traj_split_idx is not None:
+                explore_segment = robot.trajectory[:return_traj_split_idx]
+                return_segment = robot.trajectory[return_traj_split_idx:]
+                if len(explore_segment) >= 2:
+                    extra_trajs = [{
+                        'points': explore_segment,
+                        'style': explore_traj_style
+                    }]
             viz.update(
                 est_pose,
                 scan,
@@ -838,19 +925,37 @@ def main():
                 occupancy=slam.get_occupancy(),
                 predicted_traj=traj,
                 robot_radius=dwa_planner.cfg.robot_radius,
-                actual_traj=robot.trajectory
+                actual_traj=return_segment,
+                actual_traj_style=return_traj_style,
+                extra_trajs=extra_trajs
             )
+
+            section_times.append(("visualization", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
             total_distance_traveled += abs(d_trans)
             if idx % 20 == 0 or v_cmd < -1e-3:
                 print(f"[{label}] idx={idx} v={float(v_cmd):.2f} w={float(w_cmd):.2f} follow={follow_idx}/{len(path_arr)-1}")
+
+            section_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
+
             noisy, clean = lidar.scan(robot.get_pose())
             scan = noisy
             est_pose = robot.get_pose()
             step_counter += 1
 
-            if math.hypot(est_pose[0] - maze.start[0], est_pose[1] - maze.start[1]) < return_threshold:
+            section_times.append(("sensor_update", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
+
+            dist_to_start_now = math.hypot(est_pose[0] - maze.start[0], est_pose[1] - maze.start[1])
+            reached_start = dist_to_start_now < return_threshold
+            section_times.append(("exit_check", (time.perf_counter() - t_section) * 1000.0))
+            section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+            log_section_times(loop_label, section_times)
+
+            if reached_start:
                 print(f"[{label}] 已到达起点附近（< {return_threshold:.2f} m）")
                 return True
 
@@ -859,6 +964,7 @@ def main():
 
     if back_path:
         used_safety_val = float(used_safety) if used_safety is not None else 0.0
+        return_traj_split_idx = len(robot.trajectory)
         returned = drive_path_with_dwa(back_path, label="安全返回路径")
         if returned:
             print("Robot returned to start.")

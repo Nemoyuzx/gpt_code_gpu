@@ -17,21 +17,21 @@ class DWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 1.0  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
-    min_speed: float = -1.0 # 默认禁倒车（如需倒车可设为负）。
-    max_yaw_rate: float = 140.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
-    max_accel: float = 1.0  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
-    max_delta_yaw_rate: float = 140.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
+    max_speed: float = 1.3  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
+    min_speed: float = -1.3 # 默认禁倒车（如需倒车可设为负）。
+    max_yaw_rate: float = 230.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
+    max_accel: float = 1.7  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_delta_yaw_rate: float = 230.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
     v_resolution: float = 0.05  # 速度采样步长。越小越细但更慢；常取 0.03~0.06。
-    yaw_rate_resolution: float = 1.0 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
+    yaw_rate_resolution: float = 0.5 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
     dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
     predict_time: float = 1.1  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
     to_goal_cost_gain: float = 0.6  # 目标朝向代价权重。大→更快对准目标方向。
     to_goal_dist_cost_gain: float = 0.25  # 目标距离代价权重。大→更偏好缩短终点距离。
-    speed_cost_gain: float = 0.40  # 降低速度奖励，避免“速度至上”。
-    obstacle_cost_gain: float = 0.6  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
-    rotation_cost_gain: float = 0.18  # 更鼓励转向（配合小半径转弯）。
-    progress_cost_gain: float = 2.8  # 更注重向目标推进。
+    speed_cost_gain: float = 0.50  # 降低速度奖励，避免“速度至上”。
+    obstacle_cost_gain: float = 0.8  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
+    rotation_cost_gain: float = 0.25  # 更鼓励转向（配合小半径转弯）。
+    progress_cost_gain: float = 2.5  # 更注重向目标推进。
     change_yaw_cost_gain: float = 0.4  # 角速度变化代价。大→更平滑，不易“抖动”。
     smoothing_alpha: float = 0.5  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
     small_angle: float = 10.0 * math.pi / 180.0  # 认为“已较好对齐”的角度阈值，用于若干条件。
@@ -40,9 +40,9 @@ class DWAConfig:
     stuck_vel: float = 0.01  # 判定“卡住”的速度阈值。
     safety_clearance: float = 0.25  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
     clearance_cost_gain: float = 3.0  # 接近膨胀半径时的代价权重。大→更远离墙。
-    spin_penalty_gain: float = 0.35  # 适度降低自旋惩罚，结合转向更灵活。
-    min_forward_ratio: float = 0.20  # 小角度时最低前进速度占比。
-    near_wall_threshold: float = 0.18  # 判定“靠墙”的gap阈值(m)。
+    spin_penalty_gain: float = 0.3  # 适度降低自旋惩罚，结合转向更灵活。
+    min_forward_ratio: float = 0.15  # 小角度时最低前进速度占比。
+    near_wall_threshold: float = 0.3  # 判定“靠墙”的gap阈值(m)。
     near_wall_rot_boost: float = 2.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
     near_wall_forward_bias_gain: float = 1.0  # 靠墙且前进速度不足时的附加惩罚增益。
     align_deadband: float = 3.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
@@ -87,7 +87,7 @@ class DWAConfig:
     direct_reverse_enabled: bool = True  # 默认开启直接倒车。
     direct_reverse_gap_threshold: float = 0.38  # 直接倒车的gap阈值。
     direct_reverse_reward_gain: float = 0.3  # 直接倒车奖励权重（降低）。
-    # 已移除脱困模式
+
     disable_fallback: bool = True  # 禁用 fallback；失败时改为放宽过滤重采样。
     reverse_no_heading_gate: bool = True  # 允许倒车不受朝向阈值限制。
     # ---- 方向切换锐化 ----
@@ -106,7 +106,7 @@ class DWAConfig:
     # ---- 倒车->前进 制动/切换优化 ----
     reverse_brake_boost_factor: float = 4.0  # 倒车→前进时允许更大正向加速度以快速刹停。
     reverse_continue_penalty_gain: float = 1.2  # 已对齐仍倒车的惩罚。
-    reverse_reward_angle_gate_deg: float = 8.0  # 角度误差阈值(度)，小于此不再奖励倒车。
+    reverse_reward_angle_gate_deg: float = 6.0  # 角度误差阈值(度)，小于此不再奖励倒车。
     # ---- 前进优先 / 启动阶段策略 ----
     initial_no_reverse_steps: int = 0  # 启动阶段不额外禁倒车（已整体禁倒车）。
     forward_pref_angle_deg: float = 40.0  # 角度小于该值时偏好前进而非倒车。
@@ -134,7 +134,7 @@ class DWAConfig:
     # ---- 全局路径贴合（仅作方向提示，不改变终点） ----
     path_align_gain: float = 0.6      # 和路径切向对齐的角度代价权重
     path_deviation_gain: float = 0.8  # 相对路径的横向偏差（米）代价权重
-    path_progress_gain: float = 0.0   # 可选：沿路径前进的奖励（默认关闭）
+    path_progress_gain: float = 0.2   # 可选：沿路径前进的奖励（默认关闭）
     # ---- 实现中用到的通用阈值（统一收口，消除魔法数） ----
     # 倒车判定/采样与惩罚相关的小阈值
     reverse_sample_eps: float = 0.01     # 采样/判定倒车使用的速度阈值(|v|>eps 才视作倒车)
