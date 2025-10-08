@@ -183,7 +183,18 @@ def main():
     def log_section_times(tag, timings):
         if not timings:
             return
-        summary = " | ".join(f"{name}={elapsed:.2f}ms" for name, elapsed in timings)
+        # 过滤掉字典类型的值，只显示数值型timing
+        summary = " | ".join(f"{name}={elapsed:.2f}ms" for name, elapsed in timings if isinstance(elapsed, (int, float)))
+        # 展开 DWA 内部详细统计（如果存在）
+        if "dwa_plan" in dict(timings):
+            dwa_detail = None
+            for name, _ in timings:
+                if name == "dwa_planner_detail":
+                    dwa_detail = _
+                    break
+            if dwa_detail and isinstance(dwa_detail, dict):
+                dwa_breakdown = " | ".join(f"dwa_{k}={v:.2f}ms" for k, v in dwa_detail.items() if isinstance(v, (int, float)))
+                summary += f" | {dwa_breakdown}"
         print(f"[Timing] {tag} {summary}")
     return_traj_split_idx = None
     
@@ -344,7 +355,57 @@ def main():
     # 4. 前沿探索主循环
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
-    lookahead_steps = 10  # 从当前索引起前瞻若干栅格点，作为DWA子目标
+    base_lookahead_steps = 10  # 默认前瞻栅格数
+    min_lookahead_steps = 4     # 弯曲段时的最小前瞻
+    max_lookahead_steps = 25    # 直线段时的最大前瞻
+
+    def compute_dynamic_lookahead(path_cells, current_idx,
+                                  min_steps=min_lookahead_steps,
+                                  max_steps=max_lookahead_steps):
+        """根据局部路径曲率自适应选择前瞻步数。"""
+        if not path_cells or len(path_cells) <= 1:
+            return 1
+        candidate = base_lookahead_steps
+        start = max(0, current_idx - 1)
+        end = min(len(path_cells) - 1, current_idx + 6)
+        headings = []
+        for i in range(start, end):
+            x0, y0 = path_cells[i]
+            x1, y1 = path_cells[i + 1]
+            dx = x1 - x0
+            dy = y1 - y0
+            if dx == 0 and dy == 0:
+                continue
+            headings.append(math.atan2(dy, dx))
+        if len(headings) >= 2:
+            diffs = []
+            for i in range(len(headings) - 1):
+                diff = math.atan2(
+                    math.sin(headings[i + 1] - headings[i]),
+                    math.cos(headings[i + 1] - headings[i])
+                )
+                diffs.append(abs(diff))
+            if diffs:
+                avg_turn = sum(diffs) / len(diffs)
+                max_turn = max(diffs)
+                curvature = 0.6 * avg_turn + 0.4 * max_turn
+                straight_threshold = math.radians(8.0)
+                curve_threshold = math.radians(35.0)
+                if curvature <= straight_threshold:
+                    factor = 0.0
+                elif curvature >= curve_threshold:
+                    factor = 1.0
+                else:
+                    factor = ((curvature - straight_threshold) /
+                              (curve_threshold - straight_threshold))
+                candidate = max_steps - factor * (max_steps - min_steps)
+                candidate = int(round(candidate))
+        candidate = max(min_steps, min(max_steps, candidate))
+        remaining = len(path_cells) - 1 - current_idx
+        if remaining <= 0:
+            return 1
+        candidate = min(candidate, remaining)
+        return max(1, candidate)
     while True:
         # 1. 暂停检查
         if viz.paused:
@@ -435,7 +496,8 @@ def main():
                     if d2 < min_d2:
                         min_d2 = d2
                         nearest_idx = i
-            follow_idx = min(len(current_path) - 1, nearest_idx + lookahead_steps)
+            dynamic_steps = compute_dynamic_lookahead(current_path, nearest_idx)
+            follow_idx = min(len(current_path) - 1, nearest_idx + dynamic_steps)
             follow_cell = current_path[follow_idx]
         else:
             follow_cell = frontier_hint_cell if frontier_hint_cell is not None else (rx_idx, ry_idx)
@@ -544,6 +606,10 @@ def main():
         )
         section_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
+        # 添加 DWA 详细统计
+        if hasattr(dwa_planner, 'last_timing') and isinstance(dwa_planner.last_timing, dict):
+            section_times.append(("dwa_planner_detail", dwa_planner.last_timing.copy()))
+        
         # 再执行控制并更新SLAM
         d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
         if (step_counter % 20 == 0) or (v_cmd < -1e-3):
@@ -817,7 +883,6 @@ def main():
             wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
             path_pts.append((wx, wy))
         path_arr = np.asarray(path_pts, dtype=float)
-        lookahead = max(1, lookahead_steps)
         return_threshold = 0.18
         max_iters = max(len(path_arr) * 80, 700)
         est_pose = robot.get_pose()
@@ -832,6 +897,7 @@ def main():
         return_min_speed = 0.22
         return_speed_cap = 0.75
         stall_counter = 0
+        path_update_counter = 0  # 计数器：每50次更新一次路径
 
         for idx in range(max_iters):
             while viz.paused:
@@ -846,8 +912,40 @@ def main():
             section_times.append(("pose_fetch", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
 
+            # 每50次更新一次返回路径（类似探索阶段的逻辑）
+            if path_update_counter % 50 == 0:
+                # 重新规划从当前位置到起点的路径
+                current_idx_x_update = int((est_pose[0] - maze.bounds[0]) / maze.resolution)
+                current_idx_y_update = int((est_pose[1] - maze.bounds[1]) / maze.resolution)
+                occupancy_update = slam.get_occupancy().copy()
+                
+                # 确保当前格和起点格被视为空闲
+                if 0 <= current_idx_y_update < occupancy_update.shape[0] and 0 <= current_idx_x_update < occupancy_update.shape[1]:
+                    occupancy_update[current_idx_y_update, current_idx_x_update] = 0
+                if 0 <= start_idx_y < occupancy_update.shape[0] and 0 <= start_idx_x < occupancy_update.shape[1]:
+                    occupancy_update[start_idx_y, start_idx_x] = 0
+                
+                # 使用当前安全距离重新规划
+                safety_cells_return = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
+                updated_path = explorer.plan_path(occupancy_update, (current_idx_x_update, current_idx_y_update), (start_idx_x, start_idx_y), safety_distance=float(safety_cells_return))
+                
+                if updated_path and len(updated_path) >= 2:
+                    # 更新路径
+                    path_cells = list(updated_path)
+                    path_pts = []
+                    for cx, cy in path_cells:
+                        wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
+                        wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
+                        path_pts.append((wx, wy))
+                    path_arr = np.asarray(path_pts, dtype=float)
+                    if idx % 50 == 0:
+                        print(f"[{label}] 第{idx}步：更新返回路径，新路径长度 {len(path_arr)-1} 段")
+            
+            path_update_counter += 1
+
             dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
             nearest_idx = int(np.argmin(dists))
+            lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
             follow_cell = path_cells[min(len(path_cells) - 1, nearest_idx)]
             goal_point = (float(path_arr[follow_idx, 0]), float(path_arr[follow_idx, 1]))
