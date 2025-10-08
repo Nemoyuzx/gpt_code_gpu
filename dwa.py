@@ -38,8 +38,8 @@ class DWAConfig:
     small_angle_rot_scale: float = 3.0  # 小角度时增加旋转代价的比例，鼓励直行。
     robot_radius: float = 0.3  # 机器人半径(m)。与地图分辨率/真实底盘匹配。
     stuck_vel: float = 0.01  # 判定“卡住”的速度阈值。
-    safety_clearance: float = 0.2  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
-    clearance_cost_gain: float = 2.0  # 接近膨胀半径时的代价权重。大→更远离墙。
+    safety_clearance: float = 0.25  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
+    clearance_cost_gain: float = 3.0  # 接近膨胀半径时的代价权重。大→更远离墙。
     spin_penalty_gain: float = 0.35  # 适度降低自旋惩罚，结合转向更灵活。
     min_forward_ratio: float = 0.20  # 小角度时最低前进速度占比。
     near_wall_threshold: float = 0.18  # 判定“靠墙”的gap阈值(m)。

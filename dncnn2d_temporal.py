@@ -3,10 +3,11 @@ import math
 import random
 from collections import deque
 from typing import Callable, List, Tuple, Optional
-
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from contextlib import nullcontext
 
 # ---------------- 设备选择工具 (支持 macOS MPS) ----------------
 def select_device(explicit: Optional[str] = None) -> torch.device:
@@ -318,7 +319,7 @@ def train_temporal_dncnn2d(model_save_path: str,
 
     distance_loss_weight>0 时，会在 residual 监督外，对 clean_last 做额外 MSE 约束。
     """
-    import torch.nn.functional as F
+    
 
     dev = select_device(device)
     in_ch = 2 if cond_noise else 1
@@ -345,7 +346,6 @@ def train_temporal_dncnn2d(model_save_path: str,
         use_amp = False
     sched = None
     if scheduler == 'cosine':
-        from math import ceil
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, steps - warmup_steps), eta_min=lr * 0.1)
 
     # 固定验证集（合成一次）
@@ -439,7 +439,7 @@ def train_temporal_dncnn2d(model_save_path: str,
             if dev.type == 'cuda':
                 amp_ctx = torch.cuda.amp.autocast(enabled=use_amp)
             else:
-                from contextlib import nullcontext
+                
                 amp_ctx = nullcontext()
             with amp_ctx:
                 if cond_noise:

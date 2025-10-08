@@ -150,8 +150,7 @@ def main():
             s = float(s); e = float(e); st = float(st)
             if st <= 0 or e <= s:
                 raise ValueError("range 参数非法")
-            import numpy as _np
-            vals = [round(x, 6) for x in _np.arange(s, e + st*0.5, st)]
+            vals = [round(x, 6) for x in np.arange(s, e + st*0.5, st)]
             args.multi_noise_list = vals
             print(f"[multi-noise-range] 生成 {len(vals)} 个 sigma 值: [{vals[0]}, ..., {vals[-1]}]")
         except Exception as ex:

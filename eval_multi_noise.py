@@ -36,6 +36,7 @@ import torch
 from maze_loader import MazeLoader
 from lidar import Lidar
 from dncnn2d_temporal import DnCNN2DPlus, select_device
+import json
 
 
 class ProjectSim:
@@ -185,7 +186,7 @@ def main():
         print(line)
 
     # 简洁JSON可复用
-    import json
+    
     out = {'A': res_a, 'B': res_b, 'sigmas': sigmas}
     print('\nJSON_SUMMARY_START')
     print(json.dumps(out, indent=2))

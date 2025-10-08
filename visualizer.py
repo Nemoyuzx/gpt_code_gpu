@@ -49,7 +49,7 @@ class Visualizer:
             print(f"[Visualizer] 当前地图已保存至 {map_file}, 路径已保存至 {path_file}")
 
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
-               predicted_traj=None, robot_radius=None):
+               predicted_traj=None, robot_radius=None, actual_traj=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。
@@ -114,6 +114,13 @@ class Visualizer:
                 px = predicted_traj[:, 0]
                 py = predicted_traj[:, 1]
                 self.ax.plot(px, py, "-g", linewidth=2, alpha=0.8, label="Predicted Traj")
+            except Exception:
+                pass
+        # 绘制实际轨迹（橙色折线）
+        if actual_traj is not None and len(actual_traj) >= 2:
+            try:
+                traj_arr = np.asarray(actual_traj, dtype=float)
+                self.ax.plot(traj_arr[:, 0], traj_arr[:, 1], color='orange', linewidth=2, alpha=0.9, label='Actual Traj')
             except Exception:
                 pass
         # 绘制机器人当前位置和朝向 (箭头表示朝向)

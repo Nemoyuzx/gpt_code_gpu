@@ -6,12 +6,13 @@ import gc   # 新增: 用于显式进行垃圾回收
 import resource  # 新增: 获取内存占用（Unix/macOS）
 import datetime  # 新增: 时间戳
 import csv       # 新增: 写入CSV
+import psutil  # 可选依赖
 
 
 
 #0.49
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.6  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.7  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
@@ -50,7 +51,7 @@ class ICPSlam:
         
         try:
             # 检查是否有环境变量设置强制使用CPU
-            import os
+            
             force_cpu = os.environ.get("FORCE_CPU", "0") == "1"
             
             if not force_cpu and torch.cuda.is_available():
@@ -87,7 +88,7 @@ class ICPSlam:
         # 可选：当前RSS（需要 psutil，若不可用则忽略）
         rss_cur_mb = None
         try:
-            import psutil  # 可选依赖
+            
             proc = psutil.Process(os.getpid())
             rss_cur_mb = proc.memory_info().rss / (1024.0 * 1024.0)
         except Exception:
