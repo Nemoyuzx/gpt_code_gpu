@@ -34,7 +34,7 @@ MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走�
 
 # 探索阈值参数
 MIN_EXPLORATION_DISTANCE = 30.0  # 最小探索距离阈值
-MIN_FRONTIERS_TO_EXPLORE = 10  # 最小探索前沿数量
+MIN_FRONTIERS_TO_EXPLORE = 20  # 最小探索前沿数量
 
 # 运动控制精度参数
 ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
@@ -60,7 +60,6 @@ VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 
 # 未探索区域搜索参数
 OBSTACLE_SEARCH_EXPANSION = 0.5  # 障碍物区域搜索范围扩大距离（米）
-
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 40              # 冷却期间暂停A*与前沿刷新（冻结提示）
@@ -130,14 +129,17 @@ def main():
     loader = MazeLoader()
     maze = loader.load(MAZE_FILE)  # 加载默认迷宫
 
-    # === 自动生成入口虚拟墙壁 ===
+    # === 入口边界检查参数（替代虚拟墙） ===
     start_x, start_y = maze.start
     min_x, min_y, max_x, max_y = maze.bounds
     eps = maze.resolution * VIRTUAL_WALL_RESOLUTION_FACTOR
-    is_left = abs(start_x - min_x) < eps
-    is_bottom = abs(start_y - min_y) < eps
-    virtual_walls = []
-    # 自动查找入口左右两侧最近的墙端点
+    
+    # 计算入口的安全边界，防止小车走出迷宫
+    # 假设入口在底部，我们设置一个Y坐标的最小值
+    entrance_safety_margin = 0.5  # 入口安全边距（米）
+    entrance_min_y = start_y - entrance_safety_margin  # 不允许探索低于此Y值的区域
+    
+    # 自动查找入口左右两侧最近的墙端点（用于确定入口范围）
     left_candidates = []
     right_candidates = []
     for wall in maze.walls:
@@ -149,16 +151,9 @@ def main():
                     right_candidates.append(pt)
     left_wall_x = max(left_candidates, default=(start_x - 1,))[0] if left_candidates else start_x - 1
     right_wall_x = min(right_candidates, default=(start_x + 1,))[0] if right_candidates else start_x + 1
-    print(left_wall_x, right_wall_x)
-    # 生成虚拟墙
-    virtual_x1 = left_wall_x 
-    virtual_x2 = right_wall_x 
-    virtual_y = start_y + VIRTUAL_WALL_Y_OFFSET
-    virtual_walls.append(((virtual_x1, virtual_y), (virtual_x2, virtual_y)))
-    virtual_walls.append(((virtual_x1, virtual_y), (virtual_x1, start_y)))
-    virtual_walls.append(((virtual_x2, virtual_y), (virtual_x2, start_y)))
-    # 添加虚拟墙到maze.walls
-    maze.walls.extend(virtual_walls)
+    entrance_x_range = (left_wall_x, right_wall_x)  # 入口X范围
+    
+    print(f"入口位置: ({start_x:.2f}, {start_y:.2f}), X范围: [{left_wall_x:.2f}, {right_wall_x:.2f}], 安全边界Y >= {entrance_min_y:.2f}")
 
     # 2. 初始化机器人、传感器、SLAM等模块
     # 初始朝向设为 pi/2 （朝向y正方向：向上）
@@ -287,6 +282,7 @@ def main():
         parent_x[sy, sx] = -1
         parent_y[sy, sx] = -1
         directions = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,-1),(-1,1),(1,1)]
+        
         # 计算一定格子范围内是否存在墙体（占据）
         def is_safe_cell(x, y):
             for dx in range(-dynamic_wall_margin, dynamic_wall_margin+1):
@@ -295,13 +291,41 @@ def main():
                     if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == 1:
                         return False
             return True
+        
+        # 检查是否在入口安全范围内（防止走出迷宫）
+        def is_inside_maze(x, y):
+            # 将栅格坐标转换为世界坐标
+            world_x = maze.bounds[0] + (x + 0.5) * maze.resolution
+            world_y = maze.bounds[1] + (y + 0.5) * maze.resolution
+            
+            # 检查Y坐标是否在安全范围内
+            if world_y < entrance_min_y:
+                return False
+            
+            # 如果点在入口Y附近，还要检查X坐标是否在入口范围内
+            # 这样可以防止小车从入口的侧面走出去
+            if abs(world_y - start_y) < entrance_safety_margin * 2:
+                if world_x < entrance_x_range[0] - 0.3 or world_x > entrance_x_range[1] + 0.3:
+                    return False
+            
+            return True
+        
         fallback_candidate = None
         while dq:
             x, y = dq.popleft()
+            
+            # 检查此格是否在迷宫内部
+            if not is_inside_maze(x, y):
+                continue
+            
             # 检查邻居是否含未知
             for dx, dy in directions:
                 nx, ny = x+dx, y+dy
                 if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:  # 邻居未知 -> 候选
+                    # 同样检查未知邻居是否在安全范围内
+                    if not is_inside_maze(nx, ny):
+                        continue
+                    
                     # 回溯路径（使用父指针）
                     path_cells = []
                     cx, cy = x, y
@@ -324,10 +348,12 @@ def main():
             for dx, dy in directions:
                 nx, ny = x+dx, y+dy
                 if 0 <= nx < w and 0 <= ny < h and visited_np[ny, nx] == 0 and occupancy[ny, nx] == 0:
-                    visited_np[ny, nx] = 1
-                    parent_x[ny, nx] = x
-                    parent_y[ny, nx] = y
-                    dq.append((nx, ny))
+                    # 确保扩展的格子也在迷宫内部
+                    if is_inside_maze(nx, ny):
+                        visited_np[ny, nx] = 1
+                        parent_x[ny, nx] = x
+                        parent_y[ny, nx] = y
+                        dq.append((nx, ny))
         # 若未找到安全候选但存在回退候选，则使用之（打印提示）
         if fallback_candidate is not None:
             if step_counter % 25 == 0:
