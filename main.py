@@ -277,15 +277,24 @@ def main():
 
     # 最近未知搜索函数（BFS在空闲区域上扩展，一旦邻接未知返回）
     def find_nearest_unexplored(occupancy, start, bounds_idx=None, unknown_limit=0,
-                                visited_out=None, debug_update=None, debug_interval=80):
+                                visited_out=None, debug_update=None, debug_interval=80,
+                                search_mode="bfs"):
         h, w = occupancy.shape
         sx, sy = int(start[0]), int(start[1])
         if not (0 <= sx < w and 0 <= sy < h):
             return None, None, None
 
         visited_np.fill(255)
-        dq = deque()
-        dq.append((sx, sy, 0))
+        use_stack = (search_mode == "dfs")
+        if use_stack:
+            container = [(sx, sy, 0)]
+            pop_item = container.pop
+            push_item = container.append
+        else:
+            container = deque()
+            container.append((sx, sy, 0))
+            pop_item = container.popleft
+            push_item = container.append
         visited_np[sy, sx] = 0
         parent_x[sy, sx] = -1
         parent_y[sy, sx] = -1
@@ -341,8 +350,8 @@ def main():
             return True
 
         fallback_candidate = None
-        while dq:
-            x, y, used_unknown = dq.popleft()
+        while container:
+            x, y, used_unknown = pop_item()
             debug_counter += 1
 
             if not is_inside_maze(x, y):
@@ -396,7 +405,7 @@ def main():
                 visited_np[ny, nx] = next_unknown
                 parent_x[ny, nx] = x
                 parent_y[ny, nx] = y
-                dq.append((nx, ny, next_unknown))
+                push_item((nx, ny, next_unknown))
                 if debug_points is not None:
                     debug_points.append((nx, ny))
                     if debug_update is not None and (debug_counter % max(1, debug_interval) == 0):
@@ -418,6 +427,7 @@ def main():
     dwa_planner = DWAPlanner(dwa_cfg)
     base_margin_m = dwa_cfg.robot_radius + dwa_cfg.safety_clearance
     dynamic_wall_margin = max(1, int(base_margin_m / maze.resolution) + 1)
+    explore_safety_cells = float(frontier_safety_cells)
     if dwa_cfg.debug:
         print(f"[DWA模式=orig] 安全格距离: {dynamic_wall_margin} (格长={maze.resolution:.2f}m)")
 
@@ -484,6 +494,161 @@ def main():
             return 1
         candidate = min(candidate, remaining)
         return max(1, candidate)
+
+    def plan_path_with_safety(occupancy_grid, start_cell, goal_cell,
+                              safety_cells, max_unknown_allowed=0):
+        """使用与探索一致的安全距离规划路径。"""
+        if start_cell == goal_cell:
+            return [start_cell], float(safety_cells)
+        planned = explorer.plan_path(
+            occupancy_grid,
+            start_cell,
+            goal_cell,
+            safety_distance=safety_cells,
+            max_unknown_cells=max_unknown_allowed
+        )
+        if planned and len(planned) >= 2:
+            return planned, float(safety_cells)
+        return None, None
+
+    def find_nearest_safe_cell(path_cells, occupancy_grid, safety_cells, start_cell):
+        """在给定路径上查找距离起点最近且满足安全距离的栅格。"""
+        if not path_cells:
+            return None
+        sx, sy = start_cell
+        best_cell = None
+        best_dist2 = float('inf')
+        for cx, cy in path_cells:
+            if (cx, cy) == (sx, sy):
+                continue
+            if not explorer._is_safe(occupancy_grid, cx, cy, safety_distance=safety_cells):
+                continue
+            dist2 = (cx - sx) * (cx - sx) + (cy - sy) * (cy - sy)
+            if dist2 < best_dist2:
+                best_dist2 = dist2
+                best_cell = (cx, cy)
+        return best_cell
+
+    def drive_path_with_dwa_segment(path_cells, label="路径跟随", arrival_tol=0.22,
+                                    max_iter_factor=80,
+                                    replan_callback=None,
+                                    replan_interval=18):
+        """使用DWA沿给定网格路径行驶，返回是否成功到达。"""
+        nonlocal est_pose, scan, total_distance_traveled, step_counter
+        if not path_cells or len(path_cells) < 2:
+            return False
+
+        path_cells = list(path_cells)
+        last_replan_idx = -replan_interval
+        path_pts = []
+        for cx, cy in path_cells:
+            wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
+            wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
+            path_pts.append((wx, wy))
+        path_arr = np.asarray(path_pts, dtype=float)
+        goal_cell = path_cells[-1]
+        goal_world = path_arr[-1]
+
+        max_iters = max(len(path_arr) * max_iter_factor, 600)
+        print(f"[{label}] 使用DWA沿路径前进，共 {len(path_arr)-1} 段，最大步数 {max_iters}")
+
+        dwa_planner._last_u = (0.0, 0.0)
+        if hasattr(dwa_planner, '_dwell_count'):
+            dwa_planner._dwell_count = 0
+        if hasattr(dwa_planner, '_reverse_block_count'):
+            dwa_planner._reverse_block_count = 0
+
+        for idx in range(max_iters):
+            while viz.paused:
+                plt.pause(VISUALIZATION_PAUSE_TIME)
+
+            est_pose = robot.get_pose()
+            dist_to_goal = math.hypot(est_pose[0] - goal_world[0], est_pose[1] - goal_world[1])
+            if dist_to_goal <= arrival_tol:
+                print(f"[{label}] 到达目标，终点剩余 {dist_to_goal:.2f}m")
+                return True
+
+            if replan_callback and (idx == 0 or (idx - last_replan_idx) >= replan_interval):
+                new_path = replan_callback()
+                if new_path and len(new_path) >= 2:
+                    np_path = []
+                    for cx, cy in new_path:
+                        wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
+                        wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
+                        np_path.append((wx, wy))
+                    path_cells = list(new_path)
+                    path_arr = np.asarray(np_path, dtype=float)
+                    goal_cell = path_cells[-1]
+                    goal_world = path_arr[-1]
+                    last_replan_idx = idx
+            dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
+            nearest_idx = int(np.argmin(dists))
+            lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
+            follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
+            gx, gy = path_arr[follow_idx]
+
+            state = np.array([
+                est_pose[0],
+                est_pose[1],
+                est_pose[2],
+                robot.linear_vel,
+                robot.angular_vel
+            ])
+            obstacles = occupancy_to_obstacles(
+                slam.get_occupancy(),
+                maze.bounds,
+                maze.resolution,
+                stride=3
+            )
+            (v_cmd, w_cmd), predicted_traj = dwa_planner.plan(
+                state,
+                (gx, gy),
+                obstacles,
+                path_hint=path_arr
+            )
+
+            if v_cmd > 1e-6:
+                dw_max = None
+                if hasattr(dwa_planner, "last_dw") and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
+                    dw_max = dwa_planner.last_dw[1]
+                max_allow = dw_max if (dw_max is not None and math.isfinite(dw_max)) else EXPLORE_MIN_SPEED
+                boost_speed = min(EXPLORE_MIN_SPEED, max_allow)
+                if boost_speed > v_cmd and dist_to_goal > 0.5:
+                    v_cmd = boost_speed
+                    dwa_planner._last_u = (v_cmd, w_cmd)
+                    if predicted_traj is not None:
+                        predicted_traj = dwa_planner._predict_trajectory(state, v_cmd, w_cmd)
+
+            viz.update(
+                est_pose,
+                scan,
+                frontiers=None,
+                target=goal_cell,
+                path=path_cells,
+                occupancy=slam.get_occupancy(),
+                predicted_traj=predicted_traj,
+                robot_radius=dwa_planner.cfg.robot_radius,
+                actual_traj=robot.trajectory,
+                actual_traj_style=explore_traj_style
+            )
+
+            d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
+            if idx % 20 == 0:
+                print(f"[{label}] idx={idx} v={float(v_cmd):.2f} w={float(w_cmd):.2f} d_trans={d_trans:.3f} d_rot={d_rot:.3f}")
+            total_distance_traveled += abs(d_trans)
+
+            noisy, clean = lidar.scan(robot.get_pose())
+            scan = noisy
+            est_pose = slam.update((d_trans, d_rot), scan)
+            step_counter += 1
+
+            if math.isclose(v_cmd, 0.0, abs_tol=1e-3) and math.isclose(w_cmd, 0.0, abs_tol=1e-3):
+                if dist_to_goal <= arrival_tol + 0.1:
+                    print(f"[{label}] 靠近目标但速度趋近于零，判定到达")
+                    return True
+
+        print(f"[{label}] 超过最大步数 {max_iters} 仍未到达目标")
+        return False
     while True:
         # 1. 暂停检查
         if viz.paused:
@@ -551,29 +716,26 @@ def main():
 
             # 运行A*（仅在非冷却期），始终使用指定的前沿安全距离
             safety_cells = float(frontier_safety_cells)
+            planned_path = None
+            planned_sd = None
             if provided_path is not None and len(provided_path) >= 2:
-                # 对提供的路径逐段验证安全距离；不满足则重新规划
                 path_safe = True
                 for cx, cy in provided_path:
                     if not explorer._is_safe(occupancy, cx, cy, safety_distance=safety_cells):
                         path_safe = False
                         break
                 if path_safe:
-                    global_path = provided_path
-                else:
-                    global_path = explorer.plan_path(
-                        occupancy,
-                        (rx_idx, ry_idx),
-                        target_cell_latest,
-                        safety_distance=safety_cells
-                    )
-            else:
-                global_path = explorer.plan_path(
+                    planned_path = list(provided_path)
+                    planned_sd = safety_cells
+            if planned_path is None:
+                planned_path, planned_sd = plan_path_with_safety(
                     occupancy,
                     (rx_idx, ry_idx),
                     target_cell_latest,
-                    safety_distance=safety_cells
+                    safety_cells,
+                    max_unknown_allowed=0
                 )
+            global_path = planned_path if planned_path is not None else None
             current_path = global_path if global_path else None
             if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:
                 frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
@@ -862,93 +1024,216 @@ def main():
             print(f"在障碍物边界范围内发现 {len(unexplored_in_range)} 个未探索格子")
             
             if unexplored_in_range:
-                current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
-                current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
+                def find_boundary_entry(start_x, start_y):
+                    clamp_x = min(max(start_x, min_obs_x_idx), max_obs_x_idx)
+                    clamp_y = min(max(start_y, min_obs_y_idx), max_obs_y_idx)
+                    if (min_obs_x_idx <= start_x <= max_obs_x_idx and
+                            min_obs_y_idx <= start_y <= max_obs_y_idx):
+                        dist_pairs = [
+                            (abs(start_x - min_obs_x_idx), min_obs_x_idx, clamp_y),
+                            (abs(start_x - max_obs_x_idx), max_obs_x_idx, clamp_y),
+                            (abs(start_y - min_obs_y_idx), clamp_x, min_obs_y_idx),
+                            (abs(start_y - max_obs_y_idx), clamp_x, max_obs_y_idx)
+                        ]
+                        _, clamp_x, clamp_y = min(dist_pairs, key=lambda item: item[0])
+                    clamp_x = min(max(clamp_x, min_obs_x_idx), max_obs_x_idx)
+                    clamp_y = min(max(clamp_y, min_obs_y_idx), max_obs_y_idx)
 
-                bfs_debug_cells = []
-                viz.set_bfs_debug_points(None)
-                bfs_debug_state = {"reported": 0}
+                    if 0 <= clamp_y < occupancy.shape[0] and 0 <= clamp_x < occupancy.shape[1]:
+                        if occupancy[clamp_y, clamp_x] != 1:
+                            return clamp_x, clamp_y
 
-                def bfs_debug_callback(cells):
-                    viz.set_bfs_debug_points(cells, color='cyan')
+                    search_offsets = [(0, 0)]
+                    search_offsets += [(dx, 0) for dx in range(-4, 5)]
+                    search_offsets += [(0, dy) for dy in range(-4, 5)]
+                    search_offsets += [
+                        (dx, dy)
+                        for r in range(1, 4)
+                        for dx in (-r, r)
+                        for dy in (-r, r)
+                    ]
+                    for dx, dy in search_offsets:
+                        nx = clamp_x + dx
+                        ny = clamp_y + dy
+                        if not (min_obs_x_idx <= nx <= max_obs_x_idx and min_obs_y_idx <= ny <= max_obs_y_idx):
+                            continue
+                        if 0 <= ny < occupancy.shape[0] and 0 <= nx < occupancy.shape[1]:
+                            if occupancy[ny, nx] != 1:
+                                return nx, ny
+                    return clamp_x, clamp_y
+                visited_subtargets = set()
+                while True:
+                    occupancy = slam.get_occupancy()
+                    current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
+                    current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
+
+                    boundary_start = find_boundary_entry(current_idx_x, current_idx_y)
+                    if boundary_start != (current_idx_x, current_idx_y):
+                        print(f"[BFS Debug] 起点调整到障碍边界 {boundary_start}")
+
+                    bfs_debug_cells = []
+                    viz.set_bfs_debug_points(None)
+                    bfs_debug_state = {"reported": 0}
+
+                    def bfs_debug_callback(cells):
+                        viz.set_bfs_debug_points(cells, color='cyan')
+                        viz.update(
+                            robot.get_pose(),
+                            scan,
+                            frontiers=None,
+                            target=None,
+                            path=None,
+                            occupancy=occupancy,
+                            actual_traj=robot.trajectory,
+                            actual_traj_style=explore_traj_style
+                        )
+                        if len(cells) - bfs_debug_state["reported"] >= 150:
+                            bfs_debug_state["reported"] = len(cells)
+                            print(f"[BFS Debug] 已扩展 {len(cells)} 个栅格")
+                        plt.pause(0.03)
+
+                    bfs_target, bfs_unknown_neighbor, bfs_path = find_nearest_unexplored(
+                        occupancy,
+                        boundary_start,
+                        bounds_idx=(min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx),
+                        unknown_limit=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS,
+                        visited_out=bfs_debug_cells,
+                        debug_update=bfs_debug_callback,
+                        debug_interval=60,
+                        search_mode="dfs"
+                    )
+
+                    if bfs_debug_cells:
+                        print(f"[BFS Debug] 搜索结束，共记录 {len(bfs_debug_cells)} 个栅格")
+                        viz.set_bfs_debug_points(bfs_debug_cells, color='cyan')
+                    else:
+                        viz.set_bfs_debug_points(None)
+
                     viz.update(
                         robot.get_pose(),
                         scan,
                         frontiers=None,
                         target=None,
                         path=None,
-                        occupancy=occupancy,
+                        occupancy=slam.get_occupancy(),
                         actual_traj=robot.trajectory,
                         actual_traj_style=explore_traj_style
                     )
-                    if len(cells) - bfs_debug_state["reported"] >= 150:
-                        bfs_debug_state["reported"] = len(cells)
-                        print(f"[BFS Debug] 已扩展 {len(cells)} 个栅格")
-                    plt.pause(0.03)
+                    if bfs_debug_cells:
+                        plt.pause(0.6)
 
-                bfs_target, bfs_unknown_neighbor, bfs_path = find_nearest_unexplored(
-                    occupancy,
-                    (current_idx_x, current_idx_y),
-                    bounds_idx=(min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx),
-                    unknown_limit=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS,
-                    visited_out=bfs_debug_cells,
-                    debug_update=bfs_debug_callback,
-                    debug_interval=60
-                )
+                    if not (bfs_target and bfs_path and len(bfs_path) > 1):
+                        print("障碍区域内没有更多符合条件的未知前沿，结束补扫阶段。")
+                        break
 
-                if bfs_debug_cells:
-                    print(f"[BFS Debug] 搜索结束，共记录 {len(bfs_debug_cells)} 个栅格")
-                    viz.set_bfs_debug_points(bfs_debug_cells, color='cyan')
-                else:
-                    viz.set_bfs_debug_points(None)
+                    if bfs_target in visited_subtargets:
+                        print(f"目标 {bfs_target} 已尝试过，跳过并继续搜索下一个未知点。")
+                        # 为避免死循环，临时将该格标记为空闲，促使下一轮搜索更远区域
+                        tx, ty = bfs_target
+                        if 0 <= ty < occupancy.shape[0] and 0 <= tx < occupancy.shape[1]:
+                            occupancy[ty, tx] = 0
+                        continue
 
-                viz.update(
-                    robot.get_pose(),
-                    scan,
-                    frontiers=None,
-                    target=None,
-                    path=None,
-                    occupancy=slam.get_occupancy(),
-                    actual_traj=robot.trajectory,
-                    actual_traj_style=explore_traj_style
-                )
-                if bfs_debug_cells:
-                    plt.pause(0.6)
-
-                if bfs_target and bfs_path and len(bfs_path) > 1:
                     print(f"BFS在障碍物区域内找到可达目标 {bfs_target}，路径长度 {len(bfs_path)-1} 步")
                     selected_target = bfs_target
-                    selected_path = bfs_path
+                    selected_path = list(bfs_path)
+                    visited_subtargets.add(selected_target)
 
-                    for step in selected_path[1:]:
-                        ix, iy = step
-                        target_x = maze.bounds[0] + (ix + 0.5) * maze.resolution
-                        target_y = maze.bounds[1] + (iy + 0.5) * maze.resolution
-                        dx = target_x - robot.x
-                        dy = target_y - robot.y
-                        desired_theta = math.atan2(dy, dx)
-                        d_theta = desired_theta - robot.theta
-                        d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
+                    occupancy_local = slam.get_occupancy().copy()
+                    if 0 <= current_idx_y < occupancy_local.shape[0] and 0 <= current_idx_x < occupancy_local.shape[1]:
+                        occupancy_local[current_idx_y, current_idx_x] = 0
+                    tx, ty = selected_target
+                    if 0 <= ty < occupancy_local.shape[0] and 0 <= tx < occupancy_local.shape[1]:
+                        occupancy_local[ty, tx] = 0
 
-                        if abs(d_theta) > ROTATION_THRESHOLD:
-                            robot.rotate(d_theta)
-                            noisy, clean = lidar.scan(robot.get_pose())
-                            scan = noisy
-                            slam.update((0.0, d_theta), scan)
-                            viz.update(robot.get_pose(), scan, frontiers=None, target=selected_target, path=selected_path, occupancy=slam.get_occupancy(),
-                                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
+                    safety_cells = float(frontier_safety_cells)
+                    a_star_path = explorer.plan_path(
+                        occupancy_local,
+                        (current_idx_x, current_idx_y),
+                        selected_target,
+                        safety_distance=safety_cells,
+                        max_unknown_cells=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS
+                    )
 
-                        distance = math.hypot(target_x - robot.x, target_y - robot.y)
-                        if distance > MOVEMENT_THRESHOLD:
-                            robot.move(distance)
-                            noisy, clean = lidar.scan(robot.get_pose())
-                            scan = noisy
-                            slam.update((distance, 0.0), scan)
-                            viz.update(robot.get_pose(), scan, frontiers=None, target=selected_target, path=selected_path, occupancy=slam.get_occupancy(),
-                                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
+                    effective_target = selected_target
+                    path_to_follow = None
+                    if a_star_path and len(a_star_path) >= 2:
+                        path_to_follow = a_star_path
+                        print(f"使用A*生成的路径前往补扫目标，长度 {len(a_star_path)-1} 格")
+                    else:
+                        strict_path, _ = plan_path_with_safety(
+                            occupancy_local,
+                            (current_idx_x, current_idx_y),
+                            selected_target,
+                            safety_cells,
+                            max_unknown_allowed=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS
+                        )
+                        if strict_path:
+                            path_to_follow = strict_path
+                        else:
+                            safe_goal = find_nearest_safe_cell(
+                                selected_path,
+                                occupancy_local,
+                                safety_cells,
+                                (current_idx_x, current_idx_y)
+                            )
+                            if safe_goal is not None:
+                                if safe_goal in visited_subtargets:
+                                    print(f"候选安全栅格 {safe_goal} 已处理过，跳过。")
+                                    safe_goal = None
+                                else:
+                                    alt_path, _ = plan_path_with_safety(
+                                        occupancy_local,
+                                        (current_idx_x, current_idx_y),
+                                        safe_goal,
+                                        safety_cells,
+                                        max_unknown_allowed=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS
+                                    )
+                                    if alt_path:
+                                        effective_target = safe_goal
+                                        path_to_follow = alt_path
+                                        print(f"A* 无法直达补扫目标，改为前往最近安全栅格 {safe_goal}")
+                                    else:
+                                        safe_goal = None
+                                if safe_goal is None:
+                                    path_to_follow = None
 
-                    print("补充扫描完成，现在返回起点...")
                     viz.set_bfs_debug_points(None)
+                    if path_to_follow is None or len(path_to_follow) < 2:
+                        print("补扫阶段未找到满足安全距离的有效路径，跳过当前目标。")
+                        continue
+
+                    def replanner():
+                        occ_latest = slam.get_occupancy().copy()
+                        cx = int((robot.x - maze.bounds[0]) / maze.resolution)
+                        cy = int((robot.y - maze.bounds[1]) / maze.resolution)
+                        if 0 <= cy < occ_latest.shape[0] and 0 <= cx < occ_latest.shape[1]:
+                            occ_latest[cy, cx] = 0
+                        tx, ty = effective_target
+                        if 0 <= ty < occ_latest.shape[0] and 0 <= tx < occ_latest.shape[1]:
+                            occ_latest[ty, tx] = 0
+                        new_path, _ = plan_path_with_safety(
+                            occ_latest,
+                            (cx, cy),
+                            effective_target,
+                            safety_cells,
+                            max_unknown_allowed=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS
+                        )
+                        return new_path
+
+                    reached = drive_path_with_dwa_segment(
+                        path_to_follow,
+                        label="障碍补扫路径",
+                        replan_callback=replanner
+                    )
+
+                    if reached:
+                        print("补充扫描完成，继续检查是否存在剩余未知区域...")
+                        visited_subtargets.add(effective_target)
+                    else:
+                        print("补扫路径未能成功完成，返回起点前请留意地图覆盖情况")
+                        visited_subtargets.add(effective_target)
+                        break
                 else:
                     print("在指定障碍物区域内未找到满足安全距离的可达前沿，直接返回起点")
                     if bfs_debug_cells:
