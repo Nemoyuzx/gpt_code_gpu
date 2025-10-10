@@ -540,17 +540,19 @@ def main():
         if not path_cells or len(path_cells) < 2:
             return False
 
+        def cells_to_world(cells):
+            pts = []
+            for cx, cy in cells:
+                wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
+                wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
+                pts.append((wx, wy))
+            return np.asarray(pts, dtype=float)
+
         path_cells = list(path_cells)
-        last_replan_idx = -replan_interval
-        path_pts = []
-        for cx, cy in path_cells:
-            wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
-            wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
-            path_pts.append((wx, wy))
-        path_arr = np.asarray(path_pts, dtype=float)
+        path_arr = cells_to_world(path_cells)
         goal_cell = path_cells[-1]
         goal_world = path_arr[-1]
-
+        last_replan_idx = -replan_interval
         max_iters = max(len(path_arr) * max_iter_factor, 600)
         print(f"[{label}] 使用DWA沿路径前进，共 {len(path_arr)-1} 段，最大步数 {max_iters}")
 
@@ -573,21 +575,25 @@ def main():
             if replan_callback and (idx == 0 or (idx - last_replan_idx) >= replan_interval):
                 new_path = replan_callback()
                 if new_path and len(new_path) >= 2:
-                    np_path = []
-                    for cx, cy in new_path:
-                        wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
-                        wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
-                        np_path.append((wx, wy))
                     path_cells = list(new_path)
-                    path_arr = np.asarray(np_path, dtype=float)
+                    path_arr = cells_to_world(path_cells)
                     goal_cell = path_cells[-1]
                     goal_world = path_arr[-1]
                     last_replan_idx = idx
+
             dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
             nearest_idx = int(np.argmin(dists))
             lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
+            short_term_cell = path_cells[follow_idx]
             gx, gy = path_arr[follow_idx]
+
+            seg_start = max(0, nearest_idx - 1)
+            seg_end = min(len(path_arr), follow_idx + 2)
+            if seg_end - seg_start >= 2:
+                path_hint_segment = path_arr[seg_start:seg_end]
+            else:
+                path_hint_segment = path_arr
 
             state = np.array([
                 est_pose[0],
@@ -606,7 +612,7 @@ def main():
                 state,
                 (gx, gy),
                 obstacles,
-                path_hint=path_arr
+                path_hint=path_hint_segment
             )
 
             if v_cmd > 1e-6:
@@ -621,6 +627,21 @@ def main():
                     if predicted_traj is not None:
                         predicted_traj = dwa_planner._predict_trajectory(state, v_cmd, w_cmd)
 
+            viz_extra = [
+                {
+                    "points": [
+                        (est_pose[0], est_pose[1]),
+                        (gx, gy)
+                    ],
+                    "style": {
+                        "color": "cyan",
+                        "linewidth": 1.4,
+                        "alpha": 0.8,
+                        "label": "短期目标连线"
+                    }
+                }
+            ]
+
             viz.update(
                 est_pose,
                 scan,
@@ -631,7 +652,8 @@ def main():
                 predicted_traj=predicted_traj,
                 robot_radius=dwa_planner.cfg.robot_radius,
                 actual_traj=robot.trajectory,
-                actual_traj_style=explore_traj_style
+                actual_traj_style=explore_traj_style,
+                extra_trajs=viz_extra
             )
 
             d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))

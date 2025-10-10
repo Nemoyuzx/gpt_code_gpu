@@ -96,15 +96,15 @@ class DWAConfig:
     # ---- 直接倒车支持 ----
     direct_reverse_enabled: bool = True  # 默认开启直接倒车。
     direct_reverse_gap_threshold: float = 0.38  # 直接倒车的gap阈值。
-    direct_reverse_reward_gain: float = 0.3  # 直接倒车奖励权重（降低）。
+    direct_reverse_reward_gain: float = 0.8  # 直接倒车奖励权重（降低）。
 
     disable_fallback: bool = True  # 禁用 fallback；失败时改为放宽过滤重采样。
     reverse_no_heading_gate: bool = True  # 允许倒车不受朝向阈值限制。
     # ---- 方向切换锐化 ----
     direction_switch_skip_smoothing: bool = True  # 线速度正负切换时跳过平滑，立即响应。
     reverse_initial_speed: float = 0.15  # 首次倒车的最小速度幅度。
-    reverse_sign_change_boost_factor: float = 1.0  # 前进→倒车时的负向加速度放大量。
-    direction_switch_cost_gain: float = 0.2  # 方向切换惩罚。
+    reverse_sign_change_boost_factor: float = 1.5  # 前进→倒车时的负向加速度放大量。
+    direction_switch_cost_gain: float = 0.1  # 方向切换惩罚。
     # ---- 倒车对称化与灵活性增强 ----
     reverse_equal_speed: bool = False  # 默认不与前进对称。
     reverse_accel_factor: float = 1.0  # 倒车加速度放大倍数(×max_accel)。

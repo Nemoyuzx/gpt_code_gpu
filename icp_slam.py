@@ -16,12 +16,12 @@ MAX_RANGE_FACTOR = 0.8  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 1800  # 降低ICP最大迭代次数，避免过高峰值内存
+ICP_MAX_ITER = 1400  # 降低ICP最大迭代次数，避免过高峰值内存
 ICP_TOLERANCE = 1e-5  # ICP收敛容忍
 ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
 
 # 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
-MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "10000"))
+MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "20000"))
 MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "30000"))
 
 class ICPSlam:
@@ -70,8 +70,8 @@ class ICPSlam:
             self.device = torch.device("cpu")
             print(f"[ICPSlam] GPU初始化失败，回退到CPU: {str(e)}")
             
-    def _print_memory_usage(self):
-        """打印当前进程与设备的内存占用信息。"""
+    def _print_memory_usage(self, icp_iterations=None):
+        """打印当前进程与设备的内存占用信息，可选附带本轮ICP迭代次数。"""
         # 进程常驻内存（RSS）—注意：ru_maxrss 是“峰值RSS”(high-water mark)
         try:
             # macOS 上 resource.ru_maxrss 单位为字节，Linux 为 KB；这里做两种情况的兼容
@@ -142,6 +142,8 @@ class ICPSlam:
                 parts.append(f"MPS curr: {mps_current_mb:.1f} MB")
         parts.append(f"map_points: {map_pts} (~{map_pts_mb:.1f} MB)")
         parts.append(f"occupancy: ~{occ_mb:.1f} MB")
+        if icp_iterations is not None:
+            parts.append(f"ICP iters: {int(icp_iterations)}")
         line = "[ICPSlam][Mem] " + " | ".join(parts)
         print(line)
 
@@ -161,6 +163,7 @@ class ICPSlam:
                 'map_points': map_pts,
                 'map_points_mb': round(map_pts_mb, 6),
                 'occupancy_mb': round(occ_mb, 6),
+                'icp_iterations': int(icp_iterations) if icp_iterations is not None else None,
             }
             # 若文件不存在或为空，写入表头
             need_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
