@@ -69,6 +69,7 @@ OBSTACLE_SEARCH_EXPANSION = -0.5  # 障碍物区域搜索范围扩大距离（�
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
+FRONTIER_UPDATE_INTERVAL = 2              # 前沿刷新间隔（每两轮刷新一次）
 
 # ==================== 降噪滤波参数 ====================
 # 滤波器总开关
@@ -260,6 +261,7 @@ def main():
     same_target_counter = 0  # 重用统计：连续获得相同目标的次数
     step_counter = 0
     current_path = None  # 本步BFS得到的路径（含起点与目标自由格）
+    frontier_update_tick = 0
     # 前沿节流控制
     frontier_cooldown_steps = 0
     current_unknown_neighbor = None  # 保存最近一次前沿搜索得到的未知邻居
@@ -687,63 +689,75 @@ def main():
         # 冷却策略：冷却期暂停A*与前沿刷新；冷却结束时刷新前沿并运行A*
         occupancy = slam.get_occupancy()
         if frontier_cooldown_steps == 0:
+            should_refresh_frontier = False
+            if global_path is None or frontier_hint_cell is None:
+                should_refresh_frontier = True
+            else:
+                if (frontier_update_tick % FRONTIER_UPDATE_INTERVAL) == 0:
+                    should_refresh_frontier = True
+            frontier_update_tick += 1
             # 刷新最近前沿与未知邻居（仅在非冷却期）
-            target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
-            provided_path = None
-            if target_cell_latest is None:
-                # 使用全局前沿检测作为回退策略
-                fallback_frontier, fallback_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
-                if fallback_frontier is None or not fallback_path:
-                    print("没有可达的未知区域，探索结束。")
-                    section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
-                    section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
-                    log_section_times(loop_step_label, section_times)
-                    break
-                target_cell_latest = fallback_frontier
-                current_unknown_neighbor = None
-                provided_path = list(fallback_path)
-            else:
-                current_unknown_neighbor = unknown_neighbor_new
-                if bfs_path:
-                    provided_path = list(bfs_path)
-            frontier_hint_cell = target_cell_latest
-            # 记录目标重复情况
-            if target_cell_latest == prev_target_cell:
-                same_target_counter += 1
-            else:
-                same_target_counter = 0
-            prev_target_cell = target_cell_latest
-
-            # 运行A*（仅在非冷却期），始终使用指定的前沿安全距离
-            safety_cells = float(frontier_safety_cells)
-            planned_path = None
-            planned_sd = None
-            if provided_path is not None and len(provided_path) >= 2:
-                path_safe = True
-                for cx, cy in provided_path:
-                    if not explorer._is_safe(occupancy, cx, cy, safety_distance=safety_cells):
-                        path_safe = False
+            if should_refresh_frontier:
+                target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
+                provided_path = None
+                if target_cell_latest is None:
+                    # 使用全局前沿检测作为回退策略
+                    fallback_frontier, fallback_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
+                    if fallback_frontier is None or not fallback_path:
+                        print("没有可达的未知区域，探索结束。")
+                        section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
+                        section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+                        log_section_times(loop_step_label, section_times)
                         break
-                if path_safe:
-                    planned_path = list(provided_path)
-                    planned_sd = safety_cells
-            if planned_path is None:
-                planned_path, planned_sd = plan_path_with_safety(
-                    occupancy,
-                    (rx_idx, ry_idx),
-                    target_cell_latest,
-                    safety_cells,
-                    max_unknown_allowed=0
-                )
-            global_path = planned_path if planned_path is not None else None
-            current_path = global_path if global_path else None
-            if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:
-                frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
+                    target_cell_latest = fallback_frontier
+                    current_unknown_neighbor = None
+                    provided_path = list(fallback_path)
+                else:
+                    current_unknown_neighbor = unknown_neighbor_new
+                    if bfs_path:
+                        provided_path = list(bfs_path)
+                frontier_hint_cell = target_cell_latest
+                # 记录目标重复情况
+                if target_cell_latest == prev_target_cell:
+                    same_target_counter += 1
+                else:
+                    same_target_counter = 0
+                prev_target_cell = target_cell_latest
+
+                # 运行A*（仅在非冷却期），始终使用指定的前沿安全距离
+                safety_cells = float(frontier_safety_cells)
+                planned_path = None
+                planned_sd = None
+                if provided_path is not None and len(provided_path) >= 2:
+                    path_safe = True
+                    for cx, cy in provided_path:
+                        if not explorer._is_safe(occupancy, cx, cy, safety_distance=safety_cells):
+                            path_safe = False
+                            break
+                    if path_safe:
+                        planned_path = list(provided_path)
+                        planned_sd = safety_cells
+                if planned_path is None:
+                    planned_path, planned_sd = plan_path_with_safety(
+                        occupancy,
+                        (rx_idx, ry_idx),
+                        target_cell_latest,
+                        safety_cells,
+                        max_unknown_allowed=0
+                    )
+                global_path = planned_path if planned_path is not None else None
+                current_path = global_path if global_path else None
+                if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:
+                    frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
+                    if step_counter % 20 == 0:
+                        print(f"[前沿节流] A*路径过长({len(global_path)-1}格) -> 冷却 {FRONTIER_COOLDOWN_STEPS} 步（期间暂停A*与前沿刷新）")
+            else:
                 if step_counter % 20 == 0:
-                    print(f"[前沿节流] A*路径过长({len(global_path)-1}格) -> 冷却 {FRONTIER_COOLDOWN_STEPS} 步（期间暂停A*与前沿刷新）")
+                    print("[前沿刷新] 按照间隔策略跳过本轮前沿更新，沿用既有路径。")
         else:
             # 冷却中：不刷新前沿、不运行A*，仅递减计数器并沿旧提示/路径前进
             frontier_cooldown_steps = max(0, frontier_cooldown_steps - 1)
+            frontier_update_tick = 0
             if step_counter % 20 == 0:
                 if current_path:
                     msg_len = f"旧A*路径长度={len(current_path)-1}格，使用旧路径提示"
@@ -987,33 +1001,44 @@ def main():
         
     # 计算已知障碍物区域的边界
         occupancy = slam.get_occupancy()
-        obstacle_coords = []
-        
-        # 找到所有已知障碍物（值为1）的坐标
-        for y in range(occupancy.shape[0]):
-            for x in range(occupancy.shape[1]):
-                if occupancy[y, x] == 1:  # 障碍物
-                    # 转换为世界坐标
-                    world_x = maze.bounds[0] + x * maze.resolution
-                    world_y = maze.bounds[1] + y * maze.resolution
-                    obstacle_coords.append((world_x, world_y))
-        
-        if obstacle_coords:
-            # 计算障碍物区域的最小和最大坐标，并扩大搜索范围
-            min_obstacle_x = min(coord[0] for coord in obstacle_coords) - OBSTACLE_SEARCH_EXPANSION  # 扩大范围
+
+        def compute_obstacle_search_bounds(current_occupancy):
+            obstacle_coords = []
+            for yy in range(current_occupancy.shape[0]):
+                for xx in range(current_occupancy.shape[1]):
+                    if current_occupancy[yy, xx] == 1:
+                        world_x = maze.bounds[0] + xx * maze.resolution
+                        world_y = maze.bounds[1] + yy * maze.resolution
+                        obstacle_coords.append((world_x, world_y))
+
+            if not obstacle_coords:
+                return None, None
+
+            min_obstacle_x = min(coord[0] for coord in obstacle_coords) - OBSTACLE_SEARCH_EXPANSION
             max_obstacle_x = max(coord[0] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
             min_obstacle_y = min(coord[1] for coord in obstacle_coords) - OBSTACLE_SEARCH_EXPANSION
             max_obstacle_y = max(coord[1] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
-            print("检测到障碍物区域，边界如下：")
-            print(f"障碍物区域边界: X[{min_obstacle_x:.1f}, {max_obstacle_x:.1f}], Y[{min_obstacle_y:.1f}, {max_obstacle_y:.1f}]")
-            viz.set_obstacle_search_region((min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y))
-            
-            # 转换为栅格索引
+
             min_obs_x_idx = int((min_obstacle_x - maze.bounds[0]) / maze.resolution)
             max_obs_x_idx = int((max_obstacle_x - maze.bounds[0]) / maze.resolution)
             min_obs_y_idx = int((min_obstacle_y - maze.bounds[1]) / maze.resolution)
             max_obs_y_idx = int((max_obstacle_y - maze.bounds[1]) / maze.resolution)
-            
+
+            return (min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx), (
+                min_obstacle_x,
+                min_obstacle_y,
+                max_obstacle_x,
+                max_obstacle_y,
+            )
+
+        bounds_idx, bounds_world = compute_obstacle_search_bounds(occupancy)
+        if bounds_idx and bounds_world:
+            min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx = bounds_idx
+            min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y = bounds_world
+            print("检测到障碍物区域，边界如下：")
+            print(f"障碍物区域边界: X[{min_obstacle_x:.1f}, {max_obstacle_x:.1f}], Y[{min_obstacle_y:.1f}, {max_obstacle_y:.1f}]")
+            viz.set_obstacle_search_region((min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y))
+
             # 在障碍物边界范围内寻找未探索区域
             unexplored_in_range = []
             for y in range(max(0, min_obs_y_idx), min(occupancy.shape[0], max_obs_y_idx + 1)):
@@ -1065,6 +1090,14 @@ def main():
                 next_start_cell = None
                 while True:
                     occupancy = slam.get_occupancy()
+                    bounds_idx, bounds_world = compute_obstacle_search_bounds(occupancy)
+                    if not (bounds_idx and bounds_world):
+                        print("动态刷新障碍物边界时未检测到障碍区域，结束补扫阶段。")
+                        break
+
+                    min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx = bounds_idx
+                    min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y = bounds_world
+                    viz.set_obstacle_search_region((min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y))
                     if next_start_cell is None:
                         current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
                         current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
@@ -1208,8 +1241,10 @@ def main():
 
                     viz.set_bfs_debug_points(None)
                     if path_to_follow is None or len(path_to_follow) < 2:
-                        print("补扫阶段未找到满足安全距离的有效路径，跳过当前目标。")
-                        continue
+                        print("补扫阶段未找到满足安全距离的有效路径，直接返回起点。")
+                        visited_subtargets.add(effective_target)
+                        next_start_cell = None
+                        break
 
                     def replanner():
                         occ_latest = slam.get_occupancy().copy()

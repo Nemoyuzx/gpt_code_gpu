@@ -27,21 +27,21 @@ class DWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 1.5  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
-    min_speed: float = -1.5 # 默认禁倒车（如需倒车可设为负）。
-    max_yaw_rate: float = 230.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
-    max_accel: float = 1.7  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
-    max_delta_yaw_rate: float = 230.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
+    max_speed: float = 1.0  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
+    min_speed: float = -1.0  # 默认禁倒车（如需倒车可设为负）。
+    max_yaw_rate: float = 140.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
+    max_accel: float = 1.2  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_delta_yaw_rate: float = 140.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
     v_resolution: float = 0.05  # 速度采样步长。越小越细但更慢；常取 0.03~0.06。
     yaw_rate_resolution: float = 0.5 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
     dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
     predict_time: float = 1.1  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
     to_goal_cost_gain: float = 0.5  # 目标朝向代价权重。大→更快对准目标方向。
     to_goal_dist_cost_gain: float = 0.25  # 目标距离代价权重。大→更偏好缩短终点距离。
-    speed_cost_gain: float = 0.50  # 降低速度奖励，避免“速度至上”。
+    speed_cost_gain: float = 0.40  # 降低速度奖励，避免“速度至上”。
     obstacle_cost_gain: float = 0.8  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
-    rotation_cost_gain: float = 0.28  # 更鼓励转向（配合小半径转弯）。
-    progress_cost_gain: float = 2.5  # 更注重向目标推进。
+    rotation_cost_gain: float = 0.25  # 更鼓励转向（配合小半径转弯）。
+    progress_cost_gain: float = 2.0  # 更注重向目标推进。
     change_yaw_cost_gain: float = 0.4  # 角速度变化代价。大→更平滑，不易“抖动”。
     smoothing_alpha: float = 0.6  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
     small_angle: float = 10.0 * math.pi / 180.0  # 认为“已较好对齐”的角度阈值，用于若干条件。
@@ -80,7 +80,7 @@ class DWAConfig:
     turn_debug: bool = False  # 打印转向减速信息。
     # ---- 反复前后抖动抑制相关配置 ----
     allow_reverse: bool = True  # 是否允许倒车（全局开关）。
-    reverse_heading_threshold: float = 50.0 * math.pi/180.0  # 与目标方向夹角大于该值时才考虑倒车。
+    reverse_heading_threshold: float = 40.0 * math.pi/180.0  # 与目标方向夹角大于该值时才考虑倒车。
     reverse_clearance_threshold: float = 0.3  # 前向清距不足时更倾向倒车（米）。
     oscillation_window_steps: int = 20  # 振荡检测窗口长度（步）。
     oscillation_disp_epsilon: float = 0.18  # 振荡判定位移阈值。
@@ -89,10 +89,10 @@ class DWAConfig:
     # ---- 前向清距配置 ----
     front_clear_cone_deg: float = 50.0  # 前向清距的视场角度(度)。
     # ---- 倒车转向优化 ----
-    reverse_rot_cost_scale: float = 0.8  # 倒车时旋转代价缩放(<1 更易大角度转向)。
+    reverse_rot_cost_scale: float = 0.5  # 倒车时旋转代价缩放(<1 更易大角度转向)。
     reverse_min_speed_scale: float = 0.4  # 倒车允许的最小速度过滤比例缩放。
     reverse_spin_penalty_scale: float = 0.5  # 倒车时对“打转”惩罚的缩放。
-    reverse_turn_bonus_gain: float = 0.2  # 倒车+较大角速度的奖励(降低总cost)。
+    reverse_turn_bonus_gain: float = 0.3  # 倒车+较大角速度的奖励(降低总cost)。
     # ---- 直接倒车支持 ----
     direct_reverse_enabled: bool = True  # 默认开启直接倒车。
     direct_reverse_gap_threshold: float = 0.38  # 直接倒车的gap阈值。
@@ -102,13 +102,13 @@ class DWAConfig:
     reverse_no_heading_gate: bool = True  # 允许倒车不受朝向阈值限制。
     # ---- 方向切换锐化 ----
     direction_switch_skip_smoothing: bool = True  # 线速度正负切换时跳过平滑，立即响应。
-    reverse_initial_speed: float = 0.25  # 首次倒车的最小速度幅度。
-    reverse_sign_change_boost_factor: float = 5.0  # 前进→倒车时的负向加速度放大量。
+    reverse_initial_speed: float = 0.15  # 首次倒车的最小速度幅度。
+    reverse_sign_change_boost_factor: float = 1.0  # 前进→倒车时的负向加速度放大量。
     direction_switch_cost_gain: float = 0.2  # 方向切换惩罚。
     # ---- 倒车对称化与灵活性增强 ----
     reverse_equal_speed: bool = False  # 默认不与前进对称。
-    reverse_accel_factor: float = 2.0  # 倒车加速度放大倍数(×max_accel)。
-    reverse_turn_rate_factor: float = 1.4  # 倒车阶段角速度倍率（已禁用，见_calc_dynamic_window）。
+    reverse_accel_factor: float = 1.0  # 倒车加速度放大倍数(×max_accel)。
+    reverse_turn_rate_factor: float = 1.2  # 倒车阶段角速度倍率（已禁用，见_calc_dynamic_window）。
     reverse_rot_cost_scale_extra: float = 1.0  # 倒车时额外的旋转代价缩放(与已有乘积)，改为1.0使倒车和前进转向代价相同。
     reverse_allow_low_speed_small_angle: bool = False  # 小角度下不鼓励低速倒车。
     # 倒车微幅死区：抑制 |v| 很小的“试探性倒车”（非直接倒车场景）
@@ -116,7 +116,7 @@ class DWAConfig:
     reverse_deadband_turn_angle_deg: float = 25.0  # 朝向误差超过该角度时放宽倒车死区
     reverse_deadband_turn_w: float = 0.25  # 角速度超过该阈值时放宽倒车死区
     # ---- 倒车->前进 制动/切换优化 ----
-    reverse_brake_boost_factor: float = 4.0  # 倒车→前进时允许更大正向加速度以快速刹停。
+    reverse_brake_boost_factor: float = 2.0  # 倒车→前进时允许更大正向加速度以快速刹停。
     reverse_continue_penalty_gain: float = 0.8  # 已对齐仍倒车的惩罚。
     reverse_reward_angle_gate_deg: float = 6.0  # 角度误差阈值(度)，小于此不再奖励倒车。
     # ---- 前进优先 / 启动阶段策略 ----
@@ -138,15 +138,15 @@ class DWAConfig:
     # ---- 预测制动（提升减速及时性） ----
     brake_enable: bool = True                        # 开启基于前向净空的速度上界裁剪
     brake_react_time: float = 0.1                    # 反应时间(s)，v*treact
-    brake_margin_m: float = 0.2                    # 额外安全裕度(m)
+    brake_margin_m: float = 0.3                    # 额外安全裕度(m)
     brake_decel_factor: float = 1.3                  # 相对 max_accel 的制动放大倍数
     brake_skip_smoothing: bool = True                # 制动时跳过线速度平滑
     brake_drop_threshold: float = 0.15               # 需要降速超过该阈值则跳过平滑
     brake_debug: bool = False                        # 打印制动信息
     # ---- 全局路径贴合（仅作方向提示，不改变终点） ----
-    path_align_gain: float = 0.6      # 和路径切向对齐的角度代价权重
+    path_align_gain: float = 0.5      # 和路径切向对齐的角度代价权重
     path_deviation_gain: float = 0.8  # 相对路径的横向偏差（米）代价权重
-    path_progress_gain: float = 0.2   # 可选：沿路径前进的奖励（默认关闭）
+    path_progress_gain: float = 0.3   # 可选：沿路径前进的奖励（默认关闭）
     # ---- 实现中用到的通用阈值（统一收口，消除魔法数） ----
     # 倒车判定/采样与惩罚相关的小阈值
     reverse_sample_eps: float = 0.01     # 采样/判定倒车使用的速度阈值(|v|>eps 才视作倒车)

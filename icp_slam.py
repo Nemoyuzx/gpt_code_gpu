@@ -12,11 +12,11 @@ import psutil  # 可选依赖
 
 #0.49
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.65  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.8  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 2000  # 降低ICP最大迭代次数，避免过高峰值内存
+ICP_MAX_ITER = 1800  # 降低ICP最大迭代次数，避免过高峰值内存
 ICP_TOLERANCE = 1e-5  # ICP收敛容忍
 ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
 
