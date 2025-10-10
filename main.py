@@ -19,7 +19,7 @@ SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的
 FRONTIER_SAFETY_DISTANCE = 5.5  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
-MAZE_FILE = "2.json"  # 默认迷宫文件
+MAZE_FILE = "3.json"  # 默认迷宫文件
 ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
@@ -1062,14 +1062,20 @@ def main():
                                 return nx, ny
                     return clamp_x, clamp_y
                 visited_subtargets = set()
+                next_start_cell = None
                 while True:
                     occupancy = slam.get_occupancy()
-                    current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
-                    current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
-
-                    boundary_start = find_boundary_entry(current_idx_x, current_idx_y)
-                    if boundary_start != (current_idx_x, current_idx_y):
-                        print(f"[BFS Debug] 起点调整到障碍边界 {boundary_start}")
+                    if next_start_cell is None:
+                        current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
+                        current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
+                        boundary_start = find_boundary_entry(current_idx_x, current_idx_y)
+                        if boundary_start != (current_idx_x, current_idx_y):
+                            print(f"[BFS Debug] 起点调整到障碍边界 {boundary_start}")
+                        search_origin = boundary_start
+                    else:
+                        search_origin = next_start_cell
+                        current_idx_x, current_idx_y = search_origin
+                        boundary_start = search_origin
 
                     bfs_debug_cells = []
                     viz.set_bfs_debug_points(None)
@@ -1092,8 +1098,14 @@ def main():
                             print(f"[BFS Debug] 已扩展 {len(cells)} 个栅格")
                         plt.pause(0.03)
 
+                    occupancy_for_search = occupancy.copy()
+                    if visited_subtargets:
+                        for vx, vy in visited_subtargets:
+                            if 0 <= vy < occupancy_for_search.shape[0] and 0 <= vx < occupancy_for_search.shape[1]:
+                                occupancy_for_search[vy, vx] = 0
+
                     bfs_target, bfs_unknown_neighbor, bfs_path = find_nearest_unexplored(
-                        occupancy,
+                        occupancy_for_search,
                         boundary_start,
                         bounds_idx=(min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx),
                         unknown_limit=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS,
@@ -1128,10 +1140,6 @@ def main():
 
                     if bfs_target in visited_subtargets:
                         print(f"目标 {bfs_target} 已尝试过，跳过并继续搜索下一个未知点。")
-                        # 为避免死循环，临时将该格标记为空闲，促使下一轮搜索更远区域
-                        tx, ty = bfs_target
-                        if 0 <= ty < occupancy.shape[0] and 0 <= tx < occupancy.shape[1]:
-                            occupancy[ty, tx] = 0
                         continue
 
                     print(f"BFS在障碍物区域内找到可达目标 {bfs_target}，路径长度 {len(bfs_path)-1} 步")
@@ -1230,9 +1238,11 @@ def main():
                     if reached:
                         print("补充扫描完成，继续检查是否存在剩余未知区域...")
                         visited_subtargets.add(effective_target)
+                        next_start_cell = effective_target
                     else:
                         print("补扫路径未能成功完成，返回起点前请留意地图覆盖情况")
                         visited_subtargets.add(effective_target)
+                        next_start_cell = None
                         break
                 else:
                     print("在指定障碍物区域内未找到满足安全距离的可达前沿，直接返回起点")

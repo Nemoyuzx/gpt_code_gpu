@@ -12,16 +12,16 @@ import psutil  # 可选依赖
 
 #0.49
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.7  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.65  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
 ICP_MAX_ITER = 2000  # 降低ICP最大迭代次数，避免过高峰值内存
-ICP_TOLERANCE = 1e-7  # ICP收敛容忍
+ICP_TOLERANCE = 1e-5  # ICP收敛容忍
 ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
 
 # 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
-MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "8000"))
+MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "10000"))
 MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "30000"))
 
 class ICPSlam:
