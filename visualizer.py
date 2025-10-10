@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Rectangle
 import math
 import numpy as np
 
@@ -34,6 +34,9 @@ class Visualizer:
         self.fig.canvas.mpl_connect('key_press_event', self._on_key_press)
         # 存储紧急路径（红色显示）
         self.emergency_path = None
+        self.obstacle_search_region = None
+        self.bfs_debug_points = None
+        self.bfs_debug_color = 'cyan'
 
     def _on_key_press(self, event):
         """键盘事件回调。'p'暂停/继续， 's'保存地图和路径。"""
@@ -77,6 +80,35 @@ class Visualizer:
             extent = (min_x, max_x, min_y, max_y)
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
         
+        # 绘制障碍物搜索区域边界
+        if self.obstacle_search_region is not None:
+            min_x, min_y, max_x, max_y = self.obstacle_search_region
+            try:
+                rect = Rectangle(
+                    (min_x, min_y),
+                    max_x - min_x,
+                    max_y - min_y,
+                    linewidth=1.8,
+                    edgecolor='yellow',
+                    facecolor='none',
+                    linestyle='--',
+                    label='Obstacle Search Bounds'
+                )
+                self.ax.add_patch(rect)
+            except Exception:
+                pass
+
+        # 绘制BFS调试点
+        if self.bfs_debug_points:
+            try:
+                pts = np.asarray(self.bfs_debug_points, dtype=float)
+                if pts.ndim == 2 and pts.shape[0] > 0:
+                    wx = self.maze.bounds[0] + (pts[:, 0] + 0.5) * self.maze.resolution
+                    wy = self.maze.bounds[1] + (pts[:, 1] + 0.5) * self.maze.resolution
+                    self.ax.scatter(wx, wy, s=12, c=self.bfs_debug_color, alpha=0.25, marker='s', label='BFS Region')
+            except Exception:
+                pass
+
         # 绘制目标前沿
         if target:
             tx = self.maze.bounds[0] + (target[0] + 0.5) * self.maze.resolution
@@ -177,6 +209,31 @@ class Visualizer:
     def set_emergency_path(self, path):
         """设置紧急路径（无安全距离的最短路径），用红色线条显示"""
         self.emergency_path = path
+
+    def set_obstacle_search_region(self, bounds):
+        """设置障碍物搜索范围的世界坐标边界 (min_x, min_y, max_x, max_y)。"""
+        if bounds is None:
+            self.obstacle_search_region = None
+            return
+        try:
+            min_x, min_y, max_x, max_y = bounds
+            if max_x <= min_x or max_y <= min_y:
+                return
+            self.obstacle_search_region = (float(min_x), float(min_y), float(max_x), float(max_y))
+        except Exception:
+            pass
+
+    def set_bfs_debug_points(self, points, color='cyan'):
+        """设置BFS调试可视化点（栅格坐标列表）。传入None清除。"""
+        if points is None:
+            self.bfs_debug_points = None
+            return
+        try:
+            self.bfs_debug_points = list(points)
+            if color:
+                self.bfs_debug_color = color
+        except Exception:
+            self.bfs_debug_points = None
 
     def save_map(self, filename):
         """将当前地图绘制保存为图像文件。"""

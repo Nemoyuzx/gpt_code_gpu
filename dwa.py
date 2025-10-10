@@ -52,7 +52,7 @@ class DWAConfig:
     clearance_cost_gain: float = 3.0  # 接近膨胀半径时的代价权重。大→更远离墙。
     spin_penalty_gain: float = 0.3  # 适度降低自旋惩罚，结合转向更灵活。
     min_forward_ratio: float = 0.15  # 小角度时最低前进速度占比。
-    near_wall_threshold: float = 0.3  # 判定“靠墙”的gap阈值(m)。
+    near_wall_threshold: float = 0.5  # 判定“靠墙”的gap阈值(m)。
     near_wall_rot_boost: float = 2.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
     near_wall_forward_bias_gain: float = 1.0  # 靠墙且前进速度不足时的附加惩罚增益。
     align_deadband: float = 3.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
@@ -91,8 +91,8 @@ class DWAConfig:
     # ---- 倒车转向优化 ----
     reverse_rot_cost_scale: float = 0.8  # 倒车时旋转代价缩放(<1 更易大角度转向)。
     reverse_min_speed_scale: float = 0.4  # 倒车允许的最小速度过滤比例缩放。
-    reverse_spin_penalty_scale: float = 0.6  # 倒车时对“打转”惩罚的缩放。
-    reverse_turn_bonus_gain: float = 0.15  # 倒车+较大角速度的奖励(降低总cost)。
+    reverse_spin_penalty_scale: float = 0.5  # 倒车时对“打转”惩罚的缩放。
+    reverse_turn_bonus_gain: float = 0.2  # 倒车+较大角速度的奖励(降低总cost)。
     # ---- 直接倒车支持 ----
     direct_reverse_enabled: bool = True  # 默认开启直接倒车。
     direct_reverse_gap_threshold: float = 0.38  # 直接倒车的gap阈值。
@@ -104,7 +104,7 @@ class DWAConfig:
     direction_switch_skip_smoothing: bool = True  # 线速度正负切换时跳过平滑，立即响应。
     reverse_initial_speed: float = 0.25  # 首次倒车的最小速度幅度。
     reverse_sign_change_boost_factor: float = 5.0  # 前进→倒车时的负向加速度放大量。
-    direction_switch_cost_gain: float = 0.3  # 方向切换惩罚。
+    direction_switch_cost_gain: float = 0.2  # 方向切换惩罚。
     # ---- 倒车对称化与灵活性增强 ----
     reverse_equal_speed: bool = False  # 默认不与前进对称。
     reverse_accel_factor: float = 2.0  # 倒车加速度放大倍数(×max_accel)。
@@ -117,7 +117,7 @@ class DWAConfig:
     reverse_deadband_turn_w: float = 0.25  # 角速度超过该阈值时放宽倒车死区
     # ---- 倒车->前进 制动/切换优化 ----
     reverse_brake_boost_factor: float = 4.0  # 倒车→前进时允许更大正向加速度以快速刹停。
-    reverse_continue_penalty_gain: float = 1.2  # 已对齐仍倒车的惩罚。
+    reverse_continue_penalty_gain: float = 0.8  # 已对齐仍倒车的惩罚。
     reverse_reward_angle_gate_deg: float = 6.0  # 角度误差阈值(度)，小于此不再奖励倒车。
     # ---- 前进优先 / 启动阶段策略 ----
     initial_no_reverse_steps: int = 0  # 启动阶段不额外禁倒车（已整体禁倒车）。
@@ -126,7 +126,7 @@ class DWAConfig:
     forward_pref_cost_gain: float = 0.0  # 违反前进偏好(仍倒车)的惩罚增益（禁用）。
     forward_pref_initial_gain: float = 2.0  # 启动阶段的附加惩罚倍增。
     # ---- 墙距奖励（越远离墙奖励越大；靠墙奖励越低/甚至无） ----
-    wall_reward_gain: float = 0.8           # 墙距奖励增益（加入为负成本，数值越大越鼓励离墙）
+    wall_reward_gain: float = 0.9           # 墙距奖励增益（加入为负成本，数值越大越鼓励离墙）
     wall_reward_max_gap: float = 0.6        # 超过该净空(gap)视为满奖励，上限封顶（米）
     wall_reward_power: float = 1.0          # 奖励幂次（>1使靠墙时奖励增长更慢，<1更快）
     # ---- 原地旋转策略（在大偏角或前向净空较小时，允许 v≈0 进行就地转向） ----
@@ -138,8 +138,8 @@ class DWAConfig:
     # ---- 预测制动（提升减速及时性） ----
     brake_enable: bool = True                        # 开启基于前向净空的速度上界裁剪
     brake_react_time: float = 0.1                    # 反应时间(s)，v*treact
-    brake_margin_m: float = 0.12                     # 额外安全裕度(m)
-    brake_decel_factor: float = 1.2                  # 相对 max_accel 的制动放大倍数
+    brake_margin_m: float = 0.2                    # 额外安全裕度(m)
+    brake_decel_factor: float = 1.3                  # 相对 max_accel 的制动放大倍数
     brake_skip_smoothing: bool = True                # 制动时跳过线速度平滑
     brake_drop_threshold: float = 0.15               # 需要降速超过该阈值则跳过平滑
     brake_debug: bool = False                        # 打印制动信息

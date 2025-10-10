@@ -16,7 +16,7 @@ import numpy as np
 # ==================== 系统参数配置 ====================
 # 路径规划参数
 SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
-FRONTIER_SAFETY_DISTANCE = 8.0  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
+FRONTIER_SAFETY_DISTANCE = 5.5  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
 MAZE_FILE = "2.json"  # 默认迷宫文件
@@ -24,17 +24,23 @@ ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = o
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
-# 激光雷达参数
+# 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
 LIDAR_ANGLE_RESOLUTION = 3.0  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
 LIDAR_NOISE = 0.03  # 激光雷达噪声
 
 # 出口检测参数
-MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
+MIN_NO_OBSTACLE_COUNT = 36  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
-MIN_EXPLORATION_DISTANCE = 30.0  # 最小探索距离阈值
+MIN_EXPLORATION_DISTANCE = 60.0  # 最小探索距离阈值
 MIN_FRONTIERS_TO_EXPLORE = 20  # 最小探索前沿数量
+
+# 返程路径容错参数
+RETURN_MAX_UNKNOWN_CELLS = 3  # 允许A*返程路径穿越的未知栅格数量上限
+
+# 障碍物区域补扫容错参数
+OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS = 3  # 补扫A*允许穿越的未知栅格数量
 
 # 运动控制精度参数
 ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
@@ -59,10 +65,10 @@ VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 
 # 未探索区域搜索参数
-OBSTACLE_SEARCH_EXPANSION = 0.5  # 障碍物区域搜索范围扩大距离（米）
+OBSTACLE_SEARCH_EXPANSION = -0.5  # 障碍物区域搜索范围扩大距离（米）
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
-FRONTIER_COOLDOWN_STEPS = 40              # 冷却期间暂停A*与前沿刷新（冻结提示）
+FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
 
 # ==================== 降噪滤波参数 ====================
 # 滤波器总开关
@@ -162,6 +168,7 @@ def main():
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose)
     explorer = FrontierExplorer(safety_distance=FRONTIER_SAFETY_DISTANCE)  # 设置与障碍物的安全距离
+    frontier_safety_cells = max(1, int(math.ceil(FRONTIER_SAFETY_DISTANCE)))
     viz = Visualizer(maze, robot=robot, slam=slam)
     explore_traj_style = {
         "color": "orange",
@@ -269,96 +276,141 @@ def main():
     parent_y = np.full((H, W), -1, dtype=np.int32)
 
     # 最近未知搜索函数（BFS在空闲区域上扩展，一旦邻接未知返回）
-    def find_nearest_unexplored(occupancy, start):
+    def find_nearest_unexplored(occupancy, start, bounds_idx=None, unknown_limit=0,
+                                visited_out=None, debug_update=None, debug_interval=80):
         h, w = occupancy.shape
         sx, sy = int(start[0]), int(start[1])
         if not (0 <= sx < w and 0 <= sy < h):
             return None, None, None
-        # 复用并清零访问标记；父指针仅在访问到的格子上写入
-        visited_np.fill(0)
+
+        visited_np.fill(255)
         dq = deque()
-        dq.append((sx, sy))
-        visited_np[sy, sx] = 1
+        dq.append((sx, sy, 0))
+        visited_np[sy, sx] = 0
         parent_x[sy, sx] = -1
         parent_y[sy, sx] = -1
-        directions = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,-1),(-1,1),(1,1)]
-        
-        # 计算一定格子范围内是否存在墙体（占据）
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
+
+        if bounds_idx is not None:
+            min_bx, max_bx, min_by, max_by = bounds_idx
+            within_bounds = lambda cx, cy, _min_bx=min_bx, _max_bx=max_bx, _min_by=min_by, _max_by=max_by: (
+                _min_bx <= cx <= _max_bx and _min_by <= cy <= _max_by
+            )
+            soft_margin = 3
+            min_bx_soft = max(0, min_bx - soft_margin)
+            max_bx_soft = min(w - 1, max_bx + soft_margin)
+            min_by_soft = max(0, min_by - soft_margin)
+            max_by_soft = min(h - 1, max_by + soft_margin)
+            within_soft_bounds = lambda cx, cy, _min_bx=min_bx_soft, _max_bx=max_bx_soft, _min_by=min_by_soft, _max_by=max_by_soft: (
+                _min_bx <= cx <= _max_bx and _min_by <= cy <= _max_by
+            )
+        else:
+            within_bounds = lambda cx, cy: True
+            within_soft_bounds = lambda cx, cy: True
+
+        debug_points = None
+        if visited_out is not None:
+            visited_out.clear()
+            debug_points = visited_out
+        elif debug_update is not None:
+            debug_points = []
+        if debug_points is not None:
+            debug_points.append((sx, sy))
+            if debug_update is not None:
+                debug_update(debug_points)
+
+        debug_counter = 0
+        max_unknown_allowed = unknown_limit if unknown_limit is not None else None
+
         def is_safe_cell(x, y):
-            for dx in range(-dynamic_wall_margin, dynamic_wall_margin+1):
-                for dy in range(-dynamic_wall_margin, dynamic_wall_margin+1):
-                    nx, ny = x+dx, y+dy
+            for dx in range(-dynamic_wall_margin, dynamic_wall_margin + 1):
+                for dy in range(-dynamic_wall_margin, dynamic_wall_margin + 1):
+                    nx, ny = x + dx, y + dy
                     if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == 1:
                         return False
             return True
-        
-        # 检查是否在入口安全范围内（防止走出迷宫）
+
         def is_inside_maze(x, y):
-            # 将栅格坐标转换为世界坐标
             world_x = maze.bounds[0] + (x + 0.5) * maze.resolution
             world_y = maze.bounds[1] + (y + 0.5) * maze.resolution
-            
-            # 检查Y坐标是否在安全范围内
             if world_y < entrance_min_y:
                 return False
-            
-            # 如果点在入口Y附近，还要检查X坐标是否在入口范围内
-            # 这样可以防止小车从入口的侧面走出去
             if abs(world_y - start_y) < entrance_safety_margin * 2:
                 if world_x < entrance_x_range[0] - 0.3 or world_x > entrance_x_range[1] + 0.3:
                     return False
-            
             return True
-        
+
         fallback_candidate = None
         while dq:
-            x, y = dq.popleft()
-            
-            # 检查此格是否在迷宫内部
+            x, y, used_unknown = dq.popleft()
+            debug_counter += 1
+
             if not is_inside_maze(x, y):
                 continue
-            
-            # 检查邻居是否含未知
+
             for dx, dy in directions:
-                nx, ny = x+dx, y+dy
-                if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:  # 邻居未知 -> 候选
-                    # 同样检查未知邻居是否在安全范围内
-                    if not is_inside_maze(nx, ny):
-                        continue
-                    
-                    # 回溯路径（使用父指针）
-                    path_cells = []
-                    cx, cy = x, y
-                    while cx != -1 and cy != -1:
-                        path_cells.append((cx, cy))
-                        pcx, pcy = parent_x[cy, cx], parent_y[cy, cx]
-                        if pcx == -1 and pcy == -1:
-                            break
-                        cx, cy = pcx, pcy
-                    path_cells.reverse()
-                    if len(path_cells) == 0 or path_cells[0] != (sx, sy):
-                        path_cells.insert(0, (sx, sy))
-                    # 优先返回满足安全距离的自由格；否则记录一个回退候选
-                    if is_safe_cell(x, y):
-                        return (x, y), (nx, ny), path_cells
-                    else:
-                        if fallback_candidate is None:
-                            fallback_candidate = ((x, y), (nx, ny), path_cells)
-            # 扩展自由格
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                if occupancy[ny, nx] != -1:
+                    continue
+                if not within_bounds(nx, ny):
+                    continue
+                if not is_inside_maze(nx, ny):
+                    continue
+
+                path_cells = []
+                cx, cy = x, y
+                while cx != -1 and cy != -1:
+                    path_cells.append((cx, cy))
+                    pcx, pcy = parent_x[cy, cx], parent_y[cy, cx]
+                    if pcx == -1 and pcy == -1:
+                        break
+                    cx, cy = pcx, pcy
+                path_cells.reverse()
+                if len(path_cells) == 0 or path_cells[0] != (sx, sy):
+                    path_cells.insert(0, (sx, sy))
+                if is_safe_cell(x, y):
+                    if debug_update is not None and debug_points is not None:
+                        debug_update(debug_points)
+                    return (x, y), (nx, ny), path_cells
+                elif fallback_candidate is None:
+                    fallback_candidate = ((x, y), (nx, ny), path_cells)
+
             for dx, dy in directions:
-                nx, ny = x+dx, y+dy
-                if 0 <= nx < w and 0 <= ny < h and visited_np[ny, nx] == 0 and occupancy[ny, nx] == 0:
-                    # 确保扩展的格子也在迷宫内部
-                    if is_inside_maze(nx, ny):
-                        visited_np[ny, nx] = 1
-                        parent_x[ny, nx] = x
-                        parent_y[ny, nx] = y
-                        dq.append((nx, ny))
-        # 若未找到安全候选但存在回退候选，则使用之（打印提示）
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                if not within_soft_bounds(nx, ny):
+                    continue
+                cell_val = occupancy[ny, nx]
+                if cell_val == 1:
+                    continue
+                next_unknown = used_unknown + (1 if cell_val == -1 else 0)
+                if max_unknown_allowed is not None and next_unknown > max_unknown_allowed:
+                    continue
+                if visited_np[ny, nx] <= next_unknown:
+                    continue
+                if not is_inside_maze(nx, ny):
+                    continue
+                visited_np[ny, nx] = next_unknown
+                parent_x[ny, nx] = x
+                parent_y[ny, nx] = y
+                dq.append((nx, ny, next_unknown))
+                if debug_points is not None:
+                    debug_points.append((nx, ny))
+                    if debug_update is not None and (debug_counter % max(1, debug_interval) == 0):
+                        debug_update(debug_points)
+
         if fallback_candidate is not None:
             if step_counter % 25 == 0:
                 print(f"[警告] 未找到满足安全距离的目标，使用靠墙回退候选 {fallback_candidate[0]} margin={dynamic_wall_margin}cells")
+            if debug_update is not None and debug_points is not None:
+                debug_update(debug_points)
             return fallback_candidate
+
+        if debug_update is not None and debug_points is not None:
+            debug_update(debug_points)
         return None, None, None
     
     # 直接使用集中后的默认配置即可（原工厂函数已合并为默认值）
@@ -471,24 +523,57 @@ def main():
         occupancy = slam.get_occupancy()
         if frontier_cooldown_steps == 0:
             # 刷新最近前沿与未知邻居（仅在非冷却期）
-            target_cell_latest, unknown_neighbor_new, _ = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
+            target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
+            provided_path = None
             if target_cell_latest is None:
-                print("没有可达的未知区域，探索结束。")
-                section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
-                section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
-                log_section_times(loop_step_label, section_times)
-                break
+                # 使用全局前沿检测作为回退策略
+                fallback_frontier, fallback_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
+                if fallback_frontier is None or not fallback_path:
+                    print("没有可达的未知区域，探索结束。")
+                    section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
+                    section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+                    log_section_times(loop_step_label, section_times)
+                    break
+                target_cell_latest = fallback_frontier
+                current_unknown_neighbor = None
+                provided_path = list(fallback_path)
+            else:
+                current_unknown_neighbor = unknown_neighbor_new
+                if bfs_path:
+                    provided_path = list(bfs_path)
             frontier_hint_cell = target_cell_latest
-            current_unknown_neighbor = unknown_neighbor_new
+            # 记录目标重复情况
             if target_cell_latest == prev_target_cell:
                 same_target_counter += 1
             else:
                 same_target_counter = 0
             prev_target_cell = target_cell_latest
 
-            # 运行A*（仅在非冷却期）
-            safety_cells = max(1, int((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution))
-            global_path = explorer.plan_path(occupancy, (rx_idx, ry_idx), target_cell_latest, safety_distance=safety_cells)
+            # 运行A*（仅在非冷却期），始终使用指定的前沿安全距离
+            safety_cells = float(frontier_safety_cells)
+            if provided_path is not None and len(provided_path) >= 2:
+                # 对提供的路径逐段验证安全距离；不满足则重新规划
+                path_safe = True
+                for cx, cy in provided_path:
+                    if not explorer._is_safe(occupancy, cx, cy, safety_distance=safety_cells):
+                        path_safe = False
+                        break
+                if path_safe:
+                    global_path = provided_path
+                else:
+                    global_path = explorer.plan_path(
+                        occupancy,
+                        (rx_idx, ry_idx),
+                        target_cell_latest,
+                        safety_distance=safety_cells
+                    )
+            else:
+                global_path = explorer.plan_path(
+                    occupancy,
+                    (rx_idx, ry_idx),
+                    target_cell_latest,
+                    safety_distance=safety_cells
+                )
             current_path = global_path if global_path else None
             if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:
                 frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
@@ -738,7 +823,7 @@ def main():
         print(f"探索过程中检测到超过180度连续无障碍区域，现在检查是否有未探索区域...")
         print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
         
-        # 计算已知障碍物区域的边界
+    # 计算已知障碍物区域的边界
         occupancy = slam.get_occupancy()
         obstacle_coords = []
         
@@ -759,6 +844,7 @@ def main():
             max_obstacle_y = max(coord[1] for coord in obstacle_coords) + OBSTACLE_SEARCH_EXPANSION
             print("检测到障碍物区域，边界如下：")
             print(f"障碍物区域边界: X[{min_obstacle_x:.1f}, {max_obstacle_x:.1f}], Y[{min_obstacle_y:.1f}, {max_obstacle_y:.1f}]")
+            viz.set_obstacle_search_region((min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y))
             
             # 转换为栅格索引
             min_obs_x_idx = int((min_obstacle_x - maze.bounds[0]) / maze.resolution)
@@ -776,64 +862,104 @@ def main():
             print(f"在障碍物边界范围内发现 {len(unexplored_in_range)} 个未探索格子")
             
             if unexplored_in_range:
-                # 尝试找到最近的未探索区域并规划路径
                 current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
                 current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
-                
-                min_distance = float('inf')
-                closest_unexplored = None
-                
-                for ux, uy in unexplored_in_range:
-                    distance = math.hypot(ux - current_idx_x, uy - current_idx_y)
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_unexplored = (ux, uy)
-                
-                if closest_unexplored:
-                    print(f"尝试规划到最近未探索区域 {closest_unexplored} 的路径...")
-                    unexplored_path = explorer.plan_path(occupancy, (current_idx_x, current_idx_y), closest_unexplored)
-                    
-                    if unexplored_path and len(unexplored_path) > 1:
-                        print(f"找到通往未探索区域的路径，长度: {len(unexplored_path)-1} 步")
-                        print("前往未探索区域进行补充扫描...")
-                        
-                        # 移动到未探索区域并扫描
-                        for step in unexplored_path[1:]:
-                            ix, iy = step
-                            target_x = maze.bounds[0] + (ix + 0.5) * maze.resolution
-                            target_y = maze.bounds[1] + (iy + 0.5) * maze.resolution
-                            dx = target_x - robot.x
-                            dy = target_y - robot.y
-                            desired_theta = math.atan2(dy, dx)
-                            d_theta = desired_theta - robot.theta
-                            d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
-                            
-                            if abs(d_theta) > ROTATION_THRESHOLD:
-                                robot.rotate(d_theta)
-                                noisy, clean = lidar.scan(robot.get_pose())
-                                scan = noisy
-                                slam.update((0.0, d_theta), scan)
-                                viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy(),
-                                           actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
-                            
-                            distance = math.hypot(target_x - robot.x, target_y - robot.y)
-                            if distance > MOVEMENT_THRESHOLD:
-                                robot.move(distance)
-                                noisy, clean = lidar.scan(robot.get_pose())
-                                scan = noisy
-                                slam.update((distance, 0.0), scan)
-                                viz.update(robot.get_pose(), scan, frontiers=None, target=closest_unexplored, path=unexplored_path, occupancy=slam.get_occupancy(),
-                                           actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
-                        
-                        print("补充扫描完成，现在返回起点...")
-                    else:
-                        print("无法找到通往未探索区域的路径，直接返回起点")
+
+                bfs_debug_cells = []
+                viz.set_bfs_debug_points(None)
+                bfs_debug_state = {"reported": 0}
+
+                def bfs_debug_callback(cells):
+                    viz.set_bfs_debug_points(cells, color='cyan')
+                    viz.update(
+                        robot.get_pose(),
+                        scan,
+                        frontiers=None,
+                        target=None,
+                        path=None,
+                        occupancy=occupancy,
+                        actual_traj=robot.trajectory,
+                        actual_traj_style=explore_traj_style
+                    )
+                    if len(cells) - bfs_debug_state["reported"] >= 150:
+                        bfs_debug_state["reported"] = len(cells)
+                        print(f"[BFS Debug] 已扩展 {len(cells)} 个栅格")
+                    plt.pause(0.03)
+
+                bfs_target, bfs_unknown_neighbor, bfs_path = find_nearest_unexplored(
+                    occupancy,
+                    (current_idx_x, current_idx_y),
+                    bounds_idx=(min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx),
+                    unknown_limit=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS,
+                    visited_out=bfs_debug_cells,
+                    debug_update=bfs_debug_callback,
+                    debug_interval=60
+                )
+
+                if bfs_debug_cells:
+                    print(f"[BFS Debug] 搜索结束，共记录 {len(bfs_debug_cells)} 个栅格")
+                    viz.set_bfs_debug_points(bfs_debug_cells, color='cyan')
                 else:
-                    print("未找到可达的未探索区域，直接返回起点")
+                    viz.set_bfs_debug_points(None)
+
+                viz.update(
+                    robot.get_pose(),
+                    scan,
+                    frontiers=None,
+                    target=None,
+                    path=None,
+                    occupancy=slam.get_occupancy(),
+                    actual_traj=robot.trajectory,
+                    actual_traj_style=explore_traj_style
+                )
+                if bfs_debug_cells:
+                    plt.pause(0.6)
+
+                if bfs_target and bfs_path and len(bfs_path) > 1:
+                    print(f"BFS在障碍物区域内找到可达目标 {bfs_target}，路径长度 {len(bfs_path)-1} 步")
+                    selected_target = bfs_target
+                    selected_path = bfs_path
+
+                    for step in selected_path[1:]:
+                        ix, iy = step
+                        target_x = maze.bounds[0] + (ix + 0.5) * maze.resolution
+                        target_y = maze.bounds[1] + (iy + 0.5) * maze.resolution
+                        dx = target_x - robot.x
+                        dy = target_y - robot.y
+                        desired_theta = math.atan2(dy, dx)
+                        d_theta = desired_theta - robot.theta
+                        d_theta = math.atan2(math.sin(d_theta), math.cos(d_theta))
+
+                        if abs(d_theta) > ROTATION_THRESHOLD:
+                            robot.rotate(d_theta)
+                            noisy, clean = lidar.scan(robot.get_pose())
+                            scan = noisy
+                            slam.update((0.0, d_theta), scan)
+                            viz.update(robot.get_pose(), scan, frontiers=None, target=selected_target, path=selected_path, occupancy=slam.get_occupancy(),
+                                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
+
+                        distance = math.hypot(target_x - robot.x, target_y - robot.y)
+                        if distance > MOVEMENT_THRESHOLD:
+                            robot.move(distance)
+                            noisy, clean = lidar.scan(robot.get_pose())
+                            scan = noisy
+                            slam.update((distance, 0.0), scan)
+                            viz.update(robot.get_pose(), scan, frontiers=None, target=selected_target, path=selected_path, occupancy=slam.get_occupancy(),
+                                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
+
+                    print("补充扫描完成，现在返回起点...")
+                    viz.set_bfs_debug_points(None)
+                else:
+                    print("在指定障碍物区域内未找到满足安全距离的可达前沿，直接返回起点")
+                    if bfs_debug_cells:
+                        viz.set_bfs_debug_points(bfs_debug_cells, color='magenta')
+                        plt.pause(0.8)
+                    viz.set_bfs_debug_points(None)
             else:
                 print("障碍物边界范围内没有未探索区域，直接返回起点")
         else:
             print("未发现障碍物区域，直接返回起点")
+            viz.set_obstacle_search_region(None)
     else:
         print("探索完成：迷宫内部区域已完全探索。")
         print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
@@ -856,8 +982,8 @@ def main():
     safety_cells_nominal = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
     safety_cells_nominal_f = float(safety_cells_nominal)
     safety_candidates = [float(safety_cells_nominal)]
-    # 若默认安全距离无解，则逐步放宽，最终退化到0栅格
-    for shrink in range(safety_cells_nominal - 1, -1, -1):
+    # 若默认安全距离无解，则逐步放宽，但不低于1栅格
+    for shrink in range(safety_cells_nominal - 1, 0, -1):
         safety_candidates.append(float(shrink))
 
     back_path = None
@@ -867,7 +993,8 @@ def main():
             occupancy_return,
             (current_idx_x, current_idx_y),
             (start_idx_x, start_idx_y),
-            safety_distance=sd
+            safety_distance=sd,
+            max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
         )
         if candidate:
             back_path = candidate
@@ -881,7 +1008,8 @@ def main():
         else:
             print(f"原安全距离 {safety_cells_nominal_f:.1f} 栅格无解，改用 {used_safety_val:.1f} 栅格规划返程路线")
     else:
-        print(f"无法在安全距离 {safety_cells_nominal_f:.1f}~0.0 栅格范围内规划返程路径")
+        min_safety = 1.0 if safety_cells_nominal_f >= 1.0 else safety_cells_nominal_f
+        print(f"无法在安全距离 {safety_cells_nominal_f:.1f}~{min_safety:.1f} 栅格范围内规划返程路径")
 
     back_path_no_safety = explorer.plan_path_no_safety(
         occupancy_return,
@@ -902,13 +1030,15 @@ def main():
         nonlocal est_pose, scan, total_distance_traveled, step_counter, return_traj_split_idx
         if not path_cells or len(path_cells) < 2:
             return False
-        path_cells = list(path_cells)
+        current_path_cells = list(path_cells)
         path_pts = []
-        for cx, cy in path_cells:
+        for cx, cy in current_path_cells:
             wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
             wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
             path_pts.append((wx, wy))
         path_arr = np.asarray(path_pts, dtype=float)
+        last_replan_idx = -10  # 确保第一次循环立即重规划
+        replan_interval = 10
         return_threshold = 0.18
         max_iters = max(len(path_arr) * 80, 700)
         est_pose = robot.get_pose()
@@ -923,8 +1053,6 @@ def main():
         return_min_speed = 0.22
         return_speed_cap = 0.75
         stall_counter = 0
-        path_update_counter = 0  # 计数器：每50次更新一次路径
-
         for idx in range(max_iters):
             while viz.paused:
                 plt.pause(VISUALIZATION_PAUSE_TIME)
@@ -938,42 +1066,47 @@ def main():
             section_times.append(("pose_fetch", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
 
-            # 每50次更新一次返回路径（类似探索阶段的逻辑）
-            if path_update_counter % 50 == 0:
-                # 重新规划从当前位置到起点的路径
+            # 周期性重新规划返回路径
+            should_replan = (idx == 0) or (idx - last_replan_idx >= replan_interval)
+            if should_replan or len(path_arr) < 2:
                 current_idx_x_update = int((est_pose[0] - maze.bounds[0]) / maze.resolution)
                 current_idx_y_update = int((est_pose[1] - maze.bounds[1]) / maze.resolution)
                 occupancy_update = slam.get_occupancy().copy()
-                
+
                 # 确保当前格和起点格被视为空闲
                 if 0 <= current_idx_y_update < occupancy_update.shape[0] and 0 <= current_idx_x_update < occupancy_update.shape[1]:
                     occupancy_update[current_idx_y_update, current_idx_x_update] = 0
                 if 0 <= start_idx_y < occupancy_update.shape[0] and 0 <= start_idx_x < occupancy_update.shape[1]:
                     occupancy_update[start_idx_y, start_idx_x] = 0
-                
-                # 使用当前安全距离重新规划
+
                 safety_cells_return = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
-                updated_path = explorer.plan_path(occupancy_update, (current_idx_x_update, current_idx_y_update), (start_idx_x, start_idx_y), safety_distance=float(safety_cells_return))
-                
+                updated_path = explorer.plan_path(
+                    occupancy_update,
+                    (current_idx_x_update, current_idx_y_update),
+                    (start_idx_x, start_idx_y),
+                    safety_distance=float(safety_cells_return),
+                    max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                )
+
                 if updated_path and len(updated_path) >= 2:
-                    # 更新路径
-                    path_cells = list(updated_path)
+                    current_path_cells = list(updated_path)
                     path_pts = []
-                    for cx, cy in path_cells:
+                    for cx, cy in current_path_cells:
                         wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
                         wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
                         path_pts.append((wx, wy))
                     path_arr = np.asarray(path_pts, dtype=float)
-                    if idx % 50 == 0:
-                        print(f"[{label}] 第{idx}步：更新返回路径，新路径长度 {len(path_arr)-1} 段")
-            
-            path_update_counter += 1
+                    last_replan_idx = idx
+                    if idx % 20 == 0:
+                        print(f"[{label}] 第{idx}步：周期性更新返回路径，当前段数 {len(path_arr)-1}")
+                else:
+                    last_replan_idx = idx
 
             dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
             nearest_idx = int(np.argmin(dists))
-            lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
+            lookahead = compute_dynamic_lookahead(current_path_cells, nearest_idx)
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
-            follow_cell = path_cells[min(len(path_cells) - 1, nearest_idx)]
+            follow_cell = current_path_cells[min(len(current_path_cells) - 1, nearest_idx)]
             goal_point = (float(path_arr[follow_idx, 0]), float(path_arr[follow_idx, 1]))
 
             gx, gy = goal_point
@@ -1059,7 +1192,7 @@ def main():
             section_times.append(("post_plan_adjust", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
 
-            viz_target_cell = path_cells[min(follow_idx, len(path_cells) - 1)]
+            viz_target_cell = current_path_cells[min(follow_idx, len(current_path_cells) - 1)]
             explore_segment = []
             return_segment = robot.trajectory
             extra_trajs = None

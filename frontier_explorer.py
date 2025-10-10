@@ -138,29 +138,33 @@ class FrontierExplorer:
 
         return best_frontier, best_path
 
-    def plan_path(self, occupancy, start, goal, safety_distance=None):
+    def plan_path(self, occupancy, start, goal, safety_distance=None,
+                  max_unknown_cells=0, unknown_step_penalty=2.0):
         """
         使用A*算法规划从start到goal的路径，支持8方向移动（包括对角线）。
         start: (x_idx, y_idx), goal: (x_idx, y_idx)
+        safety_distance: 与障碍物保持的安全距离，如果为None则使用实例默认值。
+        max_unknown_cells: 允许经过的未知栅格数量上限（0表示禁用）。
+        unknown_step_penalty: 每穿越一个未知栅格额外增加的路径代价，用于优先选择已知区域。
+
         返回路径单元格坐标列表，包含start和goal。若无法到达返回None。
         """
         sx, sy = start
         gx, gy = goal
         if start == goal:
             return [start]
-        
+
         h, w = occupancy.shape
-        # 本次规划使用的安全距离（单位：栅格数）
         sd = self.safety_distance if (safety_distance is None) else safety_distance
-        
-        # A*算法数据结构
+        allow_unknown = max_unknown_cells is not None and max_unknown_cells > 0
+
+        start_state = (sx, sy, 0)
         open_set = []
-        heapq.heappush(open_set, (0.0, sx, sy))
-        
+        start_h = self._heuristic((sx, sy), (gx, gy))
+        heapq.heappush(open_set, (start_h, 0.0, 0, sx, sy))
+
         came_from = {}
-        g_score = {(sx, sy): 0.0}
-        f_score = {(sx, sy): self._heuristic((sx, sy), (gx, gy))}
-        
+        g_score = {start_state: 0.0}
         closed_set = set()
         
         # 8个方向的移动，包括对角线
@@ -176,24 +180,24 @@ class FrontierExplorer:
         ]
         
         while open_set:
-            _, x, y = heapq.heappop(open_set)
-            
-            if (x, y) in closed_set:
+            f_current, g_current, unknown_used, x, y = heapq.heappop(open_set)
+
+            state = (x, y, unknown_used)
+            if state in closed_set:
                 continue
-                
-            closed_set.add((x, y))
-            
+            closed_set.add(state)
+
             if (x, y) == (gx, gy):
-                # 重建路径
                 path = []
-                current = (x, y)
-                while current in came_from:
-                    path.append(current)
-                    current = came_from[current]
+                current_state = state
+                while current_state in came_from:
+                    cx, cy, _ = current_state
+                    path.append((cx, cy))
+                    current_state = came_from[current_state]
                 path.append(start)
                 path.reverse()
                 return path
-            
+
             for dx, dy, cost in directions:
                 nx, ny = x + dx, y + dy
                 
@@ -201,30 +205,42 @@ class FrontierExplorer:
                 if not (0 <= nx < w and 0 <= ny < h):
                     continue
                 
-                # 检查是否为可通行区域
-                if occupancy[ny, nx] != 0:
+                cell_value = occupancy[ny, nx]
+                if cell_value == 1:
                     continue
-                    
-                # 检查是否与障碍物保持足够的安全距离（按本次规划的安全距离）
-                if not self._is_safe(occupancy, nx, ny, safety_distance=sd):
+
+                next_unknown_used = unknown_used
+                step_penalty = 0.0
+                allow_unknown_cell = False
+                if cell_value == -1:
+                    if not allow_unknown:
+                        continue
+                    next_unknown_used = unknown_used + 1
+                    if max_unknown_cells is not None and next_unknown_used > max_unknown_cells:
+                        continue
+                    allow_unknown_cell = True
+                    step_penalty = unknown_step_penalty
+                
+                if not self._is_safe(occupancy, nx, ny, safety_distance=sd, allow_unknown_cell=allow_unknown_cell):
                     continue
                 
                 # 对于对角线移动，检查是否会穿过墙角
                 if abs(dx) == 1 and abs(dy) == 1:
-                    # 检查两个相邻的直角方向是否可通行
-                    if (occupancy[y, x + dx] != 0) or (occupancy[y + dy, x] != 0):
+                    if (0 <= x + dx < w and 0 <= y < h and occupancy[y, x + dx] == 1) or \
+                       (0 <= x < w and 0 <= y + dy < h and occupancy[y + dy, x] == 1):
                         continue
                 
-                if (nx, ny) in closed_set:
+                next_state = (nx, ny, next_unknown_used)
+                if next_state in closed_set:
                     continue
-                
-                tentative_g_score = g_score[(x, y)] + cost
-                
-                if (nx, ny) not in g_score or tentative_g_score < g_score[(nx, ny)]:
-                    came_from[(nx, ny)] = (x, y)
-                    g_score[(nx, ny)] = tentative_g_score
-                    f_score[(nx, ny)] = tentative_g_score + self._heuristic((nx, ny), (gx, gy))
-                    heapq.heappush(open_set, (f_score[(nx, ny)], nx, ny))
+                tentative_g = g_score[state] + cost + step_penalty
+
+                if next_state not in g_score or tentative_g < g_score[next_state]:
+                    came_from[next_state] = state
+                    g_score[next_state] = tentative_g
+                    heuristic = self._heuristic((nx, ny), (gx, gy))
+                    f_score = tentative_g + heuristic + next_unknown_used * 0.25
+                    heapq.heappush(open_set, (f_score, tentative_g, next_unknown_used, nx, ny))
         
         return None  # 无法找到路径
     
@@ -320,7 +336,7 @@ class FrontierExplorer:
         # 对角线距离：允许对角线移动的最短距离
         return max(dx, dy) + (1.414 - 1) * min(dx, dy)
 
-    def _is_safe(self, occupancy, x, y, safety_distance=1.0):
+    def _is_safe(self, occupancy, x, y, safety_distance=1.0, allow_unknown_cell=False):
         """
         检查点(x,y)是否与障碍物保持足够的安全距离。
         
@@ -336,7 +352,10 @@ class FrontierExplorer:
         h, w = occupancy.shape
         
         # 检查是否该点本身是障碍物
-        if occupancy[y, x] != 0:
+        cell_value = occupancy[y, x]
+        if cell_value == 1:
+            return False
+        if cell_value == -1 and not allow_unknown_cell:
             return False
             
         # 检查周围一定范围内是否有障碍物

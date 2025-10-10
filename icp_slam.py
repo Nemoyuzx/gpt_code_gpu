@@ -16,7 +16,7 @@ MAX_RANGE_FACTOR = 0.7  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 1000  # 降低ICP最大迭代次数，避免过高峰值内存
+ICP_MAX_ITER = 1800  # 降低ICP最大迭代次数，避免过高峰值内存
 ICP_TOLERANCE = 1e-7  # ICP收敛容忍
 ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
 
@@ -370,6 +370,7 @@ class ICPSlam:
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
         adjacent_diff_threshold = 2.0  # 与ICP部分一致或更宽松的阈值
         new_points = []  # 本次扫描新增的障碍点（全局坐标）
+        max_range = self.get_max_range()
         for i, dist in enumerate(scan):
             should_skip_map_update = False
             if dist < self.get_max_range() and dist <= far_threshold:
@@ -390,17 +391,19 @@ class ICPSlam:
                     if first_dist < self.get_max_range() and first_dist <= far_threshold:
                         if abs(dist - first_dist) > adjacent_diff_threshold:
                             should_skip_map_update = True
+
+            if should_skip_map_update:
+                # 跳过不可靠的测距，避免误清理遮挡后区域
+                continue
+
+
             # 计算该激光束末端的全局坐标 (end_x, end_y)
             beam_angle = self.theta + (angles_np[i] if 'angles_np' in locals() else math.radians(i))
             beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))  # 归一化角度
-            if dist >= self.get_max_range():
-                # 未检测到障碍，用最大范围点作为末端
-                end_x = self.x + self.get_max_range() * math.cos(beam_angle)
-                end_y = self.y + self.get_max_range() * math.sin(beam_angle)
-            else:
-                # 检测到障碍
-                end_x = self.x + dist * math.cos(beam_angle)
-                end_y = self.y + dist * math.sin(beam_angle)
+            hit_obstacle = dist < max_range and dist <= far_threshold and not math.isinf(dist)
+            effective_dist = dist if hit_obstacle else min(far_threshold, dist if dist < float('inf') else far_threshold)
+            end_x = self.x + effective_dist * math.cos(beam_angle)
+            end_y = self.y + effective_dist * math.sin(beam_angle)
             # 将末端点转换为栅格地图索引
             tx = int((end_x - self.min_x) / self.resolution);  ty = int((end_y - self.min_y) / self.resolution)
             max_x_idx = self.occupancy.shape[1] - 1;          max_y_idx = self.occupancy.shape[0] - 1
@@ -415,10 +418,13 @@ class ICPSlam:
             if ry > max_y_idx: ry = max_y_idx
             # 获取射线经过的栅格路径
             line = self._bresenham(rx, ry, tx, ty)
-            if dist < self.get_max_range() and dist <= far_threshold and not should_skip_map_update:
+            if hit_obstacle:
                 # 射线击中了障碍物（在范围内且未被过滤）
                 # 将路径上除最后一点外的格子标记为空闲
                 for cx, cy in line[:-1]:
+                    if self.occupancy[cy, cx] == 1:
+                        # 遇到已知障碍，停止向前清空，避免噪声导致墙体被抹除
+                        break
                     if self.occupancy[cy, cx] == -1:
                         self.occupancy[cy, cx] = 0
                 # 最后一个格子是障碍物
@@ -429,8 +435,10 @@ class ICPSlam:
                     new_point = [end_x, end_y]
                     new_points.append(new_point)
             else:
-                # 未命中障碍（或被过滤）：该射线经过区域均标记为空闲
+                # 未命中障碍：仅在可靠距离内将未知标记为空闲，遇到已知障碍立即停止
                 for cx, cy in line:
+                    if self.occupancy[cy, cx] == 1:
+                        break
                     if self.occupancy[cy, cx] == -1:
                         self.occupancy[cy, cx] = 0
         # 将本次新增点与内存中的最新地图合并，仅保留一份张量
