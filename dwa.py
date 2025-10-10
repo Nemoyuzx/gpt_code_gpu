@@ -52,9 +52,9 @@ class DWAConfig:
     clearance_cost_gain: float = 3.0  # 接近膨胀半径时的代价权重。大→更远离墙。
     spin_penalty_gain: float = 0.3  # 适度降低自旋惩罚，结合转向更灵活。
     min_forward_ratio: float = 0.15  # 小角度时最低前进速度占比。
-    near_wall_threshold: float = 0.5  # 判定“靠墙”的gap阈值(m)。
-    near_wall_rot_boost: float = 2.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
-    near_wall_forward_bias_gain: float = 1.0  # 靠墙且前进速度不足时的附加惩罚增益。
+    near_wall_threshold: float = 0.6  # 判定“靠墙”的gap阈值(m)。
+    near_wall_rot_boost: float = 0.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
+    near_wall_forward_bias_gain: float = 0.8  # 靠墙且前进速度不足时的附加惩罚增益。
     align_deadband: float = 3.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
     forward_bias_min_disp: float = 0.01  # 预测末端位移阈值。位移很小却大旋转→惩罚。
     forward_bias_cost_gain: float = 1.2  # 上述惩罚权重。

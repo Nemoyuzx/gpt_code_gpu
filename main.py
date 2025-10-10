@@ -16,7 +16,7 @@ import numpy as np
 # ==================== 系统参数配置 ====================
 # 路径规划参数
 SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
-FRONTIER_SAFETY_DISTANCE = 5.5  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
+FRONTIER_SAFETY_DISTANCE = 6  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
 MAZE_FILE = "3.json"  # 默认迷宫文件
@@ -70,6 +70,7 @@ OBSTACLE_SEARCH_EXPANSION = -0.5  # 障碍物区域搜索范围扩大距离（�
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
 FRONTIER_UPDATE_INTERVAL = 2              # 前沿刷新间隔（每两轮刷新一次）
+FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
 
 # ==================== 降噪滤波参数 ====================
 # 滤波器总开关
@@ -266,6 +267,7 @@ def main():
     frontier_cooldown_steps = 0
     current_unknown_neighbor = None  # 保存最近一次前沿搜索得到的未知邻居
     frontier_hint_cell = None        # 用于A*失败或冷却时作为DWA提示/跟随目标
+    cooldown_reference_cell = None   # 冷却阶段使用的旧路径参考点
 
     # 初始设置占位，待 simple_cfg 创建后再依据机器人尺寸重新计算
     dynamic_wall_margin = 1  # cells (placeholder)
@@ -708,6 +710,14 @@ def main():
         rx_idx = int((est_pose[0] - maze.bounds[0]) / maze.resolution)
         ry_idx = int((est_pose[1] - maze.bounds[1]) / maze.resolution)
 
+        if cooldown_reference_cell is not None:
+            if abs(rx_idx - cooldown_reference_cell[0]) <= 1 and abs(ry_idx - cooldown_reference_cell[1]) <= 1:
+                if frontier_cooldown_steps > 0 and step_counter % 20 == 0:
+                    print(f"[前沿节流] 已到达冷却参考点 {cooldown_reference_cell}，解除冷却限制")
+                cooldown_reference_cell = None
+                frontier_cooldown_steps = 0
+                frontier_hint_cell = None
+
         # 冷却策略：冷却期暂停A*与前沿刷新；冷却结束时刷新前沿并运行A*
         occupancy = slam.get_occupancy()
         if frontier_cooldown_steps == 0:
@@ -720,24 +730,30 @@ def main():
             frontier_update_tick += 1
             # 刷新最近前沿与未知邻居（仅在非冷却期）
             if should_refresh_frontier:
-                target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
                 provided_path = None
-                if target_cell_latest is None:
-                    # 使用全局前沿检测作为回退策略
-                    fallback_frontier, fallback_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
-                    if fallback_frontier is None or not fallback_path:
-                        print("没有可达的未知区域，探索结束。")
-                        section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
-                        section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
-                        log_section_times(loop_step_label, section_times)
-                        break
-                    target_cell_latest = fallback_frontier
+                bfs_path = None
+                if cooldown_reference_cell is not None:
+                    target_cell_latest = cooldown_reference_cell
+                    unknown_neighbor_new = None
                     current_unknown_neighbor = None
-                    provided_path = list(fallback_path)
                 else:
-                    current_unknown_neighbor = unknown_neighbor_new
-                    if bfs_path:
-                        provided_path = list(bfs_path)
+                    target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
+                    if target_cell_latest is None:
+                        # 使用全局前沿检测作为回退策略
+                        fallback_frontier, fallback_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
+                        if fallback_frontier is None or not fallback_path:
+                            print("没有可达的未知区域，探索结束。")
+                            section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
+                            section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+                            log_section_times(loop_step_label, section_times)
+                            break
+                        target_cell_latest = fallback_frontier
+                        current_unknown_neighbor = None
+                        provided_path = list(fallback_path)
+                    else:
+                        current_unknown_neighbor = unknown_neighbor_new
+                        if bfs_path:
+                            provided_path = list(bfs_path)
                 frontier_hint_cell = target_cell_latest
                 # 记录目标重复情况
                 if target_cell_latest == prev_target_cell:
@@ -770,9 +786,18 @@ def main():
                 global_path = planned_path if planned_path is not None else None
                 current_path = global_path if global_path else None
                 if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:
+                    original_path_steps = len(global_path) - 1
+                    cooldown_reference_idx = min(len(global_path) - 1, max(1, FRONTIER_COOLDOWN_REFERENCE_INDEX))
+                    cooldown_reference_cell = global_path[cooldown_reference_idx]
+                    if cooldown_reference_idx < len(global_path) - 1:
+                        global_path = list(global_path[:cooldown_reference_idx + 1])
+                    else:
+                        global_path = list(global_path)
+                    current_path = list(global_path)
+                    frontier_hint_cell = cooldown_reference_cell
                     frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
                     if step_counter % 20 == 0:
-                        print(f"[前沿节流] A*路径过长({len(global_path)-1}格) -> 冷却 {FRONTIER_COOLDOWN_STEPS} 步（期间暂停A*与前沿刷新）")
+                        print(f"[前沿节流] A*路径过长({original_path_steps}格) -> 冷却 {FRONTIER_COOLDOWN_STEPS} 步，改用旧路径点 {cooldown_reference_cell} (截断后 {len(current_path)-1} 格)")
             else:
                 if step_counter % 20 == 0:
                     print("[前沿刷新] 按照间隔策略跳过本轮前沿更新，沿用既有路径。")
@@ -1111,6 +1136,8 @@ def main():
                 visited_subtargets = set()
                 next_start_cell = None
                 while True:
+                    sweep_section_times = []
+                    sweep_t0 = time.perf_counter()
                     occupancy = slam.get_occupancy()
                     bounds_idx, bounds_world = compute_obstacle_search_bounds(occupancy)
                     if not (bounds_idx and bounds_world):
@@ -1120,6 +1147,7 @@ def main():
                     min_obs_x_idx, max_obs_x_idx, min_obs_y_idx, max_obs_y_idx = bounds_idx
                     min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y = bounds_world
                     viz.set_obstacle_search_region((min_obstacle_x, min_obstacle_y, max_obstacle_x, max_obstacle_y))
+                    sweep_section_times.append(("bounds_update", (time.perf_counter() - sweep_t0) * 1000.0))
                     if next_start_cell is None:
                         current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
                         current_idx_y = int((robot.y - maze.bounds[1]) / maze.resolution)
@@ -1131,6 +1159,7 @@ def main():
                         search_origin = next_start_cell
                         current_idx_x, current_idx_y = search_origin
                         boundary_start = search_origin
+                    sweep_section_times.append(("origin_prepare", (time.perf_counter() - sweep_t0) * 1000.0))
 
                     bfs_debug_cells = []
                     viz.set_bfs_debug_points(None)
@@ -1158,6 +1187,7 @@ def main():
                         for vx, vy in visited_subtargets:
                             if 0 <= vy < occupancy_for_search.shape[0] and 0 <= vx < occupancy_for_search.shape[1]:
                                 occupancy_for_search[vy, vx] = 0
+                    sweep_section_times.append(("prepare_mask", (time.perf_counter() - sweep_t0) * 1000.0))
 
                     bfs_target, bfs_unknown_neighbor, bfs_path = find_nearest_unexplored(
                         occupancy_for_search,
@@ -1169,6 +1199,7 @@ def main():
                         debug_interval=60,
                         search_mode="dfs"
                     )
+                    sweep_section_times.append(("dfs_search", (time.perf_counter() - sweep_t0) * 1000.0))
 
                     if bfs_debug_cells:
                         print(f"[BFS Debug] 搜索结束，共记录 {len(bfs_debug_cells)} 个栅格")
@@ -1266,6 +1297,9 @@ def main():
                         print("补扫阶段未找到满足安全距离的有效路径，直接返回起点。")
                         visited_subtargets.add(effective_target)
                         next_start_cell = None
+                        sweep_section_times.append(("path_planning", (time.perf_counter() - sweep_t0) * 1000.0))
+                        sweep_section_times.append(("total_loop", (time.perf_counter() - sweep_t0) * 1000.0))
+                        log_section_times("补扫阶段-无路径", sweep_section_times)
                         break
 
                     def replanner():
@@ -1286,11 +1320,13 @@ def main():
                         )
                         return new_path
 
+                    sweep_section_times.append(("path_planning", (time.perf_counter() - sweep_t0) * 1000.0))
                     reached = drive_path_with_dwa_segment(
                         path_to_follow,
                         label="障碍补扫路径",
                         replan_callback=replanner
                     )
+                    sweep_section_times.append(("dwa_follow", (time.perf_counter() - sweep_t0) * 1000.0))
 
                     if reached:
                         print("补充扫描完成，继续检查是否存在剩余未知区域...")
@@ -1300,7 +1336,8 @@ def main():
                         print("补扫路径未能成功完成，返回起点前请留意地图覆盖情况")
                         visited_subtargets.add(effective_target)
                         next_start_cell = None
-                        break
+                    sweep_section_times.append(("total_loop", (time.perf_counter() - sweep_t0) * 1000.0))
+                    log_section_times("补扫阶段-循环", sweep_section_times)
                 else:
                     print("在指定障碍物区域内未找到满足安全距离的可达前沿，直接返回起点")
                     if bfs_debug_cells:

@@ -17,8 +17,8 @@ MAX_RANGE_FACTOR = 0.8  # 超过最大范围的比例阈值，用于忽略远距
 ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
 
 ICP_MAX_ITER = 1400  # 降低ICP最大迭代次数，避免过高峰值内存
-ICP_TOLERANCE = 1e-5  # ICP收敛容忍
-ICP_CORRESPONDENCE_THRESH = 0.01  # ICP对应点匹配距离
+ICP_TOLERANCE = 1e-7  # ICP收敛容忍
+ICP_CORRESPONDENCE_THRESH = 0.001  # ICP对应点匹配距离
 
 # 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
 MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "20000"))
@@ -267,6 +267,7 @@ class ICPSlam:
         pts_local = np.array(pts_local, dtype=np.float32)
 
         # 如果存在已有地图点云（仅内存中保留一份），则进行 ICP 匹配校正
+        icp_iterations = 0
         if (self.map_points_tensor is not None and self.map_points_tensor.numel() > 0) and pts_local.size > 0:
             # 开始 ICP 前，将地图点云加载至 GPU/CPU 张量
             # 将新扫描点转换为 PyTorch 张量
@@ -290,6 +291,7 @@ class ICPSlam:
                 U_cpu = Vt_cpu = None
                 # ICP 迭代过程
                 for it in range(self.icp_max_iter):
+                    icp_iterations = it + 1
                     # 计算源点集到目标点集的距离矩阵并寻找最近邻
                     dist_matrix = torch.cdist(src, tgt)  # [N_src, N_tgt]
                     min_dists, min_indices = torch.min(dist_matrix, dim=1)
@@ -365,7 +367,7 @@ class ICPSlam:
             self.y += t_cpu[1]
             # 使用修正后的位姿更新当前激光点的全局坐标（numpy 计算）
             pts_local = pts_local.dot(R_cpu.T) + t_cpu
-    # （若未进入 ICP，例如地图为空，仅根据里程计预测，则直接使用预测位姿进行建图）
+        # （若未进入 ICP，例如地图为空，仅根据里程计预测，则直接使用预测位姿进行建图）
 
         # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
         rx = int((self.x - self.min_x) / self.resolution)
@@ -467,7 +469,7 @@ class ICPSlam:
         # 显式调用垃圾回收，释放Python对象占用的内存
         gc.collect()
         # 每次更新后打印内存使用量
-        self._print_memory_usage()
+        self._print_memory_usage(icp_iterations)
         return (self.x, self.y, self.theta)
     
     def get_max_range(self):
