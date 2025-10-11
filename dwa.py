@@ -37,7 +37,7 @@ class DWAConfig:
     dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
     predict_time: float = 1.1  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
     to_goal_cost_gain: float = 0.5  # 目标朝向代价权重。大→更快对准目标方向。
-    to_goal_dist_cost_gain: float = 0.25  # 目标距离代价权重。大→更偏好缩短终点距离。
+    to_goal_dist_cost_gain: float = 0.2  # 目标距离代价权重。大→更偏好缩短终点距离。
     speed_cost_gain: float = 0.40  # 降低速度奖励，避免“速度至上”。
     obstacle_cost_gain: float = 0.8  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
     rotation_cost_gain: float = 0.35  # 更鼓励转向（配合小半径转弯）。

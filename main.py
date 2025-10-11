@@ -19,7 +19,7 @@ SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的
 FRONTIER_SAFETY_DISTANCE = 6  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
-MAZE_FILE = "2.json"  # 默认迷宫文件
+MAZE_FILE = "3.json"  # 默认迷宫文件
 ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
