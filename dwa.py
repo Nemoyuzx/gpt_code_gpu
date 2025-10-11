@@ -40,7 +40,7 @@ class DWAConfig:
     to_goal_dist_cost_gain: float = 0.25  # 目标距离代价权重。大→更偏好缩短终点距离。
     speed_cost_gain: float = 0.40  # 降低速度奖励，避免“速度至上”。
     obstacle_cost_gain: float = 0.8  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
-    rotation_cost_gain: float = 0.25  # 更鼓励转向（配合小半径转弯）。
+    rotation_cost_gain: float = 0.35  # 更鼓励转向（配合小半径转弯）。
     progress_cost_gain: float = 2.0  # 更注重向目标推进。
     change_yaw_cost_gain: float = 0.4  # 角速度变化代价。大→更平滑，不易“抖动”。
     smoothing_alpha: float = 0.6  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
@@ -132,8 +132,8 @@ class DWAConfig:
     # ---- 原地旋转策略（在大偏角或前向净空较小时，允许 v≈0 进行就地转向） ----
     enable_inplace_rotation: bool = True    # 打开原地旋转
     inplace_angle_deg: float = 25.0         # 当与目标方向夹角超过该值时触发
-    inplace_gap_thresh: float = 0.35        # 或当前前向净空(gap)小于该阈值时触发
-    inplace_rot_cost_scale: float = 0.7     # 触发时降低旋转代价（<1）
+    inplace_gap_thresh: float = 0.5        # 或当前前向净空(gap)小于该阈值时触发
+    inplace_rot_cost_scale: float = 0.5     # 触发时降低旋转代价（<1）
     inplace_spin_penalty_scale: float = 0.6 # 触发时降低打转惩罚（<1）
     # ---- 预测制动（提升减速及时性） ----
     brake_enable: bool = True                        # 开启基于前向净空的速度上界裁剪
@@ -155,7 +155,7 @@ class DWAConfig:
     align_yaw_rate_mult: float = 1.5     # 与 yaw_rate_resolution 的倍乘系数
     align_small_speed_frac: float = 0.05 # 小角度场景下认为“速度很小”的比例阈值(×max_speed)
     # 前进偏置/转弯奖励阈值
-    forward_bias_w_thresh: float = 0.2   # 位移很小却大旋转的角速度阈值(rad/s)
+    forward_bias_w_thresh: float = 0.1   # 位移很小却大旋转的角速度阈值(rad/s)
     reverse_turn_bonus_w: float = 0.3    # 倒车转弯奖励的角速度阈值(rad/s)
     reverse_turn_bonus_v: float = 0.05   # 倒车转弯奖励的速度幅度阈值(|v|>此值)
     # 自旋惩罚中的速度偏置，避免除零

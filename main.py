@@ -19,7 +19,7 @@ SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的
 FRONTIER_SAFETY_DISTANCE = 6  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
-MAZE_FILE = "3.json"  # 默认迷宫文件
+MAZE_FILE = "2.json"  # 默认迷宫文件
 ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
@@ -71,6 +71,10 @@ FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，�
 FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
 FRONTIER_UPDATE_INTERVAL = 2              # 前沿刷新间隔（每两轮刷新一次）
 FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
+
+# 返程路径节流参数
+RETURN_REPLAN_ANCHOR_LOOKAHEAD = 12  # 返程重规划时在初始路径上向前取的锚点偏移
+RETURN_REPLAN_MIN_ADVANCE = 4        # 返程重规划至少前进的初始路径栅格数
 
 # ==================== 降噪滤波参数 ====================
 # 滤波器总开关
@@ -1265,32 +1269,8 @@ def main():
                         if strict_path:
                             path_to_follow = strict_path
                         else:
-                            safe_goal = find_nearest_safe_cell(
-                                selected_path,
-                                occupancy_local,
-                                safety_cells,
-                                (current_idx_x, current_idx_y)
-                            )
-                            if safe_goal is not None:
-                                if safe_goal in visited_subtargets:
-                                    print(f"候选安全栅格 {safe_goal} 已处理过，跳过。")
-                                    safe_goal = None
-                                else:
-                                    alt_path, _ = plan_path_with_safety(
-                                        occupancy_local,
-                                        (current_idx_x, current_idx_y),
-                                        safe_goal,
-                                        safety_cells,
-                                        max_unknown_allowed=OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS
-                                    )
-                                    if alt_path:
-                                        effective_target = safe_goal
-                                        path_to_follow = alt_path
-                                        print(f"A* 无法直达补扫目标，改为前往最近安全栅格 {safe_goal}")
-                                    else:
-                                        safe_goal = None
-                                if safe_goal is None:
-                                    path_to_follow = None
+                            print("A* 无法直达补扫目标，补扫阶段改为直接返回起点。")
+                            path_to_follow = None
 
                     viz.set_bfs_debug_points(None)
                     if path_to_follow is None or len(path_to_follow) < 2:
@@ -1420,13 +1400,19 @@ def main():
         if not path_cells or len(path_cells) < 2:
             return False
         current_path_cells = list(path_cells)
-        path_pts = []
-        for cx, cy in current_path_cells:
-            wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
-            wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
-            path_pts.append((wx, wy))
-        path_arr = np.asarray(path_pts, dtype=float)
-        last_replan_idx = -10  # 确保第一次循环立即重规划
+
+        def cells_to_world(cells):
+            pts = []
+            for cx, cy in cells:
+                wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
+                wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
+                pts.append((wx, wy))
+            return np.asarray(pts, dtype=float)
+
+        path_arr = cells_to_world(current_path_cells)
+        initial_path_cells = list(current_path_cells)
+        initial_path_arr = path_arr.copy()
+        last_replan_idx = 0
         replan_interval = 10
         return_threshold = 0.18
         max_iters = max(len(path_arr) * 80, 700)
@@ -1456,8 +1442,8 @@ def main():
             t_section = time.perf_counter()
 
             # 周期性重新规划返回路径
-            should_replan = (idx == 0) or (idx - last_replan_idx >= replan_interval)
-            if should_replan or len(path_arr) < 2:
+            should_replan = (idx != 0) and ((idx - last_replan_idx >= replan_interval) or len(path_arr) < 2)
+            if should_replan:
                 current_idx_x_update = int((est_pose[0] - maze.bounds[0]) / maze.resolution)
                 current_idx_y_update = int((est_pose[1] - maze.bounds[1]) / maze.resolution)
                 occupancy_update = slam.get_occupancy().copy()
@@ -1469,25 +1455,50 @@ def main():
                     occupancy_update[start_idx_y, start_idx_x] = 0
 
                 safety_cells_return = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
-                updated_path = explorer.plan_path(
-                    occupancy_update,
-                    (current_idx_x_update, current_idx_y_update),
-                    (start_idx_x, start_idx_y),
-                    safety_distance=float(safety_cells_return),
-                    max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
-                )
+
+                anchor_path_cells = None
+                anchor_idx = len(initial_path_cells) - 1
+                if len(initial_path_cells) >= 2:
+                    dists_initial = np.hypot(initial_path_arr[:, 0] - est_pose[0], initial_path_arr[:, 1] - est_pose[1])
+                    nearest_on_initial = int(np.argmin(dists_initial))
+                    lookahead_offset = max(RETURN_REPLAN_ANCHOR_LOOKAHEAD, RETURN_REPLAN_MIN_ADVANCE)
+                    anchor_idx = min(len(initial_path_cells) - 1, nearest_on_initial + lookahead_offset)
+                    if anchor_idx <= nearest_on_initial:
+                        anchor_idx = min(len(initial_path_cells) - 1, nearest_on_initial + RETURN_REPLAN_MIN_ADVANCE)
+                    anchor_cell = tuple(initial_path_cells[anchor_idx])
+                    anchor_path_cells = explorer.plan_path(
+                        occupancy_update,
+                        (current_idx_x_update, current_idx_y_update),
+                        anchor_cell,
+                        safety_distance=float(safety_cells_return),
+                        max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                    )
+
+                updated_path = None
+                if anchor_path_cells and len(anchor_path_cells) >= 2:
+                    updated_path = list(anchor_path_cells)
+                    remainder = initial_path_cells[anchor_idx + 1:]
+                    if remainder:
+                        if updated_path[-1] != anchor_cell:
+                            updated_path.append(anchor_cell)
+                        updated_path.extend(remainder)
+                    if idx % 20 == 0:
+                        print(f"[{label}] 第{idx}步：锚定初始路径第{anchor_idx}个栅格，重规划前缀长度 {len(anchor_path_cells) - 1}")
+                else:
+                    updated_path = explorer.plan_path(
+                        occupancy_update,
+                        (current_idx_x_update, current_idx_y_update),
+                        (start_idx_x, start_idx_y),
+                        safety_distance=float(safety_cells_return),
+                        max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                    )
+                    if updated_path and idx % 20 == 0:
+                        print(f"[{label}] 第{idx}步：回退为完整返程规划，段数 {len(updated_path) - 1}")
 
                 if updated_path and len(updated_path) >= 2:
                     current_path_cells = list(updated_path)
-                    path_pts = []
-                    for cx, cy in current_path_cells:
-                        wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
-                        wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
-                        path_pts.append((wx, wy))
-                    path_arr = np.asarray(path_pts, dtype=float)
+                    path_arr = cells_to_world(current_path_cells)
                     last_replan_idx = idx
-                    if idx % 20 == 0:
-                        print(f"[{label}] 第{idx}步：周期性更新返回路径，当前段数 {len(path_arr)-1}")
                 else:
                     last_replan_idx = idx
 
@@ -1598,7 +1609,7 @@ def main():
                 scan,
                 frontiers=None,
                 target=viz_target_cell,
-                path=path_cells,
+                path=current_path_cells,
                 occupancy=slam.get_occupancy(),
                 predicted_traj=traj,
                 robot_radius=dwa_planner.cfg.robot_radius,
