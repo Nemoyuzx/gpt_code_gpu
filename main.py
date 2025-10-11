@@ -16,10 +16,10 @@ import numpy as np
 # ==================== 系统参数配置 ====================
 # 路径规划参数
 SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
-FRONTIER_SAFETY_DISTANCE = 6  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
+FRONTIER_SAFETY_DISTANCE = 5  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
-MAZE_FILE = "3.json"  # 默认迷宫文件
+MAZE_FILE = "2.json"  # 默认迷宫文件
 ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
@@ -30,14 +30,14 @@ LIDAR_ANGLE_RESOLUTION = 3.0  # 激光雷达角度分辨率（度）：改为每
 LIDAR_NOISE = 0.03  # 激光雷达噪声
 
 # 出口检测参数
-MIN_NO_OBSTACLE_COUNT = 36  # 无障碍点数阈值，超过此数值认为走出迷宫
+MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
 MIN_EXPLORATION_DISTANCE = 60.0  # 最小探索距离阈值
 MIN_FRONTIERS_TO_EXPLORE = 20  # 最小探索前沿数量
 
 # 返程路径容错参数
-RETURN_MAX_UNKNOWN_CELLS = 3  # 允许A*返程路径穿越的未知栅格数量上限
+RETURN_MAX_UNKNOWN_CELLS = 10  # 允许A*返程路径穿越的未知栅格数量上限
 
 # 障碍物区域补扫容错参数
 OBSTACLE_SEARCH_MAX_UNKNOWN_CELLS = 3  # 补扫A*允许穿越的未知栅格数量
@@ -56,7 +56,7 @@ STUCK_V_SMALL = 0.05                # 认为“几乎不前进”的线速度阈
 STUCK_PROGRESS_EPS = 0.10           # 判定窗口内总位移阈值(m)
 STUCK_COOLDOWN_STEPS = 35           # 一次挤出后冷却步数，避免频繁触发
 RECOVERY_STEP_LIMIT = 22            # 挤出模式最多持续步数
-RECOVERY_MIN_ADVANCE = 0.25         # 挤出最小前进距离(m)
+RECOVERY_MIN_ADVANCE = 0.25         # s挤出最小前进距离(m)
 RECOVERY_MAX_ADVANCE = 0.80         # 挤出最大前进距离(m)
 RECOVERY_EXTRA_MARGIN = 0.05        # 在膨胀半径基础上额外预留的安全裕度(m)
 
@@ -72,9 +72,23 @@ FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新�
 FRONTIER_UPDATE_INTERVAL = 2              # 前沿刷新间隔（每两轮刷新一次）
 FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
 
+# 冷却提前解除条件：基于路径进度提前允许刷新
+FRONTIER_COOLDOWN_RELEASE_RATIO = 0.20    # 进度达到该比例即可提前结束冷却
+FRONTIER_COOLDOWN_RELEASE_MIN_REMAIN = 20  # 剩余步数低于该值也提前结束
+FRONTIER_COOLDOWN_EARLY_RELEASE_STEPS = 6 # 冷却维持超过该步数后强制解除
+FRONTIER_COOLDOWN_REENTER_GRACE_STEPS = 12  # 冷却被强制解除后允许的重启宽限步数
+
+# 路径重规划验证参数
+REPLAN_PATH_VALIDATION_SPAN = 20          # 校验当前路径前方多少栅格是否仍安全
+
 # 返程路径节流参数
 RETURN_REPLAN_ANCHOR_LOOKAHEAD = 12  # 返程重规划时在初始路径上向前取的锚点偏移
 RETURN_REPLAN_MIN_ADVANCE = 4        # 返程重规划至少前进的初始路径栅格数
+
+# 补扫阶段可视化与覆盖率阈值
+DFS_VISUALIZATION_ENABLED = False     # 是否展示补扫阶段DFS的逐步可视化
+# 补扫阶段DFS覆盖率阈值（达到则判定无不可达区域）
+DFS_REGION_COVERAGE_THRESHOLD = 0.90
 
 # ==================== 降噪滤波参数 ====================
 # 滤波器总开关
@@ -269,6 +283,8 @@ def main():
     frontier_update_tick = 0
     # 前沿节流控制
     frontier_cooldown_steps = 0
+    frontier_cooldown_elapsed = 0
+    frontier_cooldown_reenter_grace = 0
     current_unknown_neighbor = None  # 保存最近一次前沿搜索得到的未知邻居
     frontier_hint_cell = None        # 用于A*失败或冷却时作为DWA提示/跟随目标
     cooldown_reference_cell = None   # 冷却阶段使用的旧路径参考点
@@ -540,7 +556,8 @@ def main():
     def drive_path_with_dwa_segment(path_cells, label="路径跟随", arrival_tol=0.22,
                                     max_iter_factor=80,
                                     replan_callback=None,
-                                    replan_interval=18):
+                                    replan_interval=18,
+                                    path_safety_cells=None):
         """使用DWA沿给定网格路径行驶，返回是否成功到达。"""
         nonlocal est_pose, scan, total_distance_traveled, step_counter
         if not path_cells or len(path_cells) < 2:
@@ -562,6 +579,24 @@ def main():
         max_iters = max(len(path_arr) * max_iter_factor, 600)
         print(f"[{label}] 使用DWA沿路径前进，共 {len(path_arr)-1} 段，最大步数 {max_iters}")
 
+        def is_path_segment_safe(current_idx, occ_grid):
+            if path_safety_cells is None:
+                return False
+            if not path_cells:
+                return False
+            h, w = occ_grid.shape
+            start_idx = max(0, current_idx)
+            end_idx = min(len(path_cells), current_idx + REPLAN_PATH_VALIDATION_SPAN)
+            for idx_check in range(start_idx, end_idx):
+                cx, cy = path_cells[idx_check]
+                if not (0 <= cy < h and 0 <= cx < w):
+                    return False
+                if occ_grid[cy, cx] == 1:
+                    return False
+                if not explorer._is_safe(occ_grid, cx, cy, safety_distance=path_safety_cells):
+                    return False
+            return True
+
         dwa_planner._last_u = (0.0, 0.0)
         if hasattr(dwa_planner, '_dwell_count'):
             dwa_planner._dwell_count = 0
@@ -572,9 +607,23 @@ def main():
             while viz.paused:
                 plt.pause(VISUALIZATION_PAUSE_TIME)
 
+            loop_label = f"{label}-idx={idx}"
+            loop_start = time.perf_counter()
+            seg_times = []
+            t_section = loop_start
+
+            pause_wait = time.perf_counter() - t_section
+            if pause_wait > 0:
+                seg_times.append(("pause_wait", pause_wait * 1000.0))
+            t_section = time.perf_counter()
+
             est_pose = robot.get_pose()
             dist_to_goal = math.hypot(est_pose[0] - goal_world[0], est_pose[1] - goal_world[1])
+            seg_times.append(("pose_update", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
             if dist_to_goal <= arrival_tol:
+                seg_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+                log_section_times(loop_label, seg_times)
                 print(f"[{label}] 到达目标，终点剩余 {dist_to_goal:.2f}m")
                 return True
 
@@ -586,9 +635,37 @@ def main():
                     goal_cell = path_cells[-1]
                     goal_world = path_arr[-1]
                     last_replan_idx = idx
+                    seg_times.append(("path_replan", (time.perf_counter() - t_section) * 1000.0))
+                    t_section = time.perf_counter()
 
             dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
             nearest_idx = int(np.argmin(dists))
+            if replan_callback and (idx == 0 or (idx - last_replan_idx) >= replan_interval):
+                check_start = time.perf_counter()
+                path_needs_replan = True
+                occ_preview = None
+                if path_safety_cells is not None:
+                    occ_preview = slam.get_occupancy()
+                    path_needs_replan = not is_path_segment_safe(nearest_idx, occ_preview)
+                seg_times.append(("path_check", (time.perf_counter() - check_start) * 1000.0))
+                if path_needs_replan:
+                    replan_start = time.perf_counter()
+                    new_path = replan_callback()
+                    seg_times.append(("path_replan", (time.perf_counter() - replan_start) * 1000.0))
+                    if new_path and len(new_path) >= 2:
+                        path_cells = list(new_path)
+                        path_arr = cells_to_world(path_cells)
+                        goal_cell = path_cells[-1]
+                        goal_world = path_arr[-1]
+                        dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
+                        nearest_idx = int(np.argmin(dists))
+                last_replan_idx = idx
+                t_section = time.perf_counter()
+            else:
+                t_section = time.perf_counter()
+                if replan_callback and idx == 0:
+                    last_replan_idx = idx
+
             lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
             short_term_cell = path_cells[follow_idx]
@@ -614,12 +691,16 @@ def main():
                 maze.resolution,
                 stride=3
             )
+            seg_times.append(("target_prepare", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
             (v_cmd, w_cmd), predicted_traj = dwa_planner.plan(
                 state,
                 (gx, gy),
                 obstacles,
                 path_hint=path_hint_segment
             )
+            seg_times.append(("dwa_plan", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             if v_cmd > 1e-6:
                 dw_max = None
@@ -661,21 +742,32 @@ def main():
                 actual_traj_style=explore_traj_style,
                 extra_trajs=viz_extra
             )
+            seg_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
             if idx % 20 == 0:
                 print(f"[{label}] idx={idx} v={float(v_cmd):.2f} w={float(w_cmd):.2f} d_trans={d_trans:.3f} d_rot={d_rot:.3f}")
             total_distance_traveled += abs(d_trans)
+            seg_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             noisy, clean = lidar.scan(robot.get_pose())
             scan = noisy
             est_pose = slam.update((d_trans, d_rot), scan)
             step_counter += 1
+            seg_times.append(("slam_update", (time.perf_counter() - t_section) * 1000.0))
+            t_section = time.perf_counter()
 
             if math.isclose(v_cmd, 0.0, abs_tol=1e-3) and math.isclose(w_cmd, 0.0, abs_tol=1e-3):
                 if dist_to_goal <= arrival_tol + 0.1:
+                    seg_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+                    log_section_times(loop_label, seg_times)
                     print(f"[{label}] 靠近目标但速度趋近于零，判定到达")
                     return True
+
+            seg_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
+            log_section_times(loop_label, seg_times)
 
         print(f"[{label}] 超过最大步数 {max_iters} 仍未到达目标")
         return False
@@ -688,6 +780,8 @@ def main():
         loop_start = time.perf_counter()
         section_times = []
         t_section = loop_start
+        if frontier_cooldown_reenter_grace > 0:
+            frontier_cooldown_reenter_grace -= 1
         # 2. 采样扫描并更新探索距离条件
         noisy, clean = lidar.scan(robot.get_pose())
         scan = noisy
@@ -721,10 +815,13 @@ def main():
                 cooldown_reference_cell = None
                 frontier_cooldown_steps = 0
                 frontier_hint_cell = None
+                frontier_cooldown_elapsed = 0
+                frontier_cooldown_reenter_grace = FRONTIER_COOLDOWN_REENTER_GRACE_STEPS
 
         # 冷却策略：冷却期暂停A*与前沿刷新；冷却结束时刷新前沿并运行A*
         occupancy = slam.get_occupancy()
         if frontier_cooldown_steps == 0:
+            frontier_cooldown_elapsed = 0
             should_refresh_frontier = False
             if global_path is None or frontier_hint_cell is None:
                 should_refresh_frontier = True
@@ -792,24 +889,80 @@ def main():
                 if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:
                     original_path_steps = len(global_path) - 1
                     cooldown_reference_idx = min(len(global_path) - 1, max(1, FRONTIER_COOLDOWN_REFERENCE_INDEX))
-                    cooldown_reference_cell = global_path[cooldown_reference_idx]
-                    if cooldown_reference_idx < len(global_path) - 1:
-                        global_path = list(global_path[:cooldown_reference_idx + 1])
+                    planned_prefix = list(global_path[:cooldown_reference_idx + 1]) if cooldown_reference_idx < len(global_path) - 1 else list(global_path)
+                    current_path = planned_prefix
+                    global_path = planned_prefix
+                    if frontier_cooldown_reenter_grace <= 0:
+                        cooldown_reference_cell = planned_prefix[-1]
+                        frontier_hint_cell = cooldown_reference_cell
+                        frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
+                        frontier_cooldown_elapsed = 0
+                        frontier_cooldown_reenter_grace = 0
+                        if step_counter % 20 == 0:
+                            print(f"[前沿节流] A*路径过长({original_path_steps}格) -> 冷却 {FRONTIER_COOLDOWN_STEPS} 步，改用旧路径点 {cooldown_reference_cell} (截断后 {len(current_path)-1} 格)")
                     else:
-                        global_path = list(global_path)
-                    current_path = list(global_path)
-                    frontier_hint_cell = cooldown_reference_cell
-                    frontier_cooldown_steps = FRONTIER_COOLDOWN_STEPS
-                    if step_counter % 20 == 0:
-                        print(f"[前沿节流] A*路径过长({original_path_steps}格) -> 冷却 {FRONTIER_COOLDOWN_STEPS} 步，改用旧路径点 {cooldown_reference_cell} (截断后 {len(current_path)-1} 格)")
+                        frontier_hint_cell = planned_prefix[-1]
+                        cooldown_reference_cell = None
+                        frontier_cooldown_steps = 0
+                        frontier_cooldown_elapsed = 0
+                        if step_counter % 20 == 0:
+                            print(
+                                f"[前沿节流] A*路径过长({original_path_steps}格) 但处于宽限期(剩余 {frontier_cooldown_reenter_grace} 步)，跳过冷却"
+                            )
             else:
                 if step_counter % 20 == 0:
                     print("[前沿刷新] 按照间隔策略跳过本轮前沿更新，沿用既有路径。")
         else:
             # 冷却中：不刷新前沿、不运行A*，仅递减计数器并沿旧提示/路径前进
+            frontier_cooldown_elapsed += 1
             frontier_cooldown_steps = max(0, frontier_cooldown_steps - 1)
             frontier_update_tick = 0
-            if step_counter % 20 == 0:
+            release_reason = None
+            release_hint_cell = None
+            if current_path and len(current_path) >= 2:
+                # 根据当前靠近的路径索引判断进度
+                nearest_idx = 0
+                min_d2 = 1e18
+                for i, (px, py) in enumerate(current_path):
+                    dx = px - rx_idx
+                    dy = py - ry_idx
+                    d2 = dx * dx + dy * dy
+                    if d2 < min_d2:
+                        min_d2 = d2
+                        nearest_idx = i
+                path_steps = len(current_path) - 1
+                remaining_steps = max(0, path_steps - nearest_idx)
+                progress_ratio = nearest_idx / max(1, path_steps)
+                if frontier_cooldown_steps > 0 and (
+                    progress_ratio >= FRONTIER_COOLDOWN_RELEASE_RATIO or
+                    remaining_steps <= FRONTIER_COOLDOWN_RELEASE_MIN_REMAIN
+                ):
+                    release_reason = f"已沿截断路径前进 {progress_ratio*100:.1f}% (剩余 {remaining_steps} 格)"
+                    release_hint_cell = current_path[min(len(current_path) - 1, nearest_idx + 1)]
+            else:
+                nearest_idx = 0
+                remaining_steps = 0
+                progress_ratio = 0.0
+
+            if release_reason is None and frontier_cooldown_steps > 0 and \
+                    frontier_cooldown_elapsed >= FRONTIER_COOLDOWN_EARLY_RELEASE_STEPS:
+                release_reason = (
+                    f"冷却已持续 {frontier_cooldown_elapsed} 步 (阈值 {FRONTIER_COOLDOWN_EARLY_RELEASE_STEPS})"
+                )
+                if current_path and len(current_path) >= 2:
+                    release_hint_cell = current_path[min(len(current_path) - 1, nearest_idx + 1)]
+                elif frontier_hint_cell is not None:
+                    release_hint_cell = frontier_hint_cell
+
+            if release_reason is not None:
+                cooldown_reference_cell = None
+                frontier_cooldown_steps = 0
+                frontier_cooldown_elapsed = 0
+                frontier_cooldown_reenter_grace = FRONTIER_COOLDOWN_REENTER_GRACE_STEPS
+                if release_hint_cell is not None:
+                    frontier_hint_cell = release_hint_cell
+                print(f"[前沿节流] {release_reason}，提前解除冷却")
+            if frontier_cooldown_steps > 0 and step_counter % 20 == 0:
                 if current_path:
                     msg_len = f"旧A*路径长度={len(current_path)-1}格，使用旧路径提示"
                 elif frontier_hint_cell is not None:
@@ -1139,9 +1292,14 @@ def main():
                     return clamp_x, clamp_y
                 visited_subtargets = set()
                 next_start_cell = None
+                coverage_sufficient = False
                 while True:
                     sweep_section_times = []
                     sweep_t0 = time.perf_counter()
+
+                    def finish_logging(tag="补扫阶段-循环"):
+                        sweep_section_times.append(("total_loop", (time.perf_counter() - sweep_t0) * 1000.0))
+                        log_section_times(tag, sweep_section_times)
                     occupancy = slam.get_occupancy()
                     bounds_idx, bounds_world = compute_obstacle_search_bounds(occupancy)
                     if not (bounds_idx and bounds_world):
@@ -1166,10 +1324,13 @@ def main():
                     sweep_section_times.append(("origin_prepare", (time.perf_counter() - sweep_t0) * 1000.0))
 
                     bfs_debug_cells = []
-                    viz.set_bfs_debug_points(None)
                     bfs_debug_state = {"reported": 0}
+                    if DFS_VISUALIZATION_ENABLED:
+                        viz.set_bfs_debug_points(None)
 
                     def bfs_debug_callback(cells):
+                        if not DFS_VISUALIZATION_ENABLED:
+                            return
                         viz.set_bfs_debug_points(cells, color='cyan')
                         viz.update(
                             robot.get_pose(),
@@ -1205,31 +1366,53 @@ def main():
                     )
                     sweep_section_times.append(("dfs_search", (time.perf_counter() - sweep_t0) * 1000.0))
 
-                    if bfs_debug_cells:
-                        print(f"[BFS Debug] 搜索结束，共记录 {len(bfs_debug_cells)} 个栅格")
-                        viz.set_bfs_debug_points(bfs_debug_cells, color='cyan')
-                    else:
-                        viz.set_bfs_debug_points(None)
+                    if DFS_VISUALIZATION_ENABLED:
+                        if bfs_debug_cells:
+                            print(f"[BFS Debug] 搜索结束，共记录 {len(bfs_debug_cells)} 个栅格")
+                            viz.set_bfs_debug_points(bfs_debug_cells, color='cyan')
+                        else:
+                            viz.set_bfs_debug_points(None)
 
-                    viz.update(
-                        robot.get_pose(),
-                        scan,
-                        frontiers=None,
-                        target=None,
-                        path=None,
-                        occupancy=slam.get_occupancy(),
-                        actual_traj=robot.trajectory,
-                        actual_traj_style=explore_traj_style
-                    )
-                    if bfs_debug_cells:
-                        plt.pause(0.6)
+                        viz.update(
+                            robot.get_pose(),
+                            scan,
+                            frontiers=None,
+                            target=None,
+                            path=None,
+                            occupancy=slam.get_occupancy(),
+                            actual_traj=robot.trajectory,
+                            actual_traj_style=explore_traj_style
+                        )
+                        if bfs_debug_cells:
+                            plt.pause(0.6)
+
+                    coverage_eval_start = time.perf_counter()
+                    region_slice = occupancy_for_search
+                    traversable_cells = int(np.count_nonzero(region_slice != 1))
+                    if bounds_idx:
+                        min_bx, max_bx, min_by, max_by = bounds_idx
+                        region_slice = occupancy_for_search[min_by:max_by + 1, min_bx:max_bx + 1]
+                        traversable_cells = int(np.count_nonzero(region_slice != 1))
+                    traversable_cells = max(1, traversable_cells)
+                    visited_unique = {(vx, vy) for vx, vy in bfs_debug_cells
+                                      if 0 <= vy < occupancy_for_search.shape[0] and 0 <= vx < occupancy_for_search.shape[1]}
+                    visited_traversable = sum(1 for vx, vy in visited_unique if occupancy_for_search[vy, vx] != 1)
+                    coverage_ratio = visited_traversable / traversable_cells
+                    sweep_section_times.append(("coverage_eval", (time.perf_counter() - coverage_eval_start) * 1000.0))
+                    if coverage_ratio >= DFS_REGION_COVERAGE_THRESHOLD:
+                        print(f"DFS补扫覆盖率达到 {coverage_ratio*100:.1f}% (阈值 {DFS_REGION_COVERAGE_THRESHOLD*100:.0f}%)，判定障碍区域已充分探索，直接返回起点。")
+                        coverage_sufficient = True
+                        finish_logging("补扫阶段-覆盖完成")
+                        break
 
                     if not (bfs_target and bfs_path and len(bfs_path) > 1):
                         print("障碍区域内没有更多符合条件的未知前沿，结束补扫阶段。")
+                        finish_logging("补扫阶段-无前沿")
                         break
 
                     if bfs_target in visited_subtargets:
                         print(f"目标 {bfs_target} 已尝试过，跳过并继续搜索下一个未知点。")
+                        finish_logging("补扫阶段-重复目标")
                         continue
 
                     print(f"BFS在障碍物区域内找到可达目标 {bfs_target}，路径长度 {len(bfs_path)-1} 步")
@@ -1269,18 +1452,19 @@ def main():
                         if strict_path:
                             path_to_follow = strict_path
                         else:
-                            print("A* 无法直达补扫目标，补扫阶段改为直接返回起点。")
+                            print("A* 无法直达补扫目标，继续搜索其他未知候选。")
                             path_to_follow = None
 
                     viz.set_bfs_debug_points(None)
                     if path_to_follow is None or len(path_to_follow) < 2:
-                        print("补扫阶段未找到满足安全距离的有效路径，直接返回起点。")
+                        print("补扫阶段未找到满足安全距离的有效路径，继续搜索其他候选。")
                         visited_subtargets.add(effective_target)
                         next_start_cell = None
                         sweep_section_times.append(("path_planning", (time.perf_counter() - sweep_t0) * 1000.0))
-                        sweep_section_times.append(("total_loop", (time.perf_counter() - sweep_t0) * 1000.0))
-                        log_section_times("补扫阶段-无路径", sweep_section_times)
-                        break
+                        finish_logging("补扫阶段-无路径")
+                        if coverage_sufficient:
+                            break
+                        continue
 
                     def replanner():
                         occ_latest = slam.get_occupancy().copy()
@@ -1304,7 +1488,8 @@ def main():
                     reached = drive_path_with_dwa_segment(
                         path_to_follow,
                         label="障碍补扫路径",
-                        replan_callback=replanner
+                        replan_callback=replanner,
+                        path_safety_cells=safety_cells
                     )
                     sweep_section_times.append(("dwa_follow", (time.perf_counter() - sweep_t0) * 1000.0))
 
@@ -1316,8 +1501,9 @@ def main():
                         print("补扫路径未能成功完成，返回起点前请留意地图覆盖情况")
                         visited_subtargets.add(effective_target)
                         next_start_cell = None
-                    sweep_section_times.append(("total_loop", (time.perf_counter() - sweep_t0) * 1000.0))
-                    log_section_times("补扫阶段-循环", sweep_section_times)
+                    finish_logging()
+                    if coverage_sufficient:
+                        break
                 else:
                     print("在指定障碍物区域内未找到满足安全距离的可达前沿，直接返回起点")
                     if bfs_debug_cells:

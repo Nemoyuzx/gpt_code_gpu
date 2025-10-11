@@ -1,5 +1,4 @@
 import math
-import time
 import numpy as np
 from dataclasses import dataclass
 from typing import Tuple
@@ -10,17 +9,8 @@ from collections import deque
 class DWAConfig:
     """DWA 参数总览（手动调参指南 - 精简版）
 
-         # 叠加路径贴合方向作为"小角度"判据（A*仅作方向提示，不改变终点）
-        self._path_align_diff_for_dw = math.inf
-        # 预处理路径提示：避免在采样循环中重复计算
-        self._path_hint_cache = None
-        if path_hint is not None and len(path_hint) >= 2:
-            # 以当前姿态评估与路径切向的夹角
-            cur_end_state = np.array([state[0], state[1], state[2], state[3], state[4]], dtype=float)
-            pa, _, _ = self._path_hint_components(cur_end_state, np.asarray(path_hint, dtype=float))
-            self._path_align_diff_for_dw = pa
-            # 预计算路径段向量，减少循环中的重复计算
-            self._path_hint_cache = self._precompute_path_segments(np.asarray(path_hint, dtype=float))    - 速度单位 m/s，角速度 rad/s，角度 rad，时间 s，距离 m。
+    约定：
+    - 速度单位 m/s，角速度 rad/s，角度 rad，时间 s，距离 m。
     - 机器人半径 robot_radius 与安全间隙 safety_clearance 一起决定“膨胀半径”。
     - 若出现“减速不及时/打滑感”，优先调整 max_accel、brake_*、smoothing_alpha。
     
@@ -28,39 +18,39 @@ class DWAConfig:
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
     max_speed: float = 1.0  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
-    min_speed: float = -1.0  # 默认禁倒车（如需倒车可设为负）。
-    max_yaw_rate: float = 120.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
-    max_accel: float = 1.2  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
-    max_delta_yaw_rate: float = 120.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
+    min_speed: float = -1.0 # 默认禁倒车（如需倒车可设为负）。
+    max_yaw_rate: float = 140.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
+    max_accel: float = 1.0  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_delta_yaw_rate: float = 140.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
     v_resolution: float = 0.05  # 速度采样步长。越小越细但更慢；常取 0.03~0.06。
-    yaw_rate_resolution: float = 0.5 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
+    yaw_rate_resolution: float = 1.0 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
     dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
-    predict_time: float = 1.4  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
+    predict_time: float = 1.1  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
     to_goal_cost_gain: float = 0.6  # 目标朝向代价权重。大→更快对准目标方向。
-    to_goal_dist_cost_gain: float = 0.2  # 目标距离代价权重。大→更偏好缩短终点距离。
+    to_goal_dist_cost_gain: float = 0.25  # 目标距离代价权重。大→更偏好缩短终点距离。
     speed_cost_gain: float = 0.40  # 降低速度奖励，避免“速度至上”。
-    obstacle_cost_gain: float = 0.8  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
-    rotation_cost_gain: float = 0.35  # 更鼓励转向（配合小半径转弯）。
-    progress_cost_gain: float = 1.0  # 更注重向目标推进。
+    obstacle_cost_gain: float = 0.6  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
+    rotation_cost_gain: float = 0.18  # 更鼓励转向（配合小半径转弯）。
+    progress_cost_gain: float = 2.8  # 更注重向目标推进。
     change_yaw_cost_gain: float = 0.4  # 角速度变化代价。大→更平滑，不易“抖动”。
-    smoothing_alpha: float = 0.6  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
+    smoothing_alpha: float = 0.5  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
     small_angle: float = 10.0 * math.pi / 180.0  # 认为“已较好对齐”的角度阈值，用于若干条件。
     small_angle_rot_scale: float = 3.0  # 小角度时增加旋转代价的比例，鼓励直行。
     robot_radius: float = 0.3  # 机器人半径(m)。与地图分辨率/真实底盘匹配。
     stuck_vel: float = 0.01  # 判定“卡住”的速度阈值。
-    safety_clearance: float = 0.3  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
+    safety_clearance: float = 0.25  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
     clearance_cost_gain: float = 3.0  # 接近膨胀半径时的代价权重。大→更远离墙。
-    spin_penalty_gain: float = 0.3  # 适度降低自旋惩罚，结合转向更灵活。
-    min_forward_ratio: float = 0.15  # 小角度时最低前进速度占比。
-    near_wall_threshold: float = 0.6  # 判定“靠墙”的gap阈值(m)。
-    near_wall_rot_boost: float = 0.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
-    near_wall_forward_bias_gain: float = 0.8  # 靠墙且前进速度不足时的附加惩罚增益。
+    spin_penalty_gain: float = 0.35  # 适度降低自旋惩罚，结合转向更灵活。
+    min_forward_ratio: float = 0.20  # 小角度时最低前进速度占比。
+    near_wall_threshold: float = 0.18  # 判定“靠墙”的gap阈值(m)。
+    near_wall_rot_boost: float = 2.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
+    near_wall_forward_bias_gain: float = 1.0  # 靠墙且前进速度不足时的附加惩罚增益。
     align_deadband: float = 3.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
     forward_bias_min_disp: float = 0.01  # 预测末端位移阈值。位移很小却大旋转→惩罚。
     forward_bias_cost_gain: float = 1.2  # 上述惩罚权重。
     debug: bool = False  # 打印内部组件代价与状态。
     # 动态窗口打印
-    dw_debug: bool = False           # 是否定期打印动态窗口范围
+    dw_debug: bool = True            # 是否定期打印动态窗口范围
     dw_log_interval: int = 10         # 打印间隔步数
     dwell_penalty_gain: float = 0.3  # 长时间低速/停滞惩罚增益。
     dwell_speed_threshold: float = 0.05  # 低于该速度计入“滞留”。
@@ -77,48 +67,46 @@ class DWAConfig:
     # 角度偏转减速：当朝向与目标方向存在较大偏差时降低允许前进最大速度
     turn_slow_angle: float = 15.0 * math.pi / 180.0  # 超过该角度开始对前进速度降额。
     turn_min_speed_scale: float = 0.08  # 在最大朝向偏差(≈pi)时的最大速度比例。
-    turn_debug: bool = False  # 打印转向减速信息。
+    turn_debug: bool = True  # 打印转向减速信息。
     # ---- 反复前后抖动抑制相关配置 ----
     allow_reverse: bool = True  # 是否允许倒车（全局开关）。
-    reverse_heading_threshold: float = 40.0 * math.pi/180.0  # 与目标方向夹角大于该值时才考虑倒车。
-    reverse_clearance_threshold: float = 0.45  # 前向清距不足时更倾向倒车（米）。
-    oscillation_window_steps: int = 20  # 振荡检测窗口长度（步）。
+    reverse_heading_threshold: float = 50.0 * math.pi/180.0  # 与目标方向夹角大于该值时才考虑倒车。
+    reverse_clearance_threshold: float = 0.28  # 前向清距不足时更倾向倒车（米）。
+    oscillation_window_steps: int = 14  # 振荡检测窗口长度（步）。
     oscillation_disp_epsilon: float = 0.18  # 振荡判定位移阈值。
     oscillation_min_switches: int = 4  # 振荡判定的最小方向切换次数。
     oscillation_block_reverse_cycles: int = 60  # 检出振荡后禁倒车的持续步数。
     # ---- 前向清距配置 ----
     front_clear_cone_deg: float = 50.0  # 前向清距的视场角度(度)。
     # ---- 倒车转向优化 ----
-    reverse_rot_cost_scale: float = 0.5  # 倒车时旋转代价缩放(<1 更易大角度转向)。
+    reverse_rot_cost_scale: float = 0.6  # 倒车时旋转代价缩放(<1 更易大角度转向)。
     reverse_min_speed_scale: float = 0.4  # 倒车允许的最小速度过滤比例缩放。
-    reverse_spin_penalty_scale: float = 0.5  # 倒车时对“打转”惩罚的缩放。
-    reverse_turn_bonus_gain: float = 0.3  # 倒车+较大角速度的奖励(降低总cost)。
+    reverse_spin_penalty_scale: float = 0.6  # 倒车时对“打转”惩罚的缩放。
+    reverse_turn_bonus_gain: float = 0.15  # 倒车+较大角速度的奖励(降低总cost)。
     # ---- 直接倒车支持 ----
     direct_reverse_enabled: bool = True  # 默认开启直接倒车。
-    direct_reverse_gap_threshold: float = 0.2  # 直接倒车的gap阈值。
-    direct_reverse_reward_gain: float = 1.5  # 直接倒车奖励权重（降低）。
-
+    direct_reverse_gap_threshold: float = 0.38  # 直接倒车的gap阈值。
+    direct_reverse_reward_gain: float = 0.3  # 直接倒车奖励权重（降低）。
+    # 已移除脱困模式
     disable_fallback: bool = True  # 禁用 fallback；失败时改为放宽过滤重采样。
     reverse_no_heading_gate: bool = True  # 允许倒车不受朝向阈值限制。
     # ---- 方向切换锐化 ----
     direction_switch_skip_smoothing: bool = True  # 线速度正负切换时跳过平滑，立即响应。
-    reverse_initial_speed: float = 0.05  # 首次倒车的最小速度幅度。
-    reverse_sign_change_boost_factor: float = 1.5  # 前进→倒车时的负向加速度放大量。
-    direction_switch_cost_gain: float = 0.1  # 方向切换惩罚。
+    reverse_initial_speed: float = 0.25  # 首次倒车的最小速度幅度。
+    reverse_sign_change_boost_factor: float = 5.0  # 前进→倒车时的负向加速度放大量。
+    direction_switch_cost_gain: float = 0.25  # 方向切换惩罚。
     # ---- 倒车对称化与灵活性增强 ----
     reverse_equal_speed: bool = False  # 默认不与前进对称。
-    reverse_accel_factor: float = 1.0  # 倒车加速度放大倍数(×max_accel)。
-    reverse_turn_rate_factor: float = 1.2  # 倒车阶段角速度倍率（已禁用，见_calc_dynamic_window）。
-    reverse_rot_cost_scale_extra: float = 1.0  # 倒车时额外的旋转代价缩放(与已有乘积)，改为1.0使倒车和前进转向代价相同。
+    reverse_accel_factor: float = 2.0  # 倒车加速度放大倍数(×max_accel)。
+    reverse_turn_rate_factor: float = 1.4  # 倒车阶段角速度倍率。
+    reverse_rot_cost_scale_extra: float = 0.75  # 倒车时额外的旋转代价缩放(与已有乘积)。
     reverse_allow_low_speed_small_angle: bool = False  # 小角度下不鼓励低速倒车。
     # 倒车微幅死区：抑制 |v| 很小的“试探性倒车”（非直接倒车场景）
     reverse_deadband: float = 0.12  # 低于该幅度的负速度将被过滤或钳制
-    reverse_deadband_turn_angle_deg: float = 25.0  # 朝向误差超过该角度时放宽倒车死区
-    reverse_deadband_turn_w: float = 0.25  # 角速度超过该阈值时放宽倒车死区
     # ---- 倒车->前进 制动/切换优化 ----
-    reverse_brake_boost_factor: float = 2.0  # 倒车→前进时允许更大正向加速度以快速刹停。
-    reverse_continue_penalty_gain: float = 0.8  # 已对齐仍倒车的惩罚。
-    reverse_reward_angle_gate_deg: float = 6.0  # 角度误差阈值(度)，小于此不再奖励倒车。
+    reverse_brake_boost_factor: float = 4.0  # 倒车→前进时允许更大正向加速度以快速刹停。
+    reverse_continue_penalty_gain: float = 1.2  # 已对齐仍倒车的惩罚。
+    reverse_reward_angle_gate_deg: float = 8.0  # 角度误差阈值(度)，小于此不再奖励倒车。
     # ---- 前进优先 / 启动阶段策略 ----
     initial_no_reverse_steps: int = 0  # 启动阶段不额外禁倒车（已整体禁倒车）。
     forward_pref_angle_deg: float = 40.0  # 角度小于该值时偏好前进而非倒车。
@@ -126,27 +114,27 @@ class DWAConfig:
     forward_pref_cost_gain: float = 0.0  # 违反前进偏好(仍倒车)的惩罚增益（禁用）。
     forward_pref_initial_gain: float = 2.0  # 启动阶段的附加惩罚倍增。
     # ---- 墙距奖励（越远离墙奖励越大；靠墙奖励越低/甚至无） ----
-    wall_reward_gain: float = 0.9           # 墙距奖励增益（加入为负成本，数值越大越鼓励离墙）
+    wall_reward_gain: float = 0.6           # 墙距奖励增益（加入为负成本，数值越大越鼓励离墙）
     wall_reward_max_gap: float = 0.6        # 超过该净空(gap)视为满奖励，上限封顶（米）
     wall_reward_power: float = 1.0          # 奖励幂次（>1使靠墙时奖励增长更慢，<1更快）
     # ---- 原地旋转策略（在大偏角或前向净空较小时，允许 v≈0 进行就地转向） ----
     enable_inplace_rotation: bool = True    # 打开原地旋转
-    inplace_angle_deg: float = 15.0         # 当与目标方向夹角超过该值时触发
-    inplace_gap_thresh: float = 0.5        # 或当前前向净空(gap)小于该阈值时触发
-    inplace_rot_cost_scale: float = 0.5     # 触发时降低旋转代价（<1）
+    inplace_angle_deg: float = 25.0         # 当与目标方向夹角超过该值时触发
+    inplace_gap_thresh: float = 0.35        # 或当前前向净空(gap)小于该阈值时触发
+    inplace_rot_cost_scale: float = 0.7     # 触发时降低旋转代价（<1）
     inplace_spin_penalty_scale: float = 0.6 # 触发时降低打转惩罚（<1）
     # ---- 预测制动（提升减速及时性） ----
     brake_enable: bool = True                        # 开启基于前向净空的速度上界裁剪
     brake_react_time: float = 0.1                    # 反应时间(s)，v*treact
-    brake_margin_m: float = 0.3                    # 额外安全裕度(m)
-    brake_decel_factor: float = 1.3                  # 相对 max_accel 的制动放大倍数
+    brake_margin_m: float = 0.12                     # 额外安全裕度(m)
+    brake_decel_factor: float = 1.2                  # 相对 max_accel 的制动放大倍数
     brake_skip_smoothing: bool = True                # 制动时跳过线速度平滑
     brake_drop_threshold: float = 0.15               # 需要降速超过该阈值则跳过平滑
     brake_debug: bool = False                        # 打印制动信息
     # ---- 全局路径贴合（仅作方向提示，不改变终点） ----
-    path_align_gain: float = 0.5      # 和路径切向对齐的角度代价权重
+    path_align_gain: float = 0.6      # 和路径切向对齐的角度代价权重
     path_deviation_gain: float = 0.8  # 相对路径的横向偏差（米）代价权重
-    path_progress_gain: float = 0.3   # 可选：沿路径前进的奖励（默认关闭）
+    path_progress_gain: float = 0.0   # 可选：沿路径前进的奖励（默认关闭）
     # ---- 实现中用到的通用阈值（统一收口，消除魔法数） ----
     # 倒车判定/采样与惩罚相关的小阈值
     reverse_sample_eps: float = 0.01     # 采样/判定倒车使用的速度阈值(|v|>eps 才视作倒车)
@@ -155,7 +143,7 @@ class DWAConfig:
     align_yaw_rate_mult: float = 1.5     # 与 yaw_rate_resolution 的倍乘系数
     align_small_speed_frac: float = 0.05 # 小角度场景下认为“速度很小”的比例阈值(×max_speed)
     # 前进偏置/转弯奖励阈值
-    forward_bias_w_thresh: float = 0.1   # 位移很小却大旋转的角速度阈值(rad/s)
+    forward_bias_w_thresh: float = 0.2   # 位移很小却大旋转的角速度阈值(rad/s)
     reverse_turn_bonus_w: float = 0.3    # 倒车转弯奖励的角速度阈值(rad/s)
     reverse_turn_bonus_v: float = 0.05   # 倒车转弯奖励的速度幅度阈值(|v|>此值)
     # 自旋惩罚中的速度偏置，避免除零
@@ -185,18 +173,12 @@ class DWAPlanner:
         self.last_dw = None  # [v_min, v_max, w_min, w_max]
         self.last_dw_detail = None  # 记录Vs/Vd/制动上限等细节
         self._last_brake_v_cap = None
-        self.last_timing = {}
-        self._obs_local_cache = None  # 缓存当前周期的局部障碍点
-        self._path_hint_cache = None  # 缓存预计算的路径段信息
 
     def plan(self, state: np.ndarray, goal: Tuple[float, float], obstacles: np.ndarray, path_hint: np.ndarray | None = None):
         """核心规划：返回平滑后的控制 (v, w) 及最佳轨迹。"""
-        start_time = time.perf_counter()
-        timing = {}
         if not hasattr(self, '_global_step'):
             self._global_step = 0
-        # --- 1. 前向清距 & 动态窗口 ---
-        precalc_start = start_time
+    # --- 1. 前向清距 & 动态窗口 ---
         self._front_clearance_cache = self._front_clearance(state, obstacles)
         self._front_gap_cache = self._front_clearance_cache - self.cfg.robot_radius
         gdx = goal[0] - state[0]; gdy = goal[1] - state[1]
@@ -206,25 +188,14 @@ class DWAPlanner:
         self._heading_diff_for_dw = heading_diff
         # 叠加路径贴合方向作为“小角度”判据（A*仅作方向提示，不改变终点）
         self._path_align_diff_for_dw = math.inf
-        self._path_hint_cache = None
-        if path_hint is not None:
-            try:
-                path_hint_arr = np.asarray(path_hint, dtype=float)
-            except Exception:
-                path_hint_arr = None
-            if path_hint_arr is not None and path_hint_arr.ndim == 2 and len(path_hint_arr) >= 2:
-                # 以当前姿态评估与路径切向的夹角
-                cur_end_state = np.array([state[0], state[1], state[2], state[3], state[4]], dtype=float)
-                pa, _, _ = self._path_hint_components(cur_end_state, path_hint_arr)
-                self._path_align_diff_for_dw = pa
-                self._path_hint_cache = self._precompute_path_segments(path_hint_arr)
+        if path_hint is not None and len(path_hint) >= 2:
+            # 以当前姿态评估与路径切向的夹角
+            cur_end_state = np.array([state[0], state[1], state[2], state[3], state[4]], dtype=float)
+            pa, _, _ = self._path_hint_components(cur_end_state, np.asarray(path_hint, dtype=float))
+            self._path_align_diff_for_dw = pa
         # 直接倒车区域判定（前向gap不足）
         direct_reverse_zone = (self.cfg.direct_reverse_enabled and self._front_gap_cache < self.cfg.direct_reverse_gap_threshold)
-        timing['pre_calc'] = (time.perf_counter() - precalc_start) * 1000.0
-        dw_start = time.perf_counter()
         dw = self._calc_dynamic_window(state)
-        timing['dynamic_window'] = (time.perf_counter() - dw_start) * 1000.0
-        self._prepare_local_obstacles(state, obstacles)
 
         best_cost = float('inf')
         best_u = (0.0, 0.0)
@@ -237,21 +208,6 @@ class DWAPlanner:
         gdy = goal[1] - start_y
         gdist = math.hypot(gdx, gdy) + 1e-9
         gdir = (gdx / gdist, gdy / gdist)
-        forward_pref_angle_rad = math.radians(self.cfg.forward_pref_angle_deg)
-        reverse_reward_angle_rad = math.radians(self.cfg.reverse_reward_angle_gate_deg)
-        reverse_deadband_angle_rad = math.radians(self.cfg.reverse_deadband_turn_angle_deg)
-        reverse_deadband_w = self.cfg.reverse_deadband_turn_w
-        align_yaw_rate_thresh = self.cfg.yaw_rate_resolution * self.cfg.align_yaw_rate_mult
-        align_small_speed = self.cfg.align_small_speed_frac * self.cfg.max_speed
-        min_forward_speed = self.cfg.min_forward_ratio * self.cfg.max_speed
-        reverse_min_speed = min_forward_speed * self.cfg.reverse_min_speed_scale
-        small_angle = self.cfg.small_angle
-        small_angle_loose = small_angle * 0.7
-        reverse_sample_eps = self.cfg.reverse_sample_eps
-        inplace_angle_rad = math.radians(self.cfg.inplace_angle_deg)
-        # 预计算循环内常量
-        inflated_r = self.cfg.robot_radius + self.cfg.safety_clearance
-        robot_radius = self.cfg.robot_radius
 
         # --- 2. 转向减速 ---
         if self.cfg.turn_slow_angle > 0:
@@ -267,107 +223,62 @@ class DWAPlanner:
 
         any_candidate = False
         dynamic_allow_reverse = self.cfg.allow_reverse and self._reverse_block_count <= 0
-        sample_main_start = time.perf_counter()
-        v_samples = np.arange(dw[0], dw[1] + 1e-9, self.cfg.v_resolution)
-        w_samples = np.arange(dw[2], dw[3] + 1e-9, self.cfg.yaw_rate_resolution)
-        if v_samples.size == 0:
-            v_samples = np.array([dw[0]])
-        if w_samples.size == 0:
-            w_samples = np.array([dw[2]])
-        
-        # 性能分析计数器
-        timing['sample_traj_pred'] = 0.0
-        timing['sample_goal_cost'] = 0.0
-        timing['sample_obs_cost'] = 0.0
-        timing['sample_other_costs'] = 0.0
-        timing['sample_filter'] = 0.0
-        sample_count = 0
 
         # --- 3. 采样评估 ---
-        for v in v_samples:
-            for w in w_samples:
-                sample_count += 1
-                t_traj = time.perf_counter()
+        for v in np.arange(dw[0], dw[1] + 1e-9, self.cfg.v_resolution):
+            for w in np.arange(dw[2], dw[3] + 1e-9, self.cfg.yaw_rate_resolution):
                 traj = self._predict_trajectory(state, v, w)
-                timing['sample_traj_pred'] += (time.perf_counter() - t_traj) * 1000.0
-                
-                t_goal = time.perf_counter()
                 ang_c, dist_c = self._goal_cost(traj, goal)
-                timing['sample_goal_cost'] += (time.perf_counter() - t_goal) * 1000.0
-                
-                t_obs = time.perf_counter()
                 obs_min_dist, obs_raw_cost = self._obstacle_cost_components(traj, obstacles)
-                timing['sample_obs_cost'] += (time.perf_counter() - t_obs) * 1000.0
-                
-                # 早期碰撞检测：提前退出
-                t_filter = time.perf_counter()
-                if obs_min_dist <= robot_radius:
-                    timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                    continue
                 # 倒车约束
                 if v < 0:
                     if not dynamic_allow_reverse:
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                         continue
                     # 倒车死区：非直接倒车区域内，过滤微幅倒车，避免 v≈-0.05~-0.10 抖动
-                    allow_small_reverse = (
-                        direct_reverse_zone or
-                        abs(w) >= reverse_deadband_w or
-                        ang_c >= reverse_deadband_angle_rad
-                    )
-                    if (abs(v) < self.cfg.reverse_deadband) and not allow_small_reverse:
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                    if (abs(v) < self.cfg.reverse_deadband) and not direct_reverse_zone:
                         continue
                     # 小角度且前向净空充足时，采样阶段也直接忽略倒车（双重保护）
-                    small_heading = (heading_diff < forward_pref_angle_rad)
-                    small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < forward_pref_angle_rad)
+                    small_heading = (heading_diff < math.radians(self.cfg.forward_pref_angle_deg))
+                    small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < math.radians(self.cfg.forward_pref_angle_deg))
                     if ((small_heading or small_path_align) and 
                         self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                         continue
                     if (not self.cfg.reverse_no_heading_gate and 
                         (ang_c < self.cfg.reverse_heading_threshold and obs_min_dist > (self.cfg.robot_radius + self.cfg.reverse_clearance_threshold))):
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                         continue
                 # 小角度大转速过滤
                 if (
                     ang_c < self.cfg.align_deadband
-                    and abs(w) > align_yaw_rate_thresh
-                    and v > -reverse_sample_eps
-                    and abs(v) < align_small_speed
+                    and abs(w) > self.cfg.yaw_rate_resolution * self.cfg.align_yaw_rate_mult
+                    and v > -self.cfg.reverse_sample_eps
+                    and abs(v) < self.cfg.align_small_speed_frac * self.cfg.max_speed
                 ):
-                    timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                     continue
-                if ang_c < small_angle_loose:
-                    base_need = 0.5 * min_forward_speed
+                if ang_c < self.cfg.small_angle * 0.7:
+                    base_need = 0.5 * self.cfg.min_forward_ratio * self.cfg.max_speed
                     if v >= 0:
                         if abs(v) < base_need:
-                            timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                             continue
                     else:
                         if not self.cfg.reverse_allow_low_speed_small_angle:
-                            need_rev = 0.5 * reverse_min_speed
+                            need_rev = base_need * self.cfg.reverse_min_speed_scale
                             if abs(v) < need_rev:
-                                timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                                 continue
-                timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                
-                t_other = time.perf_counter()
                 any_candidate = True
 
                 to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
                 speed_c = self.cfg.speed_cost_gain * (self.cfg.max_speed - abs(traj[-1, 3]))
-                if v < -reverse_sample_eps:
+                if v < -self.cfg.reverse_sample_eps:
                     give_reward = True
                     # 若与目标方向角度已很小则不再奖励倒车
-                    if ang_c < reverse_reward_angle_rad:
+                    if ang_c < math.radians(self.cfg.reverse_reward_angle_gate_deg):
                         give_reward = False
                     if direct_reverse_zone and give_reward:
                         speed_c -= self.cfg.direct_reverse_reward_gain * (-v)
                 # 前进偏好代价：小角度且gap充足仍倒车
                 forward_pref_c = 0.0
-                if v < -reverse_sample_eps:
-                    if (ang_c < forward_pref_angle_rad and 
+                if v < -self.cfg.reverse_sample_eps:
+                    if (ang_c < math.radians(self.cfg.forward_pref_angle_deg) and 
                         self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
                         gain = self.cfg.forward_pref_cost_gain
                         if self._global_step < self.cfg.initial_no_reverse_steps:
@@ -377,8 +288,11 @@ class DWAPlanner:
                 if self.cfg.obstacle_cost_cap > 0:
                     scaled_obs_raw = min(scaled_obs_raw, self.cfg.obstacle_cost_cap)
                 obs_c = self.cfg.obstacle_cost_gain * scaled_obs_raw
-                if obs_min_dist < inflated_r and obs_min_dist > robot_radius:
+                inflated_r = self.cfg.robot_radius + self.cfg.safety_clearance
+                if obs_min_dist < inflated_r and obs_min_dist > self.cfg.robot_radius:
                     clearance_c = self.cfg.clearance_cost_gain * ((inflated_r - obs_min_dist) / inflated_r)
+                elif obs_min_dist <= self.cfg.robot_radius:
+                    clearance_c = float('inf')
                 else:
                     clearance_c = 0.0
                 rot_scale = 1.0
@@ -386,7 +300,7 @@ class DWAPlanner:
                     rot_scale += self.cfg.small_angle_rot_scale * (1 - ang_c / self.cfg.small_angle)
                 rot_c = self.cfg.rotation_cost_gain * abs(w) * rot_scale
                 # 倒车时进一步降低旋转代价，促使倒车结合较大角速度（减小转弯半径）
-                if v < -reverse_sample_eps:
+                if v < -self.cfg.reverse_sample_eps:
                     rot_c *= self.cfg.reverse_rot_cost_scale * self.cfg.reverse_rot_cost_scale_extra
                 # （已移除脱困后的强化转向阶段）
                 disp_x = traj[-1, 0] - start_x
@@ -402,12 +316,12 @@ class DWAPlanner:
                 delta_w_last = w - self._last_u[1]
                 change_w_c = self.cfg.change_yaw_cost_gain * (abs(delta_w_state) + 0.5 * abs(delta_w_last))
                 spin_c = self.cfg.spin_penalty_gain * (abs(w) / (abs(v) + self.cfg.spin_penalty_v_eps))
-                if v < -reverse_sample_eps:
+                if v < -self.cfg.reverse_sample_eps:
                     spin_c *= self.cfg.reverse_spin_penalty_scale
-                min_fwd = min_forward_speed if ang_c < small_angle else 0.0
+                min_fwd = self.cfg.min_forward_ratio * self.cfg.max_speed if ang_c < self.cfg.small_angle else 0.0
                 low_forward_c = 0.0 if abs(v) >= min_fwd else (min_fwd - abs(v)) * self.cfg.low_forward_cost_gain
                 dir_switch_c = self.cfg.direction_switch_cost_gain if self._last_u[0] * v < -1e-4 else 0.0
-                wall_gap = obs_min_dist - robot_radius
+                wall_gap = obs_min_dist - self.cfg.robot_radius
                 if wall_gap < self.cfg.near_wall_threshold:
                     nn = (self.cfg.near_wall_threshold - max(wall_gap, 0.0)) / self.cfg.near_wall_threshold
                     rot_c *= (1.0 + nn * (self.cfg.near_wall_rot_boost - 1.0))
@@ -426,11 +340,11 @@ class DWAPlanner:
                     reverse_turn_bonus = - self.cfg.reverse_turn_bonus_gain * abs(w)
                 # 持续倒车惩罚：已较好对齐仍倒车
                 reverse_continue_penalty = 0.0
-                if v < -self.cfg.reverse_plan_eps and ang_c < reverse_reward_angle_rad:
+                if v < -self.cfg.reverse_plan_eps and ang_c < math.radians(self.cfg.reverse_reward_angle_gate_deg):
                     reverse_continue_penalty = self.cfg.reverse_continue_penalty_gain * (-v)
                 # 原地旋转策略：当角度偏差大或gap较小时，鼓励 v≈0 的就地转向
                 if self.cfg.enable_inplace_rotation:
-                    cond_angle = (ang_c > inplace_angle_rad)
+                    cond_angle = (ang_c > math.radians(self.cfg.inplace_angle_deg))
                     gap_now = getattr(self, '_front_gap_cache', float('inf'))
                     cond_gap = (gap_now < self.cfg.inplace_gap_thresh)
                     if cond_angle or cond_gap:
@@ -443,7 +357,7 @@ class DWAPlanner:
                 # 墙距奖励：gap 越大奖励越大（以负成本形式加入）；靠墙(gap小)奖励越低
                 wall_reward = 0.0
                 if math.isfinite(obs_min_dist):
-                    gap = max(0.0, obs_min_dist - robot_radius)
+                    gap = max(0.0, obs_min_dist - self.cfg.robot_radius)
                     cap = max(1e-6, self.cfg.wall_reward_max_gap)
                     norm = min(1.0, gap / cap)
                     # 奖励取负成本：-gain * norm^power
@@ -452,18 +366,17 @@ class DWAPlanner:
                 path_align_c = 0.0
                 path_dev_c = 0.0
                 path_prog_c = 0.0
-                if self._path_hint_cache is not None:
-                    pa, pd, prog = self._path_hint_components_fast(traj[-1, 0], traj[-1, 1], traj[-1, 2])
+                if path_hint is not None and len(path_hint) >= 2:
+                    pa, pd, prog = self._path_hint_components(traj[-1, :], path_hint)
                     path_align_c = self.cfg.path_align_gain * pa
                     path_dev_c = self.cfg.path_deviation_gain * abs(pd)
                     path_prog_c = - self.cfg.path_progress_gain * max(0.0, prog)
 
                 cost = (to_goal_c + speed_c + obs_c + clearance_c + rot_c + progress_c + dist_progress_c + extra_prog +
                         change_w_c + spin_c + low_forward_c + forward_bias_c + dwell_c + disp_rew + dir_switch_c +
-                        wall_reward + path_align_c + path_dev_c + path_prog_c +
-                        reverse_turn_bonus + reverse_continue_penalty + forward_pref_c)
-                timing['sample_other_costs'] += (time.perf_counter() - t_other) * 1000.0
-                
+                        wall_reward + path_align_c + path_dev_c + path_prog_c)
+                cost += reverse_turn_bonus + reverse_continue_penalty
+                cost += forward_pref_c
                 if math.isinf(cost):
                     continue
                 if cost < best_cost:
@@ -479,18 +392,14 @@ class DWAPlanner:
                         'fwd_pref': forward_pref_c, 'wall_reward': wall_reward,
                         'path_align': path_align_c, 'path_dev': path_dev_c, 'path_prog': -path_prog_c
                     }
-        timing['sample_main'] = (time.perf_counter() - sample_main_start) * 1000.0
-        timing['sample_count'] = sample_count
-        timing['sample_relax'] = 0.0
 
         # --- 4. 二次放宽采样或回退 ---
         if not any_candidate and best_traj is None:
-            fallback_start = time.perf_counter()
             if self.cfg.disable_fallback:
                 if self.cfg.debug:
                     print("[RELAX] 首次采样无候选，放宽过滤重新采样 (禁用fallback)")
-                for v in v_samples:
-                    for w in w_samples:
+                for v in np.arange(dw[0], dw[1] + 1e-9, self.cfg.v_resolution):
+                    for w in np.arange(dw[2], dw[3] + 1e-9, self.cfg.yaw_rate_resolution):
                         traj = self._predict_trajectory(state, v, w)
                         ang_c, dist_c = self._goal_cost(traj, goal)
                         obs_min_dist, obs_raw_cost = self._obstacle_cost_components(traj, obstacles)
@@ -513,8 +422,8 @@ class DWAPlanner:
                             best_traj = traj
                             best_components = {'relax': True}
             else:
-                for v in v_samples:
-                    for w in w_samples:
+                for v in np.arange(dw[0], dw[1] + 1e-9, self.cfg.v_resolution):
+                    for w in np.arange(dw[2], dw[3] + 1e-9, self.cfg.yaw_rate_resolution):
                         traj = self._predict_trajectory(state, v, w)
                         ang_c, dist_c = self._goal_cost(traj, goal)
                         to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
@@ -529,22 +438,12 @@ class DWAPlanner:
                             best_u = (v, w)
                             best_traj = traj
                             best_components = {'fallback': True}
-            timing['sample_relax'] = (time.perf_counter() - fallback_start) * 1000.0
 
         # --- 5. stuck补偿与平滑 ---
-        smooth_start = time.perf_counter()
         if abs(best_u[0]) < self.cfg.stuck_vel and abs(state[3]) < self.cfg.stuck_vel:
             best_u = (0.0, self.cfg.max_delta_yaw_rate * 0.5)
         # 全局倒车死区：若选择了微幅倒车且不在直接倒车区域，改为不倒车（消除微幅来回）
-        final_heading_err = float('inf')
-        if best_traj is not None:
-            final_heading_err, _ = self._goal_cost(best_traj, goal)
-        allow_small_reverse_final = (
-            (self.cfg.direct_reverse_enabled and self._front_gap_cache < self.cfg.direct_reverse_gap_threshold) or
-            abs(best_u[1]) >= reverse_deadband_w or
-            final_heading_err >= reverse_deadband_angle_rad
-        )
-        if best_u[0] < 0 and abs(best_u[0]) < self.cfg.reverse_deadband and not allow_small_reverse_final:
+        if best_u[0] < 0 and abs(best_u[0]) < self.cfg.reverse_deadband and not (self.cfg.direct_reverse_enabled and self._front_gap_cache < self.cfg.direct_reverse_gap_threshold):
             best_u = (0.0, best_u[1])
         # 若配置禁用倒车，硬钳制不允许负速度
         if not self.cfg.allow_reverse and best_u[0] < 0:
@@ -574,10 +473,8 @@ class DWAPlanner:
         out_traj = best_traj
         if best_traj is not None and (abs(sm_v - best_u[0]) > 1e-9 or abs(sm_w - best_u[1]) > 1e-9):
             out_traj = self._predict_trajectory(state, sm_v, sm_w)
-        timing['smoothing'] = (time.perf_counter() - smooth_start) * 1000.0
 
         # --- 6. dwell计数 ---
-        post_start = time.perf_counter()
         if abs(best_u[0]) < self.cfg.dwell_speed_threshold:
             self._dwell_count += 1
         else:
@@ -602,83 +499,7 @@ class DWAPlanner:
             print(f"[DWA] v={best_u[0]:.2f} w={best_u[1]:.2f} cost={best_cost:.3f} comps={best_components}")
         # 全局步计数（用于启动阶段前进优先策略）
         self._global_step += 1
-        timing['post_update'] = (time.perf_counter() - post_start) * 1000.0
-        timing['total'] = (time.perf_counter() - start_time) * 1000.0
-        self.last_timing = timing
         return self._last_u, out_traj
-
-    def _prepare_local_obstacles(self, state: np.ndarray, obstacles: np.ndarray | None):
-        """预先筛选当前周期关心的障碍点，供采样阶段重复使用。"""
-        if obstacles is None or len(obstacles) == 0:
-            self._obs_local_cache = None
-            return
-        cfg = self.cfg
-        obs = np.asarray(obstacles, dtype=np.float32)
-        x0 = float(state[0]); y0 = float(state[1])
-        max_disp = cfg.max_speed * cfg.predict_time
-        local_r = cfg.obstacle_eval_local_radius + max_disp + cfg.robot_radius + cfg.safety_clearance
-        dx = obs[:, 0] - x0
-        dy = obs[:, 1] - y0
-        mask = (dx * dx + dy * dy) <= (local_r * local_r)
-        if not np.any(mask):
-            self._obs_local_cache = None
-            return
-        selected = obs[mask]
-        if selected.shape[0] > cfg.obstacle_eval_max_points:
-            step = int(np.ceil(selected.shape[0] / cfg.obstacle_eval_max_points))
-            selected = selected[::step]
-        self._obs_local_cache = selected
-
-    def _precompute_path_segments(self, path: np.ndarray):
-        """预计算路径段信息以加速查询。
-        返回: (p0s, p1s, vs, vv_inv, tangents) 所有为 numpy 数组
-        """
-        n = len(path)
-        if n < 2:
-            return None
-        p0s = path[:-1]  # [N-1, 2]
-        p1s = path[1:]   # [N-1, 2]
-        vs = p1s - p0s   # [N-1, 2]
-        vv = np.sum(vs * vs, axis=1)  # [N-1]
-        valid = vv > 1e-9
-        if not np.any(valid):
-            return None
-        # 仅保留有效段
-        p0s = p0s[valid]
-        p1s = p1s[valid]
-        vs = vs[valid]
-        vv = vv[valid]
-        vv_inv = 1.0 / vv
-        tangents = np.arctan2(vs[:, 1], vs[:, 0])
-        return (p0s, p1s, vs, vv_inv, tangents)
-    
-    def _path_hint_components_fast(self, ex: float, ey: float, etheta: float):
-        """使用预计算的路径段快速查询（避免循环）。"""
-        if self._path_hint_cache is None:
-            return 0.0, 0.0, 0.0
-        p0s, p1s, vs, vv_inv, tangents = self._path_hint_cache
-        # 向量化计算到所有线段的距离
-        # t = ((ex - p0) · v) / vv，钳制到 [0, 1]
-        dx = ex - p0s[:, 0]  # [N]
-        dy = ey - p0s[:, 1]  # [N]
-        t = (dx * vs[:, 0] + dy * vs[:, 1]) * vv_inv  # [N]
-        t = np.clip(t, 0.0, 1.0)
-        # 投影点: proj = p0 + t*v
-        proj_x = p0s[:, 0] + t * vs[:, 0]
-        proj_y = p0s[:, 1] + t * vs[:, 1]
-        # 距离
-        dist = np.hypot(ex - proj_x, ey - proj_y)
-        idx = np.argmin(dist)
-        min_dist = dist[idx]
-        # 最近段信息
-        tangent = tangents[idx]
-        angle_diff = abs(math.atan2(math.sin(tangent - etheta), math.cos(tangent - etheta)))
-        # 横向偏差（叉积符号）
-        cross = (ex - proj_x[idx]) * vs[idx, 1] - (ey - proj_y[idx]) * vs[idx, 0]
-        cross_track = math.copysign(min_dist, cross)
-        # 沿线段进度
-        progress = ((ex - proj_x[idx]) * math.cos(tangent) + (ey - proj_y[idx]) * math.sin(tangent))
-        return angle_diff, cross_track, progress
 
     def _path_hint_components(self, end_state: np.ndarray, path_hint: np.ndarray):
         """
@@ -747,12 +568,11 @@ class DWAPlanner:
                 Vs[0] = max(0.0, Vs[0])
         except Exception:
             pass
-        # 移除倒车时角速度放大逻辑，使倒车和前进使用相同的角速度上限
-        # (原代码：倒车时角速度可达前进的1.4倍，现统一使用 max_yaw_rate)
-        # if cfg.reverse_equal_speed and (state[3] < 0 or Vs[0] < 0):
-        #     max_yaw_rev = max_yaw * cfg.reverse_turn_rate_factor
-        #     Vs[2] = -max_yaw_rev
-        #     Vs[3] = max_yaw_rev
+        # 基于当前是否在倒车规划阶段（上一次或速度窗口下界<0）提高角速度上限
+        if cfg.reverse_equal_speed and (state[3] < 0 or Vs[0] < 0):
+            max_yaw_rev = max_yaw * cfg.reverse_turn_rate_factor
+            Vs[2] = -max_yaw_rev
+            Vs[3] = max_yaw_rev
 
         Vd = [state[3] - cfg.max_accel * cfg.dt,
               state[3] + cfg.max_accel * cfg.dt,
@@ -847,39 +667,32 @@ class DWAPlanner:
 
     def _predict_trajectory(self, state, v, w):
         cfg = self.cfg
-        dt = cfg.dt
-        steps = max(1, int(math.ceil(cfg.predict_time / dt)))
-        ts = dt * np.arange(1, steps + 1, dtype=np.float32)
-        traj = np.empty((steps + 1, 5), dtype=np.float32)
-        traj[0, 0] = state[0]
-        traj[0, 1] = state[1]
-        traj[0, 2] = state[2]
-        traj[0, 3] = state[3]
-        traj[0, 4] = state[4]
-        x0 = float(state[0]); y0 = float(state[1]); theta0 = float(state[2])
-        v_float = float(v); w_float = float(w)
-
-        if abs(w_float) < 1e-8:
-            disp = v_float * ts
-            cos_t = math.cos(theta0)
-            sin_t = math.sin(theta0)
-            traj[1:, 0] = x0 + disp * cos_t
-            traj[1:, 1] = y0 + disp * sin_t
-            traj[1:, 2] = theta0
-        else:
-            theta = theta0 + w_float * ts
-            sin_theta = np.sin(theta)
-            cos_theta = np.cos(theta)
-            R = v_float / w_float
-            sin0 = math.sin(theta0)
-            cos0 = math.cos(theta0)
-            traj[1:, 0] = x0 + R * (sin_theta - sin0)
-            traj[1:, 1] = y0 - R * (cos_theta - cos0)
-            traj[1:, 2] = np.arctan2(sin_theta, cos_theta)
-
-        traj[1:, 3] = v_float
-        traj[1:, 4] = w_float
-        return traj
+        x = np.array(state, dtype=float)
+        traj = [x.copy()]
+        t = 0.0
+        while t < cfg.predict_time:
+            theta0 = x[2]
+            if abs(w) < 1e-8:
+                dx = v * cfg.dt * math.cos(theta0)
+                dy = v * cfg.dt * math.sin(theta0)
+                dtheta = 0.0
+                theta1 = theta0
+            else:
+                dtheta = w * cfg.dt
+                theta1 = theta0 + dtheta
+                R = v / w
+                dx = R * (math.sin(theta1) - math.sin(theta0))
+                dy = -R * (math.cos(theta1) - math.cos(theta0))
+            # 更新状态（与 Robot.velocity_step 一致）
+            x[0] += dx
+            x[1] += dy
+            x[2] = math.atan2(math.sin(theta1), math.cos(theta1))
+            x[3] = v
+            x[4] = w
+            traj.append(x.copy())
+            t += cfg.dt
+        # 使用 float32 降低内存占用
+        return np.array(traj, dtype=np.float32)
 
     def _goal_cost(self, traj, goal):
         dx = goal[0] - traj[-1, 0]
@@ -890,33 +703,64 @@ class DWAPlanner:
         dist = math.hypot(dx, dy)
         return ang_cost, dist
 
+    def _obstacle_cost(self, traj, obstacles):
+        if obstacles is None or len(obstacles) == 0:
+            return 0.0
+        ox = obstacles[:, 0]
+        oy = obstacles[:, 1]
+        dx = traj[:, 0][:, None] - ox[None, :]
+        dy = traj[:, 1][:, None] - oy[None, :]
+        dist = np.hypot(dx, dy)
+        min_dist = np.min(dist)
+        if min_dist <= self.cfg.robot_radius:
+            return float('inf')
+        return 1.0 / min_dist
+
+    # 复用：返回最小距离和原生障碍代价
     def _obstacle_cost_components(self, traj, obstacles):
-        """返回轨迹的最小障碍距离与平滑后的障碍代价（GPU加速版）。"""
-        cfg = self.cfg
-        cache = self._obs_local_cache
-        if cache is None:
-            if obstacles is None or len(obstacles) == 0:
-                return float('inf'), 0.0
-            cache = np.asarray(obstacles, dtype=np.float32)
-        if cache.size == 0:
+        """内存友好版本：
+        - 仅在轨迹附近的局部半径内选取障碍点
+        - 按步长对轨迹点子采样
+        - 避免构造 (T×K) 的大矩阵，改为逐步 1D 计算并取最小值
+        """
+        if obstacles is None or len(obstacles) == 0:
             return float('inf'), 0.0
-        obs = cache.astype(np.float32, copy=False)
-        if obs.shape[0] > cfg.obstacle_eval_max_points:
-            step = int(np.ceil(obs.shape[0] / cfg.obstacle_eval_max_points))
-            obs = obs[::step]
+        cfg = self.cfg
+        # 确保 float32，减半内存占用
+        obs = obstacles.astype(np.float32, copy=False)
+        ox = obs[:, 0]
+        oy = obs[:, 1]
+        # 基于轨迹起点与最大位移确定局部搜索半径
+        x0 = float(traj[0, 0]); y0 = float(traj[0, 1])
+        dx_all = traj[:, 0] - traj[0, 0]
+        dy_all = traj[:, 1] - traj[0, 1]
+        max_disp = float(np.max(np.hypot(dx_all, dy_all)))
+        local_r = cfg.obstacle_eval_local_radius + max_disp
+        # 先用起点近似筛选局部障碍（快速，避免先构造大矩阵）
+        dx0 = ox - x0
+        dy0 = oy - y0
+        mask = (dx0 * dx0 + dy0 * dy0) <= (local_r * local_r)
+        if not np.any(mask):
+            return float('inf'), 0.0
+        ox_local = ox[mask]
+        oy_local = oy[mask]
+        # 限制参与评估的障碍点总数
+        if ox_local.shape[0] > cfg.obstacle_eval_max_points:
+            step = max(1, int(np.ceil(ox_local.shape[0] / cfg.obstacle_eval_max_points)))
+            ox_local = ox_local[::step]
+            oy_local = oy_local[::step]
+        # 沿轨迹按步长评估最小距离（逐步 1D 向量，不建 2D 矩阵）
         step_stride = max(1, int(cfg.obstacle_eval_step_stride))
-        pts = traj[::step_stride, :2].astype(np.float32, copy=False)
-        if pts.size == 0:
-            pts = traj[-1:, :2].astype(np.float32, copy=False)
-        
-        # 批量计算所有轨迹点到所有障碍点的距离
-        diff = pts[:, None, :] - obs[None, :, :]
-        dist_sq = np.sum(diff * diff, axis=2)
-        min_dist_sq = float(np.min(dist_sq))
-        
-        if min_dist_sq <= 0.0:
-            return 0.0, float('inf')
-        min_dist = math.sqrt(min_dist_sq)
+        min_dist = float('inf')
+        for p in traj[::step_stride]:
+            dx = ox_local - float(p[0])
+            dy = oy_local - float(p[1])
+            dmin = float(np.min(np.hypot(dx, dy)))
+            if dmin < min_dist:
+                min_dist = dmin
+                # 早停：已穿入碰撞半径，无需继续
+                if min_dist <= cfg.robot_radius:
+                    break
         if min_dist <= cfg.robot_radius:
             return min_dist, float('inf')
         rel = max(1e-3, min_dist - cfg.robot_radius)
