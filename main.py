@@ -185,6 +185,7 @@ def main():
     # 初始朝向设为 pi/2 （朝向y正方向：向上）
     start_pose = (start_x, start_y, math.pi/2)
     robot = Robot(start_pose, odom_noise=ROBOT_ODOM_NOISE)  # 设置一定里程计噪声
+    robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose)
     explorer = FrontierExplorer(safety_distance=FRONTIER_SAFETY_DISTANCE)  # 设置与障碍物的安全距离
@@ -1858,6 +1859,8 @@ def main():
     # 已禁用：不再导出最终路径 CSV
     # viz.save_path("final_path.csv")
     
+    robot.stop_threaded()
+
     # 释放GPU资源
     if hasattr(slam, 'release_resources'):
         slam.release_resources()

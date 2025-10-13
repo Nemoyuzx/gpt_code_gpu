@@ -54,6 +54,23 @@ class Visualizer:
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
                predicted_traj=None, robot_radius=None, actual_traj=None, actual_traj_style=None,
                extra_trajs=None):
+        self._render_update(
+            robot_pose,
+            scan,
+            frontiers=frontiers,
+            target=target,
+            path=path,
+            occupancy=occupancy,
+            predicted_traj=predicted_traj,
+            robot_radius=robot_radius,
+            actual_traj=actual_traj,
+            actual_traj_style=actual_traj_style,
+            extra_trajs=extra_trajs,
+        )
+
+    def _render_update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
+                       predicted_traj=None, robot_radius=None, actual_traj=None, actual_traj_style=None,
+                       extra_trajs=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。

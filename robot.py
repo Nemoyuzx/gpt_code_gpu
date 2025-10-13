@@ -1,5 +1,9 @@
 import math
+import threading
+from queue import Queue, Empty
+
 import numpy as np
+from typing import Optional
 
 
 class Robot:
@@ -22,6 +26,13 @@ class Robot:
         self.angular_vel = 0.0
         # 降噪滤波器引用
         self.noise_filter = None
+        # 线程控制
+        self._thread_enabled = False
+        self._cmd_queue: Optional[Queue] = None
+        self._result_queue: Optional[Queue] = None
+        self._thread: Optional[threading.Thread] = None
+        self._thread_stop = threading.Event()
+        self._thread_timeout = 1.0
 
     # ---------------- 直线 / 旋转 基础接口 ----------------
     def move(self, distance: float):
@@ -78,6 +89,64 @@ class Robot:
     def velocity_step(self, v_cmd: float, w_cmd: float, dt: float):
         """按 (v,w) 指令积分 dt，更新真实与里程计位姿。
         返回 (平移距离, 旋转角度) 供 SLAM 使用。"""
+        if self._thread_enabled:
+            if self._cmd_queue is None or self._result_queue is None:
+                raise RuntimeError("Robot threaded mode is misconfigured: queues are missing")
+            try:
+                self._cmd_queue.put((float(v_cmd), float(w_cmd), float(dt)))
+                result = self._result_queue.get(timeout=self._thread_timeout)
+                return result
+            except Empty as exc:
+                raise RuntimeError("Robot thread did not respond in time") from exc
+        return self._integrate_velocity(v_cmd, w_cmd, dt)
+
+    def start_threaded(self, *, thread_name: str = "RobotThread", command_queue_size: int = 32,
+                       timeout: float = 1.0) -> None:
+        """启动后台线程，在队列中消费速度指令。"""
+        if self._thread_enabled:
+            return
+        self._cmd_queue = Queue(maxsize=command_queue_size)
+        self._result_queue = Queue()
+        self._thread_timeout = max(timeout, 0.1)
+        self._thread_stop.clear()
+        self._thread = threading.Thread(target=self._thread_loop, name=thread_name, daemon=True)
+        self._thread_enabled = True
+        self._thread.start()
+
+    def stop_threaded(self) -> None:
+        """停止后台线程。"""
+        if not self._thread_enabled:
+            return
+        self._thread_enabled = False
+        if self._cmd_queue is not None:
+            try:
+                self._cmd_queue.put_nowait(None)
+            except Exception:
+                pass
+        self._thread_stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._thread = None
+        self._cmd_queue = None
+        self._result_queue = None
+        self._thread_stop.clear()
+
+    def _thread_loop(self) -> None:
+        if self._cmd_queue is None or self._result_queue is None:
+            return
+        while not self._thread_stop.is_set():
+            try:
+                item = self._cmd_queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if item is None:
+                break
+            v_cmd, w_cmd, dt = item
+            result = self._integrate_velocity(v_cmd, w_cmd, dt)
+            self._result_queue.put(result)
+
+    def _integrate_velocity(self, v_cmd: float, w_cmd: float, dt: float):
+        """执行一次速度积分并返回 (平移距离, 旋转角度)。"""
         theta0 = self.theta
         if abs(w_cmd) < 1e-8:
             dx = v_cmd * dt * math.cos(theta0)
