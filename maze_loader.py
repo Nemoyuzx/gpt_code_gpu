@@ -4,8 +4,9 @@ import json  # 添加json模块导入
 
 class MazeLoader:
     """迷宫地图加载器。用于加载墙壁信息和起始/目标点。"""
-    def __init__(self):
+    def __init__(self, grid_resolution: float = 0.1):
         self.maze = None
+        self.grid_resolution = max(1e-3, float(grid_resolution))
 
     # 添加解析配置文件的方法
     def _parse_config_file(self, file_path):
@@ -136,8 +137,7 @@ class MazeLoader:
             min_x = 0.0
             min_y = 0.0
         # 地图尺寸（用于栅格地图）
-        # 假设栅格分辨率res为0.1米（可调整）
-        res = 0.1
+        res = self.grid_resolution
         width = math.ceil((max_x - min_x) / res)
         height = math.ceil((max_y - min_y) / res)
         # 栅格初始化为-1（未知）

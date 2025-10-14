@@ -86,6 +86,7 @@ class Visualizer:
         # 清除之前的绘图
         self.ax.cla()
         # 绘制栅格地图
+        view_min_x, view_min_y, view_max_x, view_max_y = self.maze.bounds
         if occupancy is not None:
             h, w = occupancy.shape
             # 使用矢量化构建显示矩阵：未知=灰(0.5), 空闲=白(1), 占据=黑(0)
@@ -96,6 +97,19 @@ class Visualizer:
             min_x, min_y, max_x, max_y = self.maze.bounds
             extent = (min_x, max_x, min_y, max_y)
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
+            known_mask = occupancy != -1
+            if np.any(known_mask):
+                ys, xs = np.nonzero(known_mask)
+                res = self.maze.resolution
+                view_min_x = min_x + xs.min() * res
+                view_max_x = min_x + (xs.max() + 1) * res
+                view_min_y = min_y + ys.min() * res
+                view_max_y = min_y + (ys.max() + 1) * res
+                margin = max(0.3, 2.0 * res)
+                view_min_x -= margin
+                view_max_x += margin
+                view_min_y -= margin
+                view_max_y += margin
         
         # 绘制障碍物搜索区域边界
         if self.obstacle_search_region is not None:
@@ -201,9 +215,17 @@ class Visualizer:
                 except Exception:
                     continue
         # 绘制机器人当前位置和朝向 (箭头表示朝向)
-        arrow_length = 0.5
-        self.ax.arrow(x, y, arrow_length * math.cos(theta), arrow_length * math.sin(theta),
-                      head_width=0.2, head_length=0.2, fc='r', ec='r')
+        arrow_length = 0.3
+        self.ax.arrow(
+            x,
+            y,
+            arrow_length * math.cos(theta),
+            arrow_length * math.sin(theta),
+            head_width=0.12,
+            head_length=0.14,
+            fc='r',
+            ec='r'
+        )
         self.ax.scatter([x], [y], c='r')  # 机器人位置
         # 机器人圆形边界（若提供半径）
         if robot_radius is not None and robot_radius > 0:
@@ -219,6 +241,8 @@ class Visualizer:
         # 图例和标题
         self.ax.set_title("SLAM Exploration")
         self.ax.set_aspect('equal', adjustable='box')
+        self.ax.set_xlim(view_min_x, view_max_x)
+        self.ax.set_ylim(view_min_y, view_max_y)
         self.ax.legend(loc='upper right')
         plt.draw()
         plt.pause(VISUALIZATION_UPDATE_TIME)  

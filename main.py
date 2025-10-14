@@ -13,13 +13,24 @@ from visualizer import Visualizer
 from noise_filter import NoiseFilter
 import numpy as np
 
+# ==================== 机器人几何参数 ====================
+WHEEL_TRACK = 0.16  # 两轮中心距(m)，差分底盘轮距
+LIDAR_REAR_OFFSET = 0.12  # 轮中心连线到后方激光雷达中心的距离(m)
+LIDAR_RADIUS = 0.055  # 激光雷达自身半径(m)
+ROBOT_BODY_DIAMETER = 0.20  # 车体直径(m)
+ROBOT_BODY_RADIUS = ROBOT_BODY_DIAMETER / 2.0
+ROBOT_COLLISION_RADIUS = max(ROBOT_BODY_RADIUS, LIDAR_REAR_OFFSET + LIDAR_RADIUS)  # 需避障的最小半径
+BASE_SAFETY_CLEARANCE = 0.03  # 车体外额外预留的安全裕度(m)
+OCCUPANCY_GRID_RESOLUTION = 0.025  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
+ROBOT_VISUAL_RADIUS = ROBOT_BODY_RADIUS  # 可视化中展示的真实车体半径
+
 # ==================== 系统参数配置 ====================
 # 路径规划参数
 SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
-FRONTIER_SAFETY_DISTANCE = 5  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
+FRONTIER_SAFETY_DISTANCE_METERS = ROBOT_COLLISION_RADIUS + BASE_SAFETY_CLEARANCE  # 前沿探索器需要保持的物理安全距离
 
 # 迷宫和机器人参数
-MAZE_FILE = "2.json"  # 默认迷宫文件
+MAZE_FILE = "4.json"  # 默认迷宫文件
 ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
@@ -27,7 +38,7 @@ VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 # 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
 LIDAR_ANGLE_RESOLUTION = 3.0  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
-LIDAR_NOISE = 0.03  # 激光雷达噪声
+LIDAR_NOISE = 0.01  # 激光雷达噪声
 
 # 出口检测参数
 MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
@@ -50,22 +61,22 @@ MOVEMENT_THRESHOLD = 1e-6  # 移动距离阈值
 EXPLORE_MIN_SPEED = 0.24  # 探索阶段的最小前进速度
 
 # 卡住判定与挤出恢复参数
-STUCK_WINDOW_STEPS = 12             # 判定窗口步数
-STUCK_SPIN_W_THRESH = 0.9           # 认为“原地打转”的角速度阈值(rad/s)
-STUCK_V_SMALL = 0.05                # 认为“几乎不前进”的线速度阈值(m/s)
-STUCK_PROGRESS_EPS = 0.10           # 判定窗口内总位移阈值(m)
+STUCK_WINDOW_STEPS = 16             # 判定窗口步数
+STUCK_SPIN_W_THRESH = 1.1           # 认为“原地打转”的角速度阈值(rad/s)
+STUCK_V_SMALL = 0.03                # 认为“几乎不前进”的线速度阈值(m/s)
+STUCK_PROGRESS_EPS = 0.06           # 判定窗口内总位移阈值(m)
 STUCK_COOLDOWN_STEPS = 35           # 一次挤出后冷却步数，避免频繁触发
 RECOVERY_STEP_LIMIT = 22            # 挤出模式最多持续步数
 RECOVERY_MIN_ADVANCE = 0.25         # s挤出最小前进距离(m)
 RECOVERY_MAX_ADVANCE = 0.80         # 挤出最大前进距离(m)
-RECOVERY_EXTRA_MARGIN = 0.05        # 在膨胀半径基础上额外预留的安全裕度(m)
+RECOVERY_EXTRA_MARGIN = BASE_SAFETY_CLEARANCE        # 在膨胀半径基础上额外预留的安全裕度(m)
 
 # 可视化参数
 VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 
 # 未探索区域搜索参数
-OBSTACLE_SEARCH_EXPANSION = -0.5  # 障碍物区域搜索范围扩大距离（米）
+OBSTACLE_SEARCH_EXPANSION = BASE_SAFETY_CLEARANCE  # 障碍物区域搜索范围扩大距离（米）
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
@@ -152,7 +163,7 @@ def main():
         print("由环境变量设置优先使用MPS (Apple Metal)")
     
     # 1. 加载迷宫地图和参数
-    loader = MazeLoader()
+    loader = MazeLoader(grid_resolution=OCCUPANCY_GRID_RESOLUTION)
     maze = loader.load(MAZE_FILE)  # 加载默认迷宫
 
     # === 入口边界检查参数（替代虚拟墙） ===
@@ -162,7 +173,7 @@ def main():
     
     # 计算入口的安全边界，防止小车走出迷宫
     # 假设入口在底部，我们设置一个Y坐标的最小值
-    entrance_safety_margin = 0.5  # 入口安全边距（米）
+    entrance_safety_margin = ROBOT_COLLISION_RADIUS + BASE_SAFETY_CLEARANCE  # 入口安全边距（米）
     entrance_min_y = start_y - entrance_safety_margin  # 不允许探索低于此Y值的区域
     
     # 自动查找入口左右两侧最近的墙端点（用于确定入口范围）
@@ -188,8 +199,11 @@ def main():
     robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose)
-    explorer = FrontierExplorer(safety_distance=FRONTIER_SAFETY_DISTANCE)  # 设置与障碍物的安全距离
-    frontier_safety_cells = max(1, int(math.ceil(FRONTIER_SAFETY_DISTANCE)))
+    frontier_safety_cells = max(
+        1,
+        int(math.ceil(FRONTIER_SAFETY_DISTANCE_METERS / maze.resolution))
+    )
+    explorer = FrontierExplorer(safety_distance=float(frontier_safety_cells))  # 设置与障碍物的安全距离
     viz = Visualizer(maze, robot=robot, slam=slam)
     explore_traj_style = {
         "color": "orange",
@@ -325,6 +339,13 @@ def main():
         parent_y[sy, sx] = -1
         directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
 
+        def has_unknown_neighbor(x, y):
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
+                    return True
+            return False
+
         if bounds_idx is not None:
             min_bx, max_bx, min_by, max_by = bounds_idx
             within_bounds = lambda cx, cy, _min_bx=min_bx, _max_bx=max_bx, _min_by=min_by, _max_by=max_by: (
@@ -437,11 +458,39 @@ def main():
                         debug_update(debug_points)
 
         if fallback_candidate is not None:
+            safe_target = None
+            safe_path = None
+            (fx, fy), fallback_unknown, fallback_path = fallback_candidate
+            if fallback_path:
+                for idx in range(len(fallback_path) - 1, -1, -1):
+                    cx, cy = fallback_path[idx]
+                    if is_safe_cell(cx, cy) and has_unknown_neighbor(cx, cy):
+                        safe_target = (cx, cy)
+                        safe_path = fallback_path[:idx + 1]
+                        break
+            if safe_target is not None:
+                sx_safe, sy_safe = safe_target
+                safe_unknown = None
+                for dx, dy in directions:
+                    nx, ny = sx_safe + dx, sy_safe + dy
+                    if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
+                        safe_unknown = (nx, ny)
+                        break
+                if safe_unknown is None:
+                    safe_target = None
+                else:
+                    fallback_unknown = safe_unknown
+            if safe_target is not None:
+                if step_counter % 25 == 0:
+                    print(f"[警告] 未找到满足安全距离的前沿，改用最近安全点 {safe_target} (原候选 {(fx, fy)})")
+                if debug_update is not None and debug_points is not None:
+                    debug_update(debug_points)
+                return safe_target, fallback_unknown, safe_path
             if step_counter % 25 == 0:
-                print(f"[警告] 未找到满足安全距离的目标，使用靠墙回退候选 {fallback_candidate[0]} margin={dynamic_wall_margin}cells")
+                print("[警告] 未找到满足安全距离的目标，且无可用安全替代点")
             if debug_update is not None and debug_points is not None:
                 debug_update(debug_points)
-            return fallback_candidate
+            return None, None, None
 
         if debug_update is not None and debug_points is not None:
             debug_update(debug_points)
@@ -449,6 +498,8 @@ def main():
     
     # 直接使用集中后的默认配置即可（原工厂函数已合并为默认值）
     dwa_cfg = DWAConfig()
+    dwa_cfg.robot_radius = ROBOT_COLLISION_RADIUS
+    dwa_cfg.safety_clearance = BASE_SAFETY_CLEARANCE
     dwa_planner = DWAPlanner(dwa_cfg)
     base_margin_m = dwa_cfg.robot_radius + dwa_cfg.safety_clearance
     dynamic_wall_margin = max(1, int(base_margin_m / maze.resolution) + 1)
@@ -468,9 +519,9 @@ def main():
     # 4. 前沿探索主循环
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
-    base_lookahead_steps = 10  # 默认前瞻栅格数
-    min_lookahead_steps = 4     # 弯曲段时的最小前瞻
-    max_lookahead_steps = 25    # 直线段时的最大前瞻
+    base_lookahead_steps = 25   # 默认前瞻栅格数
+    min_lookahead_steps = 20    # 弯曲段时的最小前瞻
+    max_lookahead_steps = 30   # 直线段时的最大前瞻
 
     def compute_dynamic_lookahead(path_cells, current_idx,
                                   min_steps=min_lookahead_steps,
@@ -558,8 +609,12 @@ def main():
                                     max_iter_factor=80,
                                     replan_callback=None,
                                     replan_interval=18,
-                                    path_safety_cells=None):
-        """使用DWA沿给定网格路径行驶，返回是否成功到达。"""
+                                    path_safety_cells=None,
+                                    viz_context_provider=None):
+        """使用DWA沿给定网格路径行驶，返回是否成功到达。
+
+        viz_context_provider(Optional[Callable]): 每次循环提供可视化上下文的回调，
+        返回 dict(actual_traj, actual_traj_style, extra_trajs)。"""
         nonlocal est_pose, scan, total_distance_traveled, step_counter
         if not path_cells or len(path_cells) < 2:
             return False
@@ -730,6 +785,23 @@ def main():
                 }
             ]
 
+            actual_traj_points = robot.trajectory
+            actual_traj_style = explore_traj_style
+            extra_traj_list = list(viz_extra)
+            if viz_context_provider is not None:
+                try:
+                    custom_viz = viz_context_provider(goal_cell, path_cells, nearest_idx)
+                except Exception:
+                    custom_viz = None
+                if isinstance(custom_viz, dict):
+                    if 'actual_traj' in custom_viz and custom_viz['actual_traj'] is not None:
+                        actual_traj_points = custom_viz['actual_traj']
+                    if 'actual_traj_style' in custom_viz and custom_viz['actual_traj_style'] is not None:
+                        actual_traj_style = custom_viz['actual_traj_style']
+                    extra_from_provider = custom_viz.get('extra_trajs') if isinstance(custom_viz, dict) else None
+                    if extra_from_provider:
+                        extra_traj_list.extend(extra_from_provider)
+
             viz.update(
                 est_pose,
                 scan,
@@ -738,10 +810,10 @@ def main():
                 path=path_cells,
                 occupancy=slam.get_occupancy(),
                 predicted_traj=predicted_traj,
-                robot_radius=dwa_planner.cfg.robot_radius,
-                actual_traj=robot.trajectory,
-                actual_traj_style=explore_traj_style,
-                extra_trajs=viz_extra
+                robot_radius=ROBOT_VISUAL_RADIUS,
+                actual_traj=actual_traj_points,
+                actual_traj_style=actual_traj_style,
+                extra_trajs=extra_traj_list
             )
             seg_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
@@ -1092,7 +1164,7 @@ def main():
             path=current_path,
             occupancy=slam.get_occupancy(),
             predicted_traj=_traj,
-            robot_radius=dwa_planner.cfg.robot_radius,
+            robot_radius=ROBOT_VISUAL_RADIUS,
             actual_traj=robot.trajectory,
             actual_traj_style=explore_traj_style
         )
@@ -1586,256 +1658,119 @@ def main():
         nonlocal est_pose, scan, total_distance_traveled, step_counter, return_traj_split_idx
         if not path_cells or len(path_cells) < 2:
             return False
-        current_path_cells = list(path_cells)
 
-        def cells_to_world(cells):
-            pts = []
-            for cx, cy in cells:
-                wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
-                wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
-                pts.append((wx, wy))
-            return np.asarray(pts, dtype=float)
+        path_cells = list(path_cells)
 
-        path_arr = cells_to_world(current_path_cells)
-        initial_path_cells = list(current_path_cells)
-        initial_path_arr = path_arr.copy()
-        last_replan_idx = 0
-        replan_interval = 10
-        return_threshold = 0.18
-        max_iters = max(len(path_arr) * 80, 700)
-        est_pose = robot.get_pose()
-        print(f"[{label}] 使用DWA沿返程路径前进，共 {len(path_arr)-1} 段，最大步数 {max_iters}")
+        initial_path_cells = list(path_cells)
+        initial_path_arr = np.array([
+            [
+                maze.bounds[0] + (cx + 0.5) * maze.resolution,
+                maze.bounds[1] + (cy + 0.5) * maze.resolution
+            ]
+            for cx, cy in initial_path_cells
+        ], dtype=float)
 
-        dwa_planner._last_u = (0.0, 0.0)
-        if hasattr(dwa_planner, '_dwell_count'):
-            dwa_planner._dwell_count = 0
-        if hasattr(dwa_planner, '_reverse_block_count'):
-            dwa_planner._reverse_block_count = 0
+        path_safety_val = float(used_safety) if used_safety is not None else None
 
-        return_min_speed = 0.22
-        return_speed_cap = 0.75
-        stall_counter = 0
-        for idx in range(max_iters):
-            while viz.paused:
-                plt.pause(VISUALIZATION_PAUSE_TIME)
+        def replan_return_path():
+            pose_now = robot.get_pose()
+            current_idx_x_update = int((pose_now[0] - maze.bounds[0]) / maze.resolution)
+            current_idx_y_update = int((pose_now[1] - maze.bounds[1]) / maze.resolution)
 
-            loop_label = f"{label} idx={idx}"
-            loop_start = time.perf_counter()
-            section_times = []
-            t_section = loop_start
+            occupancy_update = slam.get_occupancy().copy()
+            if 0 <= current_idx_y_update < occupancy_update.shape[0] and 0 <= current_idx_x_update < occupancy_update.shape[1]:
+                occupancy_update[current_idx_y_update, current_idx_x_update] = 0
+            if 0 <= start_idx_y < occupancy_update.shape[0] and 0 <= start_idx_x < occupancy_update.shape[1]:
+                occupancy_update[start_idx_y, start_idx_x] = 0
 
-            est_pose = robot.get_pose()
-            section_times.append(("pose_fetch", (time.perf_counter() - t_section) * 1000.0))
-            t_section = time.perf_counter()
+            safety_cells_return = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
 
-            # 周期性重新规划返回路径
-            should_replan = (idx != 0) and ((idx - last_replan_idx >= replan_interval) or len(path_arr) < 2)
-            if should_replan:
-                current_idx_x_update = int((est_pose[0] - maze.bounds[0]) / maze.resolution)
-                current_idx_y_update = int((est_pose[1] - maze.bounds[1]) / maze.resolution)
-                occupancy_update = slam.get_occupancy().copy()
+            anchor_path_cells = None
+            anchor_idx = None
+            if len(initial_path_cells) >= 2 and initial_path_arr.shape[0] == len(initial_path_cells):
+                dists_initial = np.hypot(initial_path_arr[:, 0] - pose_now[0], initial_path_arr[:, 1] - pose_now[1])
+                nearest_on_initial = int(np.argmin(dists_initial))
+                lookahead_offset = max(RETURN_REPLAN_ANCHOR_LOOKAHEAD, RETURN_REPLAN_MIN_ADVANCE)
+                anchor_idx = min(len(initial_path_cells) - 1, nearest_on_initial + lookahead_offset)
+                if anchor_idx <= nearest_on_initial:
+                    anchor_idx = min(len(initial_path_cells) - 1, nearest_on_initial + RETURN_REPLAN_MIN_ADVANCE)
+                anchor_cell = tuple(initial_path_cells[anchor_idx])
+                anchor_path_cells = explorer.plan_path(
+                    occupancy_update,
+                    (current_idx_x_update, current_idx_y_update),
+                    anchor_cell,
+                    safety_distance=float(safety_cells_return),
+                    max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                )
 
-                # 确保当前格和起点格被视为空闲
-                if 0 <= current_idx_y_update < occupancy_update.shape[0] and 0 <= current_idx_x_update < occupancy_update.shape[1]:
-                    occupancy_update[current_idx_y_update, current_idx_x_update] = 0
-                if 0 <= start_idx_y < occupancy_update.shape[0] and 0 <= start_idx_x < occupancy_update.shape[1]:
-                    occupancy_update[start_idx_y, start_idx_x] = 0
-
-                safety_cells_return = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
-
-                anchor_path_cells = None
-                anchor_idx = len(initial_path_cells) - 1
-                if len(initial_path_cells) >= 2:
-                    dists_initial = np.hypot(initial_path_arr[:, 0] - est_pose[0], initial_path_arr[:, 1] - est_pose[1])
-                    nearest_on_initial = int(np.argmin(dists_initial))
-                    lookahead_offset = max(RETURN_REPLAN_ANCHOR_LOOKAHEAD, RETURN_REPLAN_MIN_ADVANCE)
-                    anchor_idx = min(len(initial_path_cells) - 1, nearest_on_initial + lookahead_offset)
-                    if anchor_idx <= nearest_on_initial:
-                        anchor_idx = min(len(initial_path_cells) - 1, nearest_on_initial + RETURN_REPLAN_MIN_ADVANCE)
-                    anchor_cell = tuple(initial_path_cells[anchor_idx])
-                    anchor_path_cells = explorer.plan_path(
-                        occupancy_update,
-                        (current_idx_x_update, current_idx_y_update),
-                        anchor_cell,
-                        safety_distance=float(safety_cells_return),
-                        max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
-                    )
-
-                updated_path = None
-                if anchor_path_cells and len(anchor_path_cells) >= 2:
-                    updated_path = list(anchor_path_cells)
-                    remainder = initial_path_cells[anchor_idx + 1:]
-                    if remainder:
-                        if updated_path[-1] != anchor_cell:
-                            updated_path.append(anchor_cell)
-                        updated_path.extend(remainder)
-                    if idx % 20 == 0:
-                        print(f"[{label}] 第{idx}步：锚定初始路径第{anchor_idx}个栅格，重规划前缀长度 {len(anchor_path_cells) - 1}")
-                else:
-                    updated_path = explorer.plan_path(
-                        occupancy_update,
-                        (current_idx_x_update, current_idx_y_update),
-                        (start_idx_x, start_idx_y),
-                        safety_distance=float(safety_cells_return),
-                        max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
-                    )
-                    if updated_path and idx % 20 == 0:
-                        print(f"[{label}] 第{idx}步：回退为完整返程规划，段数 {len(updated_path) - 1}")
-
-                if updated_path and len(updated_path) >= 2:
-                    current_path_cells = list(updated_path)
-                    path_arr = cells_to_world(current_path_cells)
-                    last_replan_idx = idx
-                else:
-                    last_replan_idx = idx
-
-            dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
-            nearest_idx = int(np.argmin(dists))
-            lookahead = compute_dynamic_lookahead(current_path_cells, nearest_idx)
-            follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
-            follow_cell = current_path_cells[min(len(current_path_cells) - 1, nearest_idx)]
-            goal_point = (float(path_arr[follow_idx, 0]), float(path_arr[follow_idx, 1]))
-
-            gx, gy = goal_point
-            obstacles = occupancy_to_obstacles(slam.get_occupancy(), maze.bounds, maze.resolution, stride=3)
-
-            # 构造与探索阶段一致的路径提示（世界坐标路径）
-            path_hint_world = path_arr
-
-            section_times.append(("target_prepare", (time.perf_counter() - t_section) * 1000.0))
-            t_section = time.perf_counter()
-
-            state = np.array([est_pose[0], est_pose[1], est_pose[2], robot.linear_vel, robot.angular_vel], dtype=float)
-            (v_cmd, w_cmd), traj = dwa_planner.plan(state, (gx, gy), obstacles, path_hint=path_hint_world)
-            dwa_elapsed = (time.perf_counter() - t_section) * 1000.0
-            section_times.append(("dwa_plan", dwa_elapsed))
-            dwa_detail = getattr(dwa_planner, "last_timing", None)
-            if isinstance(dwa_detail, dict) and dwa_detail:
-                detail_order = [
-                    ("pre_calc", "dwa_pre"),
-                    ("dynamic_window", "dwa_dw"),
-                    ("sample_main", "dwa_sample"),
-                    ("sample_relax", "dwa_resample"),
-                    ("smoothing", "dwa_smooth"),
-                    ("post_update", "dwa_post"),
-                    ("total", "dwa_internal_total")
-                ]
-                for key, label in detail_order:
-                    if key in dwa_detail:
-                        section_times.append((label, float(dwa_detail[key])))
-            t_section = time.perf_counter()
-
-            if v_cmd > 1e-6:
-                dw_min = dw_max = None
-                if hasattr(dwa_planner, 'last_dw') and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
-                    dw_min, dw_max = dwa_planner.last_dw[0], dwa_planner.last_dw[1]
-                dist_to_goal = math.hypot(est_pose[0] - gx, est_pose[1] - gy)
-                dist_to_start = math.hypot(est_pose[0] - maze.start[0], est_pose[1] - maze.start[1])
-                adaptive_floor = return_min_speed + min(0.4, dist_to_start * 0.2)
-                adaptive_floor = min(return_speed_cap, adaptive_floor)
-                if dw_max is not None and math.isfinite(dw_max):
-                    speed_ceiling = max(0.0, min(dw_max, return_speed_cap))
-                else:
-                    speed_ceiling = return_speed_cap
-                target_speed = 0.0
-                if speed_ceiling > 0.05:
-                    target_speed = max(0.0, min(adaptive_floor, speed_ceiling))
-                if target_speed > v_cmd and dist_to_goal > 0.6:
-                    v_cmd = target_speed
-                    dwa_planner._last_u = (v_cmd, w_cmd)
-                    if hasattr(dwa_planner, '_dwell_count'):
-                        dwa_planner._dwell_count = 0
-                    if traj is not None:
-                        traj = dwa_planner._predict_trajectory(state, v_cmd, w_cmd)
-                    if idx % 40 == 0:
-                        dw_min_disp = dw_min if (dw_min is not None and math.isfinite(dw_min)) else float('nan')
-                        dw_max_disp = dw_max if (dw_max is not None and math.isfinite(dw_max)) else float('nan')
-                        print(f"[{label}] 提升前进速度 -> {v_cmd:.2f} m/s (dw=[{dw_min_disp:.2f},{dw_max_disp:.2f}] dist_to_start={dist_to_start:.2f}m)")
-
-            if abs(v_cmd) < 0.05:
-                stall_counter += 1
+            updated_path = None
+            if anchor_path_cells and len(anchor_path_cells) >= 2 and anchor_idx is not None:
+                updated_path = list(anchor_path_cells)
+                remainder = initial_path_cells[anchor_idx + 1:]
+                if remainder:
+                    if updated_path[-1] != initial_path_cells[anchor_idx]:
+                        updated_path.append(initial_path_cells[anchor_idx])
+                    updated_path.extend(remainder)
             else:
-                stall_counter = 0
+                updated_path = explorer.plan_path(
+                    occupancy_update,
+                    (current_idx_x_update, current_idx_y_update),
+                    (start_idx_x, start_idx_y),
+                    safety_distance=float(safety_cells_return),
+                    max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                )
 
-            if stall_counter >= 6:
-                dist_to_start = math.hypot(est_pose[0] - maze.start[0], est_pose[1] - maze.start[1])
-                dw_min = dw_max = None
-                if hasattr(dwa_planner, 'last_dw') and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
-                    dw_min, dw_max = dwa_planner.last_dw[0], dwa_planner.last_dw[1]
-                adaptive_floor = return_min_speed + min(0.4, dist_to_start * 0.2)
-                adaptive_floor = min(return_speed_cap, adaptive_floor)
-                forced_speed = adaptive_floor
-                if forced_speed > 0.05:
-                    v_cmd = forced_speed
-                    w_cmd *= 0.5
-                    dwa_planner._last_u = (v_cmd, w_cmd)
-                    if traj is not None:
-                        traj = dwa_planner._predict_trajectory(state, v_cmd, w_cmd)
-                    dw_min_disp = dw_min if (dw_min is not None and math.isfinite(dw_min)) else float('nan')
-                    dw_max_disp = dw_max if (dw_max is not None and math.isfinite(dw_max)) else float('nan')
-                    print(f"[{label}] 强制解除滞留 -> {v_cmd:.2f} m/s (dw=[{dw_min_disp:.2f},{dw_max_disp:.2f}] dist_to_start={dist_to_start:.2f}m)")
-                    stall_counter = 0
+            if (not updated_path or len(updated_path) < 2) and path_safety_val is not None:
+                updated_path = explorer.plan_path(
+                    occupancy_update,
+                    (current_idx_x_update, current_idx_y_update),
+                    (start_idx_x, start_idx_y),
+                    safety_distance=path_safety_val,
+                    max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                )
 
-            section_times.append(("post_plan_adjust", (time.perf_counter() - t_section) * 1000.0))
-            t_section = time.perf_counter()
+            if not updated_path or len(updated_path) < 2:
+                updated_path = explorer.plan_path_no_safety(
+                    occupancy_update,
+                    (current_idx_x_update, current_idx_y_update),
+                    (start_idx_x, start_idx_y)
+                )
 
-            viz_target_cell = current_path_cells[min(follow_idx, len(current_path_cells) - 1)]
-            explore_segment = []
-            return_segment = robot.trajectory
-            extra_trajs = None
+            return updated_path
+
+        if return_traj_split_idx is None:
+            return_traj_split_idx = len(robot.trajectory)
+
+        def return_viz_context(goal_cell, active_path_cells, nearest_idx):
+            actual_points = robot.trajectory
+            actual_style = return_traj_style
+            extra_segments = []
             if return_traj_split_idx is not None:
                 explore_segment = robot.trajectory[:return_traj_split_idx]
                 return_segment = robot.trajectory[return_traj_split_idx:]
+                if len(return_segment) >= 2:
+                    actual_points = return_segment
                 if len(explore_segment) >= 2:
-                    extra_trajs = [{
+                    extra_segments.append({
                         'points': explore_segment,
                         'style': explore_traj_style
-                    }]
-            viz.update(
-                est_pose,
-                scan,
-                frontiers=None,
-                target=viz_target_cell,
-                path=current_path_cells,
-                occupancy=slam.get_occupancy(),
-                predicted_traj=traj,
-                robot_radius=dwa_planner.cfg.robot_radius,
-                actual_traj=return_segment,
-                actual_traj_style=return_traj_style,
-                extra_trajs=extra_trajs
-            )
+                    })
+            return {
+                'actual_traj': actual_points,
+                'actual_traj_style': actual_style,
+                'extra_trajs': extra_segments or None
+            }
 
-            section_times.append(("visualization", (time.perf_counter() - t_section) * 1000.0))
-            t_section = time.perf_counter()
-
-            d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
-            total_distance_traveled += abs(d_trans)
-            if idx % 20 == 0 or v_cmd < -1e-3:
-                print(f"[{label}] idx={idx} v={float(v_cmd):.2f} w={float(w_cmd):.2f} follow={follow_idx}/{len(path_arr)-1}")
-
-            section_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
-            t_section = time.perf_counter()
-
-            noisy, clean = lidar.scan(robot.get_pose())
-            scan = noisy
-            est_pose = robot.get_pose()
-            step_counter += 1
-
-            section_times.append(("sensor_update", (time.perf_counter() - t_section) * 1000.0))
-            t_section = time.perf_counter()
-
-            dist_to_start_now = math.hypot(est_pose[0] - maze.start[0], est_pose[1] - maze.start[1])
-            reached_start = dist_to_start_now < return_threshold
-            section_times.append(("exit_check", (time.perf_counter() - t_section) * 1000.0))
-            section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
-            log_section_times(loop_label, section_times)
-
-            if reached_start:
-                print(f"[{label}] 已到达起点附近（< {return_threshold:.2f} m）")
-                return True
-
-        print(f"[{label}] 未能在限制步数内完成返回，剩余距离 {math.hypot(est_pose[0]-maze.start[0], est_pose[1]-maze.start[1]):.2f} m")
-        return False
+        return drive_path_with_dwa_segment(
+            path_cells,
+            label=label,
+            arrival_tol=0.18,
+            max_iter_factor=80,
+            replan_callback=replan_return_path,
+            replan_interval=18,
+            path_safety_cells=path_safety_val,
+            viz_context_provider=return_viz_context
+        )
 
     if back_path:
         used_safety_val = float(used_safety) if used_safety is not None else 0.0

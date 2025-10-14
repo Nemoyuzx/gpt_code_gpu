@@ -80,8 +80,8 @@ class DWAConfig:
     turn_debug: bool = False  # 打印转向减速信息。
     # ---- 反复前后抖动抑制相关配置 ----
     allow_reverse: bool = True  # 是否允许倒车（全局开关）。
-    reverse_heading_threshold: float = 40.0 * math.pi/180.0  # 与目标方向夹角大于该值时才考虑倒车。
-    reverse_clearance_threshold: float = 0.45  # 前向清距不足时更倾向倒车（米）。
+    reverse_heading_threshold: float = 90.0 * math.pi/180.0  # 与目标方向夹角大于该值时才考虑倒车。
+    reverse_clearance_threshold: float = 0.35  # 前向清距极小时才考虑倒车（米）。
     oscillation_window_steps: int = 20  # 振荡检测窗口长度（步）。
     oscillation_disp_epsilon: float = 0.18  # 振荡判定位移阈值。
     oscillation_min_switches: int = 4  # 振荡判定的最小方向切换次数。
@@ -89,22 +89,22 @@ class DWAConfig:
     # ---- 前向清距配置 ----
     front_clear_cone_deg: float = 50.0  # 前向清距的视场角度(度)。
     # ---- 倒车转向优化 ----
-    reverse_rot_cost_scale: float = 0.5  # 倒车时旋转代价缩放(<1 更易大角度转向)。
-    reverse_min_speed_scale: float = 0.4  # 倒车允许的最小速度过滤比例缩放。
-    reverse_spin_penalty_scale: float = 0.5  # 倒车时对“打转”惩罚的缩放。
-    reverse_turn_bonus_gain: float = 0.3  # 倒车+较大角速度的奖励(降低总cost)。
+    reverse_rot_cost_scale: float = 0.85  # 倒车时旋转代价缩放(<1 更易大角度转弯)。
+    reverse_min_speed_scale: float = 0.7  # 倒车允许的最小速度过滤比例缩放。
+    reverse_spin_penalty_scale: float = 0.85  # 倒车时对“打转”惩罚的缩放。
+    reverse_turn_bonus_gain: float = 0.12  # 倒车+较大角速度的奖励(降低总cost)。
     # ---- 直接倒车支持 ----
     direct_reverse_enabled: bool = True  # 默认开启直接倒车。
-    direct_reverse_gap_threshold: float = 0.2  # 直接倒车的gap阈值。
-    direct_reverse_reward_gain: float = 1.5  # 直接倒车奖励权重（降低）。
+    direct_reverse_gap_threshold: float = 0.15  # 直接倒车的gap阈值。
+    direct_reverse_reward_gain: float = 0.3  # 直接倒车奖励权重（降低）。
 
     disable_fallback: bool = True  # 禁用 fallback；失败时改为放宽过滤重采样。
-    reverse_no_heading_gate: bool = True  # 允许倒车不受朝向阈值限制。
+    reverse_no_heading_gate: bool = False  # 倒车仍需满足朝向阈值。
     # ---- 方向切换锐化 ----
     direction_switch_skip_smoothing: bool = True  # 线速度正负切换时跳过平滑，立即响应。
     reverse_initial_speed: float = 0.05  # 首次倒车的最小速度幅度。
-    reverse_sign_change_boost_factor: float = 1.5  # 前进→倒车时的负向加速度放大量。
-    direction_switch_cost_gain: float = 0.1  # 方向切换惩罚。
+    reverse_sign_change_boost_factor: float = 1.2  # 前进→倒车时的负向加速度放大量。
+    direction_switch_cost_gain: float = 0.9  # 方向切换惩罚。
     # ---- 倒车对称化与灵活性增强 ----
     reverse_equal_speed: bool = False  # 默认不与前进对称。
     reverse_accel_factor: float = 1.0  # 倒车加速度放大倍数(×max_accel)。
@@ -112,18 +112,18 @@ class DWAConfig:
     reverse_rot_cost_scale_extra: float = 1.0  # 倒车时额外的旋转代价缩放(与已有乘积)，改为1.0使倒车和前进转向代价相同。
     reverse_allow_low_speed_small_angle: bool = False  # 小角度下不鼓励低速倒车。
     # 倒车微幅死区：抑制 |v| 很小的“试探性倒车”（非直接倒车场景）
-    reverse_deadband: float = 0.12  # 低于该幅度的负速度将被过滤或钳制
-    reverse_deadband_turn_angle_deg: float = 25.0  # 朝向误差超过该角度时放宽倒车死区
+    reverse_deadband: float = 0.22  # 低于该幅度的负速度将被过滤或钳制
+    reverse_deadband_turn_angle_deg: float = 50.0  # 朝向误差超过该角度时放宽倒车死区
     reverse_deadband_turn_w: float = 0.25  # 角速度超过该阈值时放宽倒车死区
     # ---- 倒车->前进 制动/切换优化 ----
     reverse_brake_boost_factor: float = 2.0  # 倒车→前进时允许更大正向加速度以快速刹停。
-    reverse_continue_penalty_gain: float = 0.8  # 已对齐仍倒车的惩罚。
+    reverse_continue_penalty_gain: float = 2.2  # 已对齐仍倒车的惩罚。
     reverse_reward_angle_gate_deg: float = 6.0  # 角度误差阈值(度)，小于此不再奖励倒车。
     # ---- 前进优先 / 启动阶段策略 ----
     initial_no_reverse_steps: int = 0  # 启动阶段不额外禁倒车（已整体禁倒车）。
     forward_pref_angle_deg: float = 40.0  # 角度小于该值时偏好前进而非倒车。
-    forward_pref_gap_thresh: float = 0.35  # gap 大且角度小则抑制倒车的阈值。
-    forward_pref_cost_gain: float = 0.0  # 违反前进偏好(仍倒车)的惩罚增益（禁用）。
+    forward_pref_gap_thresh: float = 0.50  # gap 大且角度小则抑制倒车的阈值。
+    forward_pref_cost_gain: float = 0.45  # 违反前进偏好(仍倒车)的惩罚增益。
     forward_pref_initial_gain: float = 2.0  # 启动阶段的附加惩罚倍增。
     # ---- 墙距奖励（越远离墙奖励越大；靠墙奖励越低/甚至无） ----
     wall_reward_gain: float = 0.9           # 墙距奖励增益（加入为负成本，数值越大越鼓励离墙）
@@ -166,7 +166,7 @@ class DWAConfig:
     # 振荡检测中将近零速度当作0的阈值
     oscillation_sign_eps: float = 0.01
     # ---- 内存与性能优化：障碍物评估参数 ----
-    obstacle_eval_local_radius: float = 6.0  # 仅评估轨迹附近该半径(米)内的障碍
+    obstacle_eval_local_radius: float = 5.0  # 仅评估轨迹附近该半径(米)内的障碍
     obstacle_eval_step_stride: int = 2       # 轨迹评估步长（每隔多少个时间步采样一次）
     obstacle_eval_max_points: int = 2000     # 参与评估的障碍点最大数量上限
 

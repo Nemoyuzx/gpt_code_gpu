@@ -80,9 +80,11 @@ class FrontierExplorer:
                     if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
                         is_frontier = True
                         break
-                if is_frontier and (x, y) != (sx, sy):
-                    frontier_cell = (x, y)
-                    break
+                    if is_frontier and (x, y) != (sx, sy):
+                        if not self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
+                            continue
+                        frontier_cell = (x, y)
+                        break
                     
             # BFS扩展
             for dx, dy in [(-1,0), (1,0), (0,-1), (0,1),
@@ -378,60 +380,40 @@ class FrontierExplorer:
     
     def _find_all_frontiers(self, occupancy):
         """
-        遍历整张地图找出所有前沿点。
+        遍历整张地图找出所有满足安全距离的前沿点。
         前沿定义为：已知空闲且邻接未知区域的栅格。
-        
-        参数:
-        - occupancy: 占用栅格地图
-        
+
         返回:
-        - list of (x, y): 所有前沿点的坐标列表
+        - list[(x, y)]: 所有前沿点的坐标列表
         """
         h, w = occupancy.shape
         frontiers = []
-        directions = [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (1,1), (-1,1), (1,-1)]
-        
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)]
+
         for y in range(h):
             for x in range(w):
-                # 只检查空闲格
-                if occupancy[y, x] == 0:
-                    # 检查周围8个方向是否有未知区域
-                    for dx, dy in directions:
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < w and 0 <= ny < h:
-                            if occupancy[ny, nx] == -1:  # -1表示未知区域
-                                # 检查安全距离
-                                if self._is_safe(occupancy, x, y, self.safety_distance):
-                                    frontiers.append((x, y))
-                                    break
+                if occupancy[y, x] != 0:
+                    continue
+                for dx, dy in directions:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
+                        if self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
+                            frontiers.append((x, y))
+                        break
         return frontiers
 
     def calculate_path_length(self, path, resolution):
-        """
-        计算路径的实际长度（米）
-        
-        参数:
-        - path: 路径点列表 [(x, y), ...]
-        - resolution: 栅格分辨率（米/栅格）
-        
-        返回:
-        - float: 路径长度（米）
-        """
+        """计算路径的实际长度（米）。"""
         if not path or len(path) < 2:
             return 0.0
-        
+
         total_length = 0.0
         for i in range(len(path) - 1):
             x1, y1 = path[i]
             x2, y2 = path[i + 1]
-            
-            # 计算两点间的欧氏距离（栅格单位）
             dx = x2 - x1
             dy = y2 - y1
             grid_distance = math.sqrt(dx * dx + dy * dy)
-            
-            # 转换为实际距离（米）
-            actual_distance = grid_distance * resolution
-            total_length += actual_distance
-        
+            total_length += grid_distance * resolution
+
         return total_length
