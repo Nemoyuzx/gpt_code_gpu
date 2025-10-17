@@ -1,13 +1,15 @@
 import math
 import time
-import numpy as np
-from dataclasses import dataclass
-from typing import Tuple
 from collections import deque
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, Tuple
+
+import numpy as np
 
 
 @dataclass
-class DWAConfig:
+class LegacyDWAConfig:
     """DWA 参数总览（手动调参指南 - 精简版）
 
          # 叠加路径贴合方向作为"小角度"判据（A*仅作方向提示，不改变终点）
@@ -171,8 +173,8 @@ class DWAConfig:
     obstacle_eval_max_points: int = 2000     # 参与评估的障碍点最大数量上限
 
 
-class DWAPlanner:
-    def __init__(self, config: DWAConfig):
+class LegacyDWAPlanner:
+    def __init__(self, config: LegacyDWAConfig):
         self.cfg = config
         # 使用 tuple[float, float]，运行时可容纳 numpy.float64
         self._last_u = (0.0, 0.0)
@@ -936,4 +938,344 @@ def occupancy_to_obstacles(occupancy, maze_bounds, resolution, stride=1):
     return np.vstack((world_x, world_y)).T
 
 
-# 已移除 make_main_dwa_config：请直接实例化 DWAConfig()
+# ---- Simplified DWA implementation based on dynamic_window_approach.py ----
+
+
+class RobotType(Enum):
+    circle = 0
+    rectangle = 1
+
+
+@dataclass
+class DWAConfig:
+    max_speed: float = 1.0  # 最大线速度上限
+    min_speed: float = -1.0  # 最小线速度（允许倒车则为负）
+    max_yaw_rate: float = 90.0 * math.pi / 180.0  # 最大角速度（提高以支持大角度原地调头）
+    max_accel: float = 0.6  # 线速度加速度上限
+    max_delta_yaw_rate: float = 200.0 * math.pi / 180.0  # 角速度变化率上限（提升瞬时转向能力）
+    v_resolution: float = 0.05  # 线速度采样步长
+    yaw_rate_resolution: float = 1.0 * math.pi / 180.0  # 角速度采样步长
+    dt: float = 0.1  # 控制周期
+    predict_time: float = 1.6  # 预测时间窗口（缩短以避免远期误差导致停摆）
+    to_goal_cost_gain: float = 0.2  # 朝向目标的角度代价权重
+    to_goal_dist_cost_gain: float = 0.2  # 终点距离代价权重
+    speed_cost_gain: float = 0.4  # 速度偏差代价权重
+    obstacle_cost_gain: float = 0.3  # 障碍物代价权重（调低→更敢靠障碍）
+    clearance_cost_gain: float = 0.1  # 安全间隙代价权重
+    path_align_gain: float = 0.05  # 与参考路径切向对齐权重
+    path_deviation_gain: float = 0.15  # 路径横向偏差权重
+    smoothing_alpha: float = 0.4  # 输出平滑系数
+    smoothness_gain: float = 0.4  # 与上一周期控制的变化代价（调低，让微转向时仍能前进）
+    robot_radius: float = 0.107  # 机器人圆形半径（默认匹配 main 中的 ROBOT_COLLISION_RADIUS）
+    safety_clearance: float = 0.05  # 附加安全余量（默认与主程序安全裕度一致）
+    robot_type: RobotType = RobotType.circle  # 碰撞模型类型
+    robot_width: float = 0.45  # 矩形模型宽度
+    robot_length: float = 0.6  # 矩形模型长度
+    stuck_vel: float = 0.02  # 判定卡住的速度阈值
+    allow_reverse: bool = True  # 是否允许倒车指令
+    debug: bool = True  # 是否打印调试信息
+
+    def __post_init__(self) -> None:
+        if self.min_speed > self.max_speed:
+            raise ValueError("min_speed must be <= max_speed")
+        if self.v_resolution <= 0 or self.yaw_rate_resolution <= 0:
+            raise ValueError("sampling resolutions must be positive")
+        if self.predict_time <= 0 or self.dt <= 0:
+            raise ValueError("predict_time and dt must be positive")
+
+
+class DWAPlanner:
+    """Lightweight DWA planner closely following the reference implementation."""
+
+    def __init__(self, config: DWAConfig):
+        self.cfg = config
+        self._last_u: Tuple[float, float] = (0.0, 0.0)
+        self.last_dw: Optional[Tuple[float, float, float, float]] = None
+        self.last_dw_detail: Optional[dict] = None
+        self.last_timing: dict = {}
+        self.last_cost_components: Optional[dict] = None
+        # compatibility fields expected by higher-level planner code
+        self._dwell_count: int = 0
+        self._reverse_block_count: int = 0
+
+    def plan(
+        self,
+        state: np.ndarray,
+        goal: Tuple[float, float],
+        obstacles: Optional[np.ndarray],
+        path_hint: Optional[np.ndarray] = None,
+    ) -> Tuple[Tuple[float, float], np.ndarray]:
+        cfg = self.cfg
+        start_time = time.perf_counter()
+        timing: dict = {}
+
+        dw_start = time.perf_counter()
+        dw, detail = self._calc_dynamic_window(state)
+        timing["dynamic_window"] = (time.perf_counter() - dw_start) * 1000.0
+        self.last_dw = tuple(dw)
+        self.last_dw_detail = detail
+
+        v_samples = self._sample_range(dw[0], dw[1], cfg.v_resolution)
+        w_samples = self._sample_range(dw[2], dw[3], cfg.yaw_rate_resolution)
+        path_hint_arr = self._prepare_path_hint(path_hint)
+
+        best_cost = float("inf")
+        best_u: Tuple[float, float] = (0.0, 0.0)
+        best_traj: Optional[np.ndarray] = None
+        best_components: Optional[dict] = None
+
+        obs_array = None if obstacles is None else np.asarray(obstacles, dtype=float)
+        sample_start = time.perf_counter()
+
+        for v in v_samples:
+            if not cfg.allow_reverse and v < 0.0:
+                continue
+            for w in w_samples:
+                traj = self._predict_trajectory(state, float(v), float(w))
+                heading_cost = self._heading_cost(traj, goal)
+                dist_cost = math.hypot(goal[0] - traj[-1, 0], goal[1] - traj[-1, 1])
+
+                obstacle_cost, min_dist = self._obstacle_cost(traj, obs_array)
+                if math.isinf(obstacle_cost):
+                    continue
+
+                clearance_cost = 0.0
+                inflated = cfg.robot_radius + cfg.safety_clearance
+                if np.isfinite(min_dist):
+                    gap = max(0.0, min_dist - inflated)
+                    if gap <= 0.0:
+                        continue
+                    if cfg.clearance_cost_gain > 0.0:
+                        clearance_cost = cfg.clearance_cost_gain * (1.0 / max(gap, 1e-6))
+
+                speed_cost = cfg.speed_cost_gain * (cfg.max_speed - abs(traj[-1, 3]))
+                smooth_cost = cfg.smoothness_gain * (
+                    abs(v - self._last_u[0]) + abs(w - self._last_u[1])
+                )
+
+                path_cost = 0.0
+                if path_hint_arr is not None:
+                    align_diff, deviation = self._path_hint_cost(traj[-1], path_hint_arr)
+                    path_cost += cfg.path_align_gain * align_diff
+                    path_cost += cfg.path_deviation_gain * abs(deviation)
+
+                total_cost = (
+                    cfg.to_goal_cost_gain * heading_cost
+                    + cfg.to_goal_dist_cost_gain * dist_cost
+                    + cfg.obstacle_cost_gain * obstacle_cost
+                    + clearance_cost
+                    + speed_cost
+                    + smooth_cost
+                    + path_cost
+                )
+
+                if total_cost < best_cost:
+                    best_cost = total_cost
+                    best_u = (float(v), float(w))
+                    best_traj = traj
+                    best_components = {
+                        "goal_angle": cfg.to_goal_cost_gain * heading_cost,
+                        "goal_dist": cfg.to_goal_dist_cost_gain * dist_cost,
+                        "obstacle": cfg.obstacle_cost_gain * obstacle_cost,
+                        "clearance": clearance_cost,
+                        "speed": speed_cost,
+                        "smooth": smooth_cost,
+                        "path": path_cost,
+                        "min_obs_dist": float(min_dist),
+                    }
+
+        timing["sampling"] = (time.perf_counter() - sample_start) * 1000.0
+
+        if best_traj is None:
+            best_u = (0.0, 0.0)
+            best_traj = self._predict_trajectory(state, 0.0, 0.0)
+            best_components = None
+
+        if abs(best_u[0]) < cfg.stuck_vel and abs(state[3]) < cfg.stuck_vel:
+            spin = cfg.yaw_rate_resolution * 2.0
+            best_u = (0.0, math.copysign(spin, best_u[1] if abs(best_u[1]) > 1e-6 else 1.0))
+            best_traj = self._predict_trajectory(state, *best_u)
+
+        alpha = cfg.smoothing_alpha
+        sm_v = alpha * best_u[0] + (1.0 - alpha) * self._last_u[0]
+        sm_w = alpha * best_u[1] + (1.0 - alpha) * self._last_u[1]
+        sm_v = float(np.clip(sm_v, dw[0], dw[1]))
+        sm_w = float(np.clip(sm_w, dw[2], dw[3]))
+        if not cfg.allow_reverse and sm_v < 0.0:
+            sm_v = 0.0
+        smoothed = (sm_v, sm_w)
+
+        if abs(sm_v - best_u[0]) > 1e-6 or abs(sm_w - best_u[1]) > 1e-6:
+            out_traj = self._predict_trajectory(state, sm_v, sm_w)
+        else:
+            out_traj = best_traj
+
+        self._last_u = smoothed
+        self.last_cost_components = best_components
+        timing["total"] = (time.perf_counter() - start_time) * 1000.0
+        self.last_timing = timing
+
+        if cfg.debug:
+            self._print_debug(best_u, best_cost, best_components)
+
+        return smoothed, out_traj
+
+    def _calc_dynamic_window(self, state: np.ndarray) -> Tuple[np.ndarray, dict]:
+        cfg = self.cfg
+        Vs = np.array([
+            cfg.min_speed,
+            cfg.max_speed,
+            -cfg.max_yaw_rate,
+            cfg.max_yaw_rate,
+        ], dtype=float)
+        Vd = np.array([
+            state[3] - cfg.max_accel * cfg.dt,
+            state[3] + cfg.max_accel * cfg.dt,
+            state[4] - cfg.max_delta_yaw_rate * cfg.dt,
+            state[4] + cfg.max_delta_yaw_rate * cfg.dt,
+        ], dtype=float)
+        dw = np.array([
+            max(Vs[0], Vd[0]),
+            min(Vs[1], Vd[1]),
+            max(Vs[2], Vd[2]),
+            min(Vs[3], Vd[3]),
+        ], dtype=float)
+        if dw[0] > dw[1]:
+            center = 0.5 * (dw[0] + dw[1])
+            dw[0] = dw[1] = center
+        if dw[2] > dw[3]:
+            center = 0.5 * (dw[2] + dw[3])
+            dw[2] = dw[3] = center
+        detail = {"Vs": Vs.tolist(), "Vd": Vd.tolist(), "dw": dw.tolist()}
+        return dw, detail
+
+    def _predict_trajectory(self, state: np.ndarray, v: float, w: float) -> np.ndarray:
+        cfg = self.cfg
+        x = np.array(state, dtype=float)
+        traj = [x.copy()]
+        time_acc = 0.0
+        while time_acc < cfg.predict_time:
+            x = self._motion(x, v, w, cfg.dt)
+            traj.append(x.copy())
+            time_acc += cfg.dt
+        return np.asarray(traj)
+
+    def _obstacle_cost(
+        self,
+        trajectory: np.ndarray,
+        obstacles: Optional[np.ndarray],
+    ) -> Tuple[float, float]:
+        cfg = self.cfg
+        if obstacles is None or obstacles.size == 0:
+            return 0.0, float("inf")
+        traj_xy = trajectory[:, :2]
+        diff = traj_xy[:, None, :] - obstacles[None, :, :]
+        dists = np.linalg.norm(diff, axis=2)
+        min_dist = float(np.min(dists))
+        if cfg.robot_type == RobotType.rectangle:
+            if self._rectangle_collision(trajectory, obstacles):
+                return float("inf"), min_dist
+        else:
+            inflated = cfg.robot_radius + cfg.safety_clearance
+            if min_dist <= inflated:
+                return float("inf"), min_dist
+        adjusted = max(1e-6, min_dist - (cfg.robot_radius + cfg.safety_clearance))
+        return 1.0 / adjusted, min_dist
+
+    def _rectangle_collision(self, trajectory: np.ndarray, obstacles: np.ndarray) -> bool:
+        cfg = self.cfg
+        yaw = trajectory[:, 2]
+        cos_yaw = np.cos(yaw)
+        sin_yaw = np.sin(yaw)
+        rot = np.stack(
+            [
+                np.stack([cos_yaw, -sin_yaw], axis=1),
+                np.stack([sin_yaw, cos_yaw], axis=1),
+            ],
+            axis=1,
+        )
+        local = obstacles[None, :, :] - trajectory[:, None, :2]
+        local = np.einsum("nij,nkj->nki", rot, local)
+        half_l = cfg.robot_length / 2.0
+        half_w = cfg.robot_width / 2.0
+        inside = (
+            (local[:, :, 0] <= half_l)
+            & (local[:, :, 0] >= -half_l)
+            & (local[:, :, 1] <= half_w)
+            & (local[:, :, 1] >= -half_w)
+        )
+        return bool(np.any(inside))
+
+    def _path_hint_cost(self, end_state: np.ndarray, path: np.ndarray) -> Tuple[float, float]:
+        ex, ey, etheta = float(end_state[0]), float(end_state[1]), float(end_state[2])
+        best_idx = -1
+        best_dist = float("inf")
+        proj_point = None
+        for i in range(len(path) - 1):
+            p0 = path[i]
+            p1 = path[i + 1]
+            v = p1 - p0
+            length_sq = float(np.dot(v, v))
+            if length_sq < 1e-9:
+                continue
+            t = ((ex - p0[0]) * v[0] + (ey - p0[1]) * v[1]) / length_sq
+            t = max(0.0, min(1.0, t))
+            proj = p0 + t * v
+            dist = math.hypot(ex - proj[0], ey - proj[1])
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = i
+                proj_point = proj
+        if proj_point is None or best_idx < 0:
+            return 0.0, 0.0
+        segment = path[best_idx + 1] - path[best_idx]
+        tangent = math.atan2(segment[1], segment[0])
+        angle_diff = abs(math.atan2(math.sin(tangent - etheta), math.cos(tangent - etheta)))
+        cross = (ex - proj_point[0]) * segment[1] - (ey - proj_point[1]) * segment[0]
+        deviation = math.copysign(best_dist, cross)
+        return angle_diff, deviation
+
+    def _prepare_path_hint(self, path_hint: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if path_hint is None:
+            return None
+        try:
+            arr = np.asarray(path_hint, dtype=float)
+        except Exception:
+            return None
+        if arr.ndim != 2 or arr.shape[0] < 2 or arr.shape[1] < 2:
+            return None
+        return arr
+
+    def _sample_range(self, r_min: float, r_max: float, step: float) -> np.ndarray:
+        if r_min > r_max:
+            return np.array([float(r_min)], dtype=float)
+        values = np.arange(r_min, r_max + step * 0.5, step, dtype=float)
+        if values.size == 0:
+            values = np.array([float(r_min)], dtype=float)
+        return values
+
+    def _heading_cost(self, trajectory: np.ndarray, goal: Tuple[float, float]) -> float:
+        dx = goal[0] - trajectory[-1, 0]
+        dy = goal[1] - trajectory[-1, 1]
+        angle_to_goal = math.atan2(dy, dx)
+        diff = angle_to_goal - trajectory[-1, 2]
+        return abs(math.atan2(math.sin(diff), math.cos(diff)))
+
+    @staticmethod
+    def _motion(state: np.ndarray, v: float, w: float, dt: float) -> np.ndarray:
+        x = np.array(state, dtype=float)
+        x[2] += w * dt
+        x[0] += v * math.cos(x[2]) * dt
+        x[1] += v * math.sin(x[2]) * dt
+        x[3] = v
+        x[4] = w
+        return x
+
+    def _print_debug(self, command: Tuple[float, float], cost: float, components: Optional[dict]) -> None:
+        parts = [f"[DWA] v={command[0]:.2f} w={command[1]:.2f} cost={cost:.3f}"]
+        if components:
+            detail = ", ".join(
+                f"{k}:{v:.3f}" for k, v in components.items() if isinstance(v, (int, float))
+            )
+            parts.append(f"[{detail}]")
+        print(" ".join(parts))

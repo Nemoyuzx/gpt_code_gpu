@@ -52,8 +52,8 @@ class Visualizer:
             print(f"[Visualizer] 当前地图已保存至 {map_file}, 路径已保存至 {path_file}")
 
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
-               predicted_traj=None, robot_radius=None, actual_traj=None, actual_traj_style=None,
-               extra_trajs=None):
+               predicted_traj=None, robot_radius=None, safety_radius=None,
+               actual_traj=None, actual_traj_style=None, extra_trajs=None):
         self._render_update(
             robot_pose,
             scan,
@@ -63,14 +63,15 @@ class Visualizer:
             occupancy=occupancy,
             predicted_traj=predicted_traj,
             robot_radius=robot_radius,
+            safety_radius=safety_radius,
             actual_traj=actual_traj,
             actual_traj_style=actual_traj_style,
             extra_trajs=extra_trajs,
         )
 
     def _render_update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
-                       predicted_traj=None, robot_radius=None, actual_traj=None, actual_traj_style=None,
-                       extra_trajs=None):
+                       predicted_traj=None, robot_radius=None, safety_radius=None,
+                       actual_traj=None, actual_traj_style=None, extra_trajs=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。
@@ -80,7 +81,8 @@ class Visualizer:
         path: 导航路径栅格序列 [(ix,iy), ...] （可选，用于显示规划路径）。
         occupancy: 当前栅格地图 (numpy数组) （可选，用于绘制地图）。
         predicted_traj: 由DWA预测的轨迹 (N×5 numpy数组，使用 [:,0],[ :,1 ] 作为XY)（可选）。
-        robot_radius: 机器人半径（米），若提供则以圆形边界显示机器人（可选）。
+    robot_radius: 机器人半径（米），若提供则以圆形边界显示机器人（可选）。
+    safety_radius: 膨胀后的安全边界半径（米），用于绘制虚线警戒圈（可选）。
         """
         x, y, theta = robot_pose
         # 清除之前的绘图
@@ -236,6 +238,14 @@ class Visualizer:
                 hx = x + robot_radius * math.cos(theta)
                 hy = y + robot_radius * math.sin(theta)
                 self.ax.plot([x, hx], [y, hy], color='c', linewidth=1.2)
+            except Exception:
+                pass
+        # 安全半径圈显示
+        if safety_radius is not None and safety_radius > 0:
+            try:
+                safe_circle = Circle((x, y), safety_radius, edgecolor='m', facecolor='none',
+                                      linewidth=1.0, alpha=0.6, linestyle='--', label='Safety Envelope')
+                self.ax.add_artist(safe_circle)
             except Exception:
                 pass
         # 图例和标题

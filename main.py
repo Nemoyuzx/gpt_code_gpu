@@ -14,14 +14,13 @@ from noise_filter import NoiseFilter
 import numpy as np
 
 # ==================== 机器人几何参数 ====================
-WHEEL_TRACK = 0.16  # 两轮中心距(m)，差分底盘轮距
-LIDAR_REAR_OFFSET = 0.12  # 轮中心连线到后方激光雷达中心的距离(m)
-LIDAR_RADIUS = 0.055  # 激光雷达自身半径(m)
-ROBOT_BODY_DIAMETER = 0.20  # 车体直径(m)
+WHEEL_TRACK = 0.168  # 两轮中心距(m)，差分底盘轮距
+LIDAR_REAR_OFFSET = 0.0215  # 轮中心连线到后方激光雷达中心的距离(m)
+ROBOT_BODY_DIAMETER = 0.214  # 车体直径(m)
 ROBOT_BODY_RADIUS = ROBOT_BODY_DIAMETER / 2.0
-ROBOT_COLLISION_RADIUS = max(ROBOT_BODY_RADIUS, LIDAR_REAR_OFFSET + LIDAR_RADIUS)  # 需避障的最小半径
-BASE_SAFETY_CLEARANCE = 0.03  # 车体外额外预留的安全裕度(m)
-OCCUPANCY_GRID_RESOLUTION = 0.025  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
+ROBOT_COLLISION_RADIUS = ROBOT_BODY_RADIUS
+BASE_SAFETY_CLEARANCE = 0.03 # 车体外额外预留的安全裕度(m)
+OCCUPANCY_GRID_RESOLUTION = 0.02  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
 ROBOT_VISUAL_RADIUS = ROBOT_BODY_RADIUS  # 可视化中展示的真实车体半径
 
 # ==================== 系统参数配置 ====================
@@ -37,11 +36,11 @@ VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
-LIDAR_ANGLE_RESOLUTION = 3.0  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
+LIDAR_ANGLE_RESOLUTION = 1.44  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
 LIDAR_NOISE = 0.01  # 激光雷达噪声
 
 # 出口检测参数
-MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
+MIN_NO_OBSTACLE_COUNT = 71  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
 MIN_EXPLORATION_DISTANCE = 60.0  # 最小探索距离阈值
@@ -58,8 +57,7 @@ ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
 MOVEMENT_THRESHOLD = 1e-6  # 移动距离阈值
 
 # 速度底线配置
-EXPLORE_MIN_SPEED = 0.24  # 探索阶段的最小前进速度
-
+EXPLORE_MIN_SPEED = 0.14  # 探索阶段的最小前进速度
 # 卡住判定与挤出恢复参数
 STUCK_WINDOW_STEPS = 16             # 判定窗口步数
 STUCK_SPIN_W_THRESH = 1.1           # 认为“原地打转”的角速度阈值(rad/s)
@@ -497,15 +495,20 @@ def main():
         return None, None, None
     
     # 直接使用集中后的默认配置即可（原工厂函数已合并为默认值）
-    dwa_cfg = DWAConfig()
-    dwa_cfg.robot_radius = ROBOT_COLLISION_RADIUS
-    dwa_cfg.safety_clearance = BASE_SAFETY_CLEARANCE
+    dwa_cfg = DWAConfig(
+        robot_radius=ROBOT_COLLISION_RADIUS,
+        safety_clearance=BASE_SAFETY_CLEARANCE,
+    )
     dwa_planner = DWAPlanner(dwa_cfg)
-    base_margin_m = dwa_cfg.robot_radius + dwa_cfg.safety_clearance
-    dynamic_wall_margin = max(1, int(base_margin_m / maze.resolution) + 1)
+
+    def get_inflated_radius() -> float:
+        return dwa_cfg.robot_radius + dwa_cfg.safety_clearance
+
+    inflated_radius = get_inflated_radius()
+    dynamic_wall_margin = max(1, int(inflated_radius / maze.resolution) + 1)
     explore_safety_cells = float(frontier_safety_cells)
     if dwa_cfg.debug:
-        print(f"[DWA模式=orig] 安全格距离: {dynamic_wall_margin} (格长={maze.resolution:.2f}m)")
+        print(f"[DWA模式=orig] 安全格距离: {dynamic_wall_margin} (半径={inflated_radius:.2f}m, 格长={maze.resolution:.2f}m)")
 
     # --- 卡住检测/挤出恢复 状态 ---
     cmd_hist = deque(maxlen=STUCK_WINDOW_STEPS)   # (v_cmd, w_cmd, |d_trans|)
@@ -519,52 +522,17 @@ def main():
     # 4. 前沿探索主循环
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
-    base_lookahead_steps = 25   # 默认前瞻栅格数
-    min_lookahead_steps = 20    # 弯曲段时的最小前瞻
-    max_lookahead_steps = 30   # 直线段时的最大前瞻
+    base_lookahead_steps = 15   # 默认前瞻栅格数（调近）
+    min_lookahead_steps = 12    # 弯曲段时的最小前瞻（调近）
+    max_lookahead_steps = 18   # 直线段时的最大前瞻（调近）
 
     def compute_dynamic_lookahead(path_cells, current_idx,
                                   min_steps=min_lookahead_steps,
                                   max_steps=max_lookahead_steps):
-        """根据局部路径曲率自适应选择前瞻步数。"""
+        """采用固定前瞻步长，不再根据曲率自适应调整。"""
         if not path_cells or len(path_cells) <= 1:
             return 1
-        candidate = base_lookahead_steps
-        start = max(0, current_idx - 1)
-        end = min(len(path_cells) - 1, current_idx + 6)
-        headings = []
-        for i in range(start, end):
-            x0, y0 = path_cells[i]
-            x1, y1 = path_cells[i + 1]
-            dx = x1 - x0
-            dy = y1 - y0
-            if dx == 0 and dy == 0:
-                continue
-            headings.append(math.atan2(dy, dx))
-        if len(headings) >= 2:
-            diffs = []
-            for i in range(len(headings) - 1):
-                diff = math.atan2(
-                    math.sin(headings[i + 1] - headings[i]),
-                    math.cos(headings[i + 1] - headings[i])
-                )
-                diffs.append(abs(diff))
-            if diffs:
-                avg_turn = sum(diffs) / len(diffs)
-                max_turn = max(diffs)
-                curvature = 0.6 * avg_turn + 0.4 * max_turn
-                straight_threshold = math.radians(8.0)
-                curve_threshold = math.radians(35.0)
-                if curvature <= straight_threshold:
-                    factor = 0.0
-                elif curvature >= curve_threshold:
-                    factor = 1.0
-                else:
-                    factor = ((curvature - straight_threshold) /
-                              (curve_threshold - straight_threshold))
-                candidate = max_steps - factor * (max_steps - min_steps)
-                candidate = int(round(candidate))
-        candidate = max(min_steps, min(max_steps, candidate))
+        candidate = max(min_steps, min(max_steps, base_lookahead_steps))
         remaining = len(path_cells) - 1 - current_idx
         if remaining <= 0:
             return 1
@@ -811,6 +779,7 @@ def main():
                 occupancy=slam.get_occupancy(),
                 predicted_traj=predicted_traj,
                 robot_radius=ROBOT_VISUAL_RADIUS,
+                safety_radius=get_inflated_radius(),
                 actual_traj=actual_traj_points,
                 actual_traj_style=actual_traj_style,
                 extra_trajs=extra_traj_list
@@ -1165,6 +1134,7 @@ def main():
             occupancy=slam.get_occupancy(),
             predicted_traj=_traj,
             robot_radius=ROBOT_VISUAL_RADIUS,
+            safety_radius=get_inflated_radius(),
             actual_traj=robot.trajectory,
             actual_traj_style=explore_traj_style
         )
@@ -1237,7 +1207,9 @@ def main():
                     max_clear = LIDAR_MAX_RANGE
                 rx, ry, rth = robot.get_pose()
                 ang_world = rth + idx * angle_step
-                safe_margin = base_margin_m + RECOVERY_EXTRA_MARGIN
+                inflated_radius = get_inflated_radius()
+                recovery_margin = dwa_cfg.robot_radius + RECOVERY_EXTRA_MARGIN
+                safe_margin = max(inflated_radius, recovery_margin)
                 advance = max(0.0, max_clear - safe_margin)
                 advance = max(0.0, min(RECOVERY_MAX_ADVANCE, advance))
                 if advance >= RECOVERY_MIN_ADVANCE:
@@ -1607,7 +1579,7 @@ def main():
     if 0 <= start_idx_y < occupancy_return.shape[0] and 0 <= start_idx_x < occupancy_return.shape[1]:
         occupancy_return[start_idx_y, start_idx_x] = 0
 
-    safety_cells_nominal = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
+    safety_cells_nominal = max(1, int(round(get_inflated_radius() / maze.resolution)))
     safety_cells_nominal_f = float(safety_cells_nominal)
     safety_candidates = [float(safety_cells_nominal)]
     # 若默认安全距离无解，则逐步放宽，但不低于1栅格
@@ -1683,7 +1655,7 @@ def main():
             if 0 <= start_idx_y < occupancy_update.shape[0] and 0 <= start_idx_x < occupancy_update.shape[1]:
                 occupancy_update[start_idx_y, start_idx_x] = 0
 
-            safety_cells_return = max(1, int(round((dwa_cfg.robot_radius + dwa_cfg.safety_clearance) / maze.resolution)))
+            safety_cells_return = max(1, int(round(get_inflated_radius() / maze.resolution)))
 
             anchor_path_cells = None
             anchor_idx = None
