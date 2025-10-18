@@ -1,17 +1,35 @@
 import time
 import math
 import os
+import re
+from pathlib import Path
 import matplotlib.pyplot as plt
 from maze_loader import MazeLoader
 from robot import Robot
 from lidar import Lidar
 from icp_slam import ICPSlam    
 from frontier_explorer import FrontierExplorer
-from dwa import DWAPlanner, DWAConfig, occupancy_to_obstacles
+from dwa import LegacyDWAPlanner as DWAPlanner, LegacyDWAConfig as DWAConfig, occupancy_to_obstacles
 from collections import deque
 from visualizer import Visualizer
 from noise_filter import NoiseFilter
 import numpy as np
+from typing import Dict, List, Optional, Tuple
+
+
+REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
+USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
+ENABLE_CONTROL_LOOP = os.getenv(
+    "ENABLE_CONTROL_LOOP",
+    "0" if REPLAY_RECORDED_DATA else "1",
+) == "1"  # 控制与小车解耦，禁用自动控制闭环
+if USE_REAL_BLE_DATA:
+    from real_robot_bridge import BleRobotBridge
+
+# 默认 BLE 设备配置（可通过环境变量覆盖）
+DEFAULT_BLE_DEVICE_ADDRESS = "60E2ECE4-761B-6B31-FD1F-6FD559C4FE52"
+DEFAULT_BLE_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 # ==================== 机器人几何参数 ====================
 WHEEL_TRACK = 0.168  # 两轮中心距(m)，差分底盘轮距
@@ -19,14 +37,18 @@ LIDAR_REAR_OFFSET = 0.0215  # 轮中心连线到后方激光雷达中心的距�
 ROBOT_BODY_DIAMETER = 0.214  # 车体直径(m)
 ROBOT_BODY_RADIUS = ROBOT_BODY_DIAMETER / 2.0
 ROBOT_COLLISION_RADIUS = ROBOT_BODY_RADIUS
-BASE_SAFETY_CLEARANCE = 0.03 # 车体外额外预留的安全裕度(m)
+BASE_SAFETY_CLEARANCE = 0.0  # 额外安全裕度取消，避免与DWA半径重复
+# A* 额外安全裕度（仅用于前沿搜索与基于A*的路径规划，不影响DWA半径）
+ASTAR_EXTRA_CLEARANCE = 0.0
 OCCUPANCY_GRID_RESOLUTION = 0.02  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
 ROBOT_VISUAL_RADIUS = ROBOT_BODY_RADIUS  # 可视化中展示的真实车体半径
 
 # ==================== 系统参数配置 ====================
 # 路径规划参数
 SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
-FRONTIER_SAFETY_DISTANCE_METERS = ROBOT_COLLISION_RADIUS + BASE_SAFETY_CLEARANCE  # 前沿探索器需要保持的物理安全距离
+FRONTIER_SAFETY_DISTANCE_METERS = (
+    ROBOT_COLLISION_RADIUS + BASE_SAFETY_CLEARANCE + ASTAR_EXTRA_CLEARANCE
+)  # 前沿探索器保持的安全距离（现仅等于车体半径）
 
 # 迷宫和机器人参数
 MAZE_FILE = "4.json"  # 默认迷宫文件
@@ -37,7 +59,221 @@ VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 # 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
 LIDAR_ANGLE_RESOLUTION = 1.44  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
-LIDAR_NOISE = 0.01  # 激光雷达噪声
+LIDAR_NOISE = 0.003  # 激光雷达噪声
+LIDAR_ANGLE_OFFSET_DEG = float(os.getenv("LIDAR_ANGLE_OFFSET_DEG", "0.0"))
+
+CONTROL_STARTUP_DELAY = float(os.getenv("CONTROL_STARTUP_DELAY", "2.0"))
+
+# ==================== BLE 硬件集成配置 ====================
+BLE_DEVICE_ADDRESS = os.getenv("BLE_DEVICE_ADDRESS", DEFAULT_BLE_DEVICE_ADDRESS)
+BLE_NOTIFY_CHAR = os.getenv("BLE_NOTIFY_CHAR", DEFAULT_BLE_NOTIFY_CHAR)
+BLE_ADAPTER_ID = os.getenv("BLE_ADAPTER_ID") or None
+BLE_CONNECT_TIMEOUT = float(os.getenv("BLE_CONNECT_TIMEOUT", "8.0"))
+BLE_RECONNECT_DELAY = float(os.getenv("BLE_RECONNECT_DELAY", "3.0"))
+BLE_DELIMITER = os.getenv("BLE_DELIMITER", "\n")
+BLE_DECODE_ERRORS = os.getenv("BLE_DECODE_ERRORS", "replace")
+BLE_SHOW_RAW = os.getenv("BLE_SHOW_RAW", "0") == "1"
+BLE_SCAN_TIMEOUT = float(os.getenv("BLE_SCAN_TIMEOUT", "0.6"))
+BLE_SCAN_MIN_FILL = float(os.getenv("BLE_SCAN_MIN_FILL", "0.75"))
+BLE_SCAN_POLL_INTERVAL = float(os.getenv("BLE_SCAN_POLL_INTERVAL", "0.02"))
+BLE_DISTANCE_SCALE = float(os.getenv("BLE_DISTANCE_SCALE", "0.001"))
+BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "2000.0"))
+RECORDED_TICKS_PER_METER = float(
+    os.getenv("RECORDED_TICKS_PER_METER", str(BLE_TICKS_PER_METER))
+)
+BLE_ENCODER_MODULUS_ENV = os.getenv("BLE_ENCODER_MODULUS")
+BLE_ENCODER_MODULUS = (
+    int(BLE_ENCODER_MODULUS_ENV)
+    if BLE_ENCODER_MODULUS_ENV and BLE_ENCODER_MODULUS_ENV.lower() != "none"
+    else None
+)
+# Reduced timeout from 0.25s to 0.08s to prevent motion_update blocking
+BLE_ENCODER_TIMEOUT = float(os.getenv("BLE_ENCODER_TIMEOUT", "0.08"))
+BLE_ENCODER_POLL_INTERVAL = float(os.getenv("BLE_ENCODER_POLL_INTERVAL", "0.01"))
+
+# ==================== 录制数据回放配置 ====================
+RECORDED_LASER_LOG = Path(os.getenv("RECORDED_LASER_LOG", "ble_parsed.log"))
+RECORDED_SAMPLES_PER_SCAN = int(os.getenv("RECORDED_SAMPLES_PER_SCAN", "250"))
+RECORDED_DISTANCE_SCALE = float(os.getenv("RECORDED_DISTANCE_SCALE", "0.001"))
+RECORDED_MIN_FILL_RATIO = float(os.getenv("RECORDED_MIN_FILL_RATIO", str(BLE_SCAN_MIN_FILL)))
+
+
+class RecordedScanPlayer:
+    """Replay helper for sequentially feeding recorded BLE scans into SLAM."""
+
+    LASER_LINE_REGEX = re.compile(
+        r"LASER\s+idx=(?P<idx>\d+)\s+angle=(?P<angle>-?\d+(?:\.\d+)?)\s+distance_mm=(?P<distance>-?\d+(?:\.\d+)?)"
+    )
+    MPU_LINE_REGEX = re.compile(
+        r"MPU\s+degree_x=(?P<deg>-?\d+)\s+count1=(?P<count1>-?\d+)\s+count2=(?P<count2>-?\d+)"
+    )
+
+    def __init__(
+        self,
+        log_path: Path,
+        samples_per_scan: int,
+        max_range_m: float,
+        distance_scale: float,
+        *,
+        ticks_per_meter: float,
+        wheel_track: float,
+        encoder_modulus: Optional[int],
+        invert_left: bool,
+        invert_right: bool,
+    ) -> None:
+        self.log_path = log_path
+        self.samples_per_scan = samples_per_scan
+        self.max_range_m = max_range_m
+        self.distance_scale = distance_scale
+        if ticks_per_meter <= 0:
+            raise ValueError("ticks_per_meter must be positive for recorded playback")
+        if wheel_track <= 0:
+            raise ValueError("wheel_track must be positive for recorded playback")
+        self._ticks_per_meter = ticks_per_meter
+        self._wheel_track = wheel_track
+        self._encoder_modulus = encoder_modulus
+        self._encoder_half_range = encoder_modulus / 2 if encoder_modulus else None
+        self._invert_left = -1 if invert_left else 1
+        self._invert_right = -1 if invert_right else 1
+        self._dropped_scans = 0
+        self._frames: List[
+            Tuple[List[float], List[float], List[float], float, float]
+        ] = self._load_frames()
+        self._cursor = 0
+        if not self._frames:
+            detail = (
+                f"No replayable scans discovered in {self.log_path}"
+                if self._dropped_scans == 0
+                else (
+                    "All recorded scans failed fill-ratio checks. "
+                    "Consider lowering RECORDED_MIN_FILL_RATIO."
+                )
+            )
+            raise ValueError(detail)
+
+    def _unwrap_delta(self, delta: int) -> int:
+        if self._encoder_modulus is None or self._encoder_half_range is None:
+            return delta
+        if delta > self._encoder_half_range:
+            delta -= self._encoder_modulus
+        elif delta < -self._encoder_half_range:
+            delta += self._encoder_modulus
+        return delta
+
+    def _load_frames(self) -> List[Tuple[List[float], List[float], List[float], float, float]]:
+        if not self.log_path.exists():
+            raise FileNotFoundError(f"Recorded log not found: {self.log_path}")
+
+        frames: List[Tuple[List[float], List[float], List[float], float, float]] = []
+        self._dropped_scans = 0
+        current_samples: Dict[int, float] = {}
+        current_angles: Dict[int, float] = {}
+        pending_trans = 0.0
+        pending_rot = 0.0
+        prev_counts: Optional[Tuple[int, int]] = None
+
+        with self.log_path.open("r", encoding="utf-8") as log_file:
+            for line in log_file:
+                laser_match = self.LASER_LINE_REGEX.search(line)
+                if laser_match:
+                    idx = int(laser_match.group("idx"))
+                    if idx == 0 and current_samples:
+                        completed = self._finalize_scan(
+                            current_samples, current_angles, pending_trans, pending_rot
+                        )
+                        if completed is not None:
+                            frames.append(completed)
+                        else:
+                            self._dropped_scans += 1
+                        current_samples = {}
+                        current_angles = {}
+                        pending_trans = 0.0
+                        pending_rot = 0.0
+
+                    if idx < 0 or idx >= self.samples_per_scan:
+                        continue
+
+                    distance_mm = float(laser_match.group("distance"))
+                    distance_m = distance_mm * self.distance_scale
+                    if distance_m <= 0.0 or math.isinf(distance_m) or math.isnan(distance_m):
+                        distance_m = self.max_range_m
+                    current_samples[idx] = min(distance_m, self.max_range_m)
+                    try:
+                        current_angles[idx] = float(laser_match.group("angle"))
+                    except (ValueError, TypeError):
+                        current_angles[idx] = float("nan")
+                    continue
+
+                mpu_match = self.MPU_LINE_REGEX.search(line)
+                if mpu_match:
+                    counts = (int(mpu_match.group("count1")), int(mpu_match.group("count2")))
+                    if prev_counts is None:
+                        prev_counts = counts
+                        continue
+
+                    delta_left = self._unwrap_delta(counts[0] - prev_counts[0]) * self._invert_left
+                    delta_right = self._unwrap_delta(counts[1] - prev_counts[1]) * self._invert_right
+                    prev_counts = counts
+
+                    meters_left = delta_left / self._ticks_per_meter
+                    meters_right = delta_right / self._ticks_per_meter
+                    d_trans = 0.5 * (meters_left + meters_right)
+                    d_rot = (meters_right - meters_left) / self._wheel_track if self._wheel_track else 0.0
+                    pending_trans += d_trans
+                    pending_rot += d_rot
+
+        final_frame = self._finalize_scan(current_samples, current_angles, pending_trans, pending_rot)
+        if final_frame is not None:
+            frames.append(final_frame)
+        elif current_samples:
+            self._dropped_scans += 1
+
+        return frames
+
+    def _finalize_scan(
+        self,
+        samples: Dict[int, float],
+        angles: Dict[int, float],
+        pending_trans: float,
+        pending_rot: float,
+    ) -> Optional[Tuple[List[float], List[float], List[float], float, float]]:
+        if not samples:
+            return None
+        fill_ratio = len(samples) / self.samples_per_scan if self.samples_per_scan > 0 else 0.0
+        if fill_ratio < RECORDED_MIN_FILL_RATIO:
+            return None
+
+        ranges = [self.max_range_m] * self.samples_per_scan
+        for idx, distance in samples.items():
+            if 0 <= idx < self.samples_per_scan:
+                ranges[idx] = float(distance)
+        clean = list(ranges)
+        angle_list = [float("nan")] * self.samples_per_scan
+        for idx, angle in angles.items():
+            if 0 <= idx < self.samples_per_scan:
+                angle_list[idx] = float(angle)
+        return ranges, clean, angle_list, float(pending_trans), float(pending_rot)
+
+    def next_scan(
+        self,
+    ) -> Optional[Tuple[List[float], List[float], List[float], float, float]]:
+        if self._cursor >= len(self._frames):
+            return None
+        frame = self._frames[self._cursor]
+        self._cursor += 1
+        return frame
+
+    def remaining(self) -> int:
+        return len(self._frames) - self._cursor
+
+    def total_scans(self) -> int:
+        return len(self._frames)
+
+    def dropped_scans(self) -> int:
+        return self._dropped_scans
+BLE_INVERT_LEFT = os.getenv("BLE_INVERT_LEFT", "0") == "1"
+BLE_INVERT_RIGHT = os.getenv("BLE_INVERT_RIGHT", "0") == "1"
+BLE_READY_TIMEOUT = float(os.getenv("BLE_READY_TIMEOUT", "5.0"))
 
 # 出口检测参数
 MIN_NO_OBSTACLE_COUNT = 71  # 无障碍点数阈值，超过此数值认为走出迷宫
@@ -72,13 +308,14 @@ RECOVERY_EXTRA_MARGIN = BASE_SAFETY_CLEARANCE        # 在膨胀半径基础上�
 # 可视化参数
 VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
+VISUALIZATION_SKIP_FRAMES = 1  # 可视化跳帧：每N帧更新一次（降低渲染开销）
 
 # 未探索区域搜索参数
 OBSTACLE_SEARCH_EXPANSION = BASE_SAFETY_CLEARANCE  # 障碍物区域搜索范围扩大距离（米）
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
-FRONTIER_UPDATE_INTERVAL = 2              # 前沿刷新间隔（每两轮刷新一次）
+FRONTIER_UPDATE_INTERVAL = 1            # 前沿刷新间隔（每4轮刷新一次，降低更新频率2->4）
 FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
 
 # 冷却提前解除条件：基于路径进度提前允许刷新
@@ -159,6 +396,14 @@ def main():
     elif device_type == "mps":
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         print("由环境变量设置优先使用MPS (Apple Metal)")
+
+    print(
+        f"[MODE] replay={'ON' if REPLAY_RECORDED_DATA else 'OFF'} | "
+        f"real_ble={'ON' if USE_REAL_BLE_DATA else 'OFF'} | "
+        f"control_loop={'ON' if ENABLE_CONTROL_LOOP else 'OFF'}"
+    )
+    if REPLAY_RECORDED_DATA and ENABLE_CONTROL_LOOP:
+        print("[MODE][WARN] 回放模式下禁止自动控制，请设置 ENABLE_CONTROL_LOOP=0 或关闭回放。")
     
     # 1. 加载迷宫地图和参数
     loader = MazeLoader(grid_resolution=OCCUPANCY_GRID_RESOLUTION)
@@ -194,14 +439,16 @@ def main():
     # 初始朝向设为 pi/2 （朝向y正方向：向上）
     start_pose = (start_x, start_y, math.pi/2)
     robot = Robot(start_pose, odom_noise=ROBOT_ODOM_NOISE)  # 设置一定里程计噪声
-    robot.start_threaded()
+    if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA:
+        robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
-    slam = ICPSlam(maze, start_pose)
+    slam = ICPSlam(maze, start_pose, laser_angle_offset_deg=LIDAR_ANGLE_OFFSET_DEG)
     frontier_safety_cells = max(
-        1,
+        0,
         int(math.ceil(FRONTIER_SAFETY_DISTANCE_METERS / maze.resolution))
     )
     explorer = FrontierExplorer(safety_distance=float(frontier_safety_cells))  # 设置与障碍物的安全距离
+    explorer.set_safety_distance(float(frontier_safety_cells))
     viz = Visualizer(maze, robot=robot, slam=slam)
     explore_traj_style = {
         "color": "orange",
@@ -215,6 +462,52 @@ def main():
         "alpha": 0.85,
         "label": "Return Traj"
     }
+
+    _safety_offset_cache: Dict[float, List[Tuple[int, int]]] = {}
+
+    def _get_safety_offsets(radius_cells: float) -> List[Tuple[int, int]]:
+        key = round(float(radius_cells), 4)
+        if key in _safety_offset_cache:
+            return _safety_offset_cache[key]
+        reach = int(math.ceil(radius_cells))
+        offsets: List[Tuple[int, int]] = []
+        for dy in range(-reach, reach + 1):
+            for dx in range(-reach, reach + 1):
+                if math.hypot(dx, dy) <= radius_cells + 1e-6:
+                    offsets.append((dx, dy))
+        _safety_offset_cache[key] = offsets
+        return offsets
+
+    def compute_wall_safety_mask(occupancy_grid: np.ndarray | None, safety_cells: float):
+        if occupancy_grid is None:
+            return None
+        try:
+            grid = np.asarray(occupancy_grid)
+        except Exception:
+            return None
+        if grid.ndim != 2:
+            return None
+        if safety_cells <= 0:
+            return np.zeros_like(grid, dtype=bool)
+
+        offsets = _get_safety_offsets(float(safety_cells))
+        if not offsets:
+            return np.zeros_like(grid, dtype=bool)
+
+        h, w = grid.shape
+        mask = np.zeros((h, w), dtype=bool)
+        obstacle_indices = np.argwhere(grid == 1)
+        if obstacle_indices.size == 0:
+            return mask
+
+        for oy, ox in obstacle_indices:
+            for dx, dy in offsets:
+                nx = ox + dx
+                ny = oy + dy
+                if 0 <= nx < w and 0 <= ny < h and grid[ny, nx] != 1:
+                    mask[ny, nx] = True
+        return mask
+
     def log_section_times(tag, timings):
         if not timings:
             return
@@ -254,15 +547,369 @@ def main():
         print(f"[降噪滤波器] 状态: {filter_status}")
     else:
         print("[降噪滤波器] 滤波器已禁用")
+
+    recorded_player: Optional[RecordedScanPlayer] = None
+    if REPLAY_RECORDED_DATA:
+        try:
+            recorded_player = RecordedScanPlayer(
+                RECORDED_LASER_LOG,
+                RECORDED_SAMPLES_PER_SCAN,
+                LIDAR_MAX_RANGE,
+                RECORDED_DISTANCE_SCALE,
+                ticks_per_meter=RECORDED_TICKS_PER_METER,
+                wheel_track=WHEEL_TRACK,
+                encoder_modulus=BLE_ENCODER_MODULUS if BLE_ENCODER_MODULUS is not None else 2 ** 32,
+                invert_left=BLE_INVERT_LEFT,
+                invert_right=BLE_INVERT_RIGHT,
+            )
+            print(
+                f"[REPLAY] 载入 {recorded_player.total_scans()} 帧激光数据用于离线SLAM: {RECORDED_LASER_LOG}"
+            )
+            dropped = recorded_player.dropped_scans()
+            if dropped:
+                print(
+                    f"[REPLAY] 有 {dropped} 帧因采样不足被丢弃，可调整 RECORDED_MIN_FILL_RATIO (当前 {RECORDED_MIN_FILL_RATIO:.2f})."
+                )
+        except Exception as exc:
+            print(f"[REPLAY][ERROR] 无法载入录制数据: {exc}")
+            return
+
+    ble_bridge = None
+    if USE_REAL_BLE_DATA:
+        if not BLE_DEVICE_ADDRESS or not BLE_NOTIFY_CHAR:
+            raise RuntimeError(
+                "USE_REAL_BLE_DATA=1 requires BLE_DEVICE_ADDRESS and BLE_NOTIFY_CHAR environment variables"
+            )
+        laser_params = {
+            "samples_per_scan": int(round(360.0 / LIDAR_ANGLE_RESOLUTION)),
+            "angle_resolution": LIDAR_ANGLE_RESOLUTION,
+            "distance_scale": BLE_DISTANCE_SCALE,
+            "max_range": LIDAR_MAX_RANGE,
+            "min_fill_ratio": BLE_SCAN_MIN_FILL,
+            "poll_interval": BLE_SCAN_POLL_INTERVAL,
+        }
+        motion_params = {
+            "wheel_track": WHEEL_TRACK,
+            "ticks_per_meter": BLE_TICKS_PER_METER,
+            "poll_interval": BLE_ENCODER_POLL_INTERVAL,
+            "timeout": BLE_ENCODER_TIMEOUT,
+            "encoder_modulus": BLE_ENCODER_MODULUS,
+            "invert_left": BLE_INVERT_LEFT,
+            "invert_right": BLE_INVERT_RIGHT,
+        }
+        print("[BLE] 启动实时数据监听线程...")
+        ble_bridge = BleRobotBridge(
+            BLE_DEVICE_ADDRESS,
+            BLE_NOTIFY_CHAR,
+            adapter=BLE_ADAPTER_ID,
+            connect_timeout=BLE_CONNECT_TIMEOUT,
+            delimiter=BLE_DELIMITER,
+            decode_errors=BLE_DECODE_ERRORS,
+            show_raw=BLE_SHOW_RAW,
+            reconnect_delay=BLE_RECONNECT_DELAY,
+            laser_params=laser_params,
+            motion_params=motion_params,
+        )
+        if ble_bridge.wait_ready(BLE_READY_TIMEOUT):
+            print("[BLE] 后台监听已就绪，使用真实小车数据驱动系统。")
+        else:
+            print(
+                f"[WARN] BLE 监听在 {BLE_READY_TIMEOUT:.1f}s 内未完成初始化，将继续等待数据。"
+            )
+        import atexit
+
+        atexit.register(lambda: ble_bridge.stop())
+    last_scan_cache: dict[str, Optional[tuple[List[float], List[float]]]] = {"value": None}
+    last_angles_cache: dict[str, Optional[List[float]]] = {"value": None}
+    recorded_motion_cache: dict[str, Optional[Tuple[float, float]]] = {"value": None}
+
+    def normalize_scan(
+        distances: List[float],
+        clean: List[float],
+        angles_deg: Optional[List[float]] = None,
+    ) -> tuple[List[float], List[float], Optional[List[float]]]:
+        if not distances:
+            return list(distances), list(clean), None
+
+        dist_list = list(distances)
+        clean_list = list(clean)
+        if len(clean_list) != len(dist_list):
+            clean_list = clean_list[: len(dist_list)]
+
+        if angles_deg is None or len(angles_deg) != len(dist_list):
+            return dist_list, clean_list, None
+
+        angles_ccw: List[float] = []
+        min_idx: Optional[int] = None
+        min_angle: Optional[float] = None
+        for idx, angle in enumerate(angles_deg):
+            if angle is None or not math.isfinite(angle):
+                angles_ccw.append(float("nan"))
+                continue
+            mod_angle = angle % 360.0
+            ccw_angle = (360.0 - mod_angle) % 360.0
+            angles_ccw.append(ccw_angle)
+            if min_angle is None or ccw_angle < min_angle:
+                min_angle = ccw_angle
+                min_idx = idx
+
+        if min_idx is None:
+            return dist_list, clean_list, None
+
+        rotated_dist = dist_list[min_idx:] + dist_list[:min_idx]
+        rotated_clean = clean_list[min_idx:] + clean_list[:min_idx]
+        rotated_angles = angles_ccw[min_idx:] + angles_ccw[:min_idx]
+        return rotated_dist, rotated_clean, rotated_angles
+
+    def acquire_scan(timeout: float = BLE_SCAN_TIMEOUT):
+        if recorded_player is not None:
+            frame = recorded_player.next_scan()
+            if frame is None:
+                raise StopIteration
+            noisy, clean, angles, d_trans, d_rot = frame
+            noisy, clean, norm_angles = normalize_scan(noisy, clean, angles)
+            last_scan_cache["value"] = (noisy, clean)
+            last_angles_cache["value"] = norm_angles
+            recorded_motion_cache["value"] = (d_trans, d_rot)
+            return noisy, clean
+
+        if ble_bridge is None:
+            noisy_raw, clean_raw = lidar.scan(robot.get_pose())
+            try:
+                num_beams = len(noisy_raw)
+            except TypeError:
+                num_beams = 0
+
+            if num_beams > 0:
+                raw_angles_clockwise = [
+                    (-float(i) * LIDAR_ANGLE_RESOLUTION) % 360.0 for i in range(num_beams)
+                ]
+                noisy_norm, clean_norm, norm_angles = normalize_scan(
+                    list(noisy_raw),
+                    list(clean_raw),
+                    raw_angles_clockwise,
+                )
+                scan_pair = (noisy_norm, clean_norm)
+                last_scan_cache["value"] = scan_pair
+                if norm_angles is not None:
+                    last_angles_cache["value"] = norm_angles
+                else:
+                    last_angles_cache["value"] = [
+                        float(i) * LIDAR_ANGLE_RESOLUTION for i in range(len(noisy_norm))
+                    ]
+                return scan_pair
+
+            scan_pair = (list(noisy_raw), list(clean_raw))
+            last_scan_cache["value"] = scan_pair
+            last_angles_cache["value"] = None
+            return scan_pair
+
+        deadline = time.monotonic() + max(timeout, BLE_SCAN_POLL_INTERVAL)
+        while True:
+            data = ble_bridge.laser.get_latest_scan(timeout)
+            if data is not None:
+                norm_dist, norm_clean, norm_angles = normalize_scan(
+                    data.distances,
+                    data.clean,
+                    data.angles_deg,
+                )
+                pair: tuple[List[float], List[float]] = (norm_dist, norm_clean)
+                last_scan_cache["value"] = pair
+                last_angles_cache["value"] = norm_angles
+                recorded_motion_cache["value"] = (0.0, 0.0)  # Reset recorded motion cache
+                return pair
+            cached = last_scan_cache["value"]
+            if cached is not None:
+                return cached
+            if time.monotonic() >= deadline:
+                print("[BLE] 等待激光雷达数据超时，继续阻塞至下一帧...")
+                deadline = time.monotonic() + max(timeout, BLE_SCAN_POLL_INTERVAL)
+            time.sleep(BLE_SCAN_POLL_INTERVAL)
+
+    def apply_motion_update(v_cmd: float, w_cmd: float, dt: float):
+        if ble_bridge is None:
+            return robot.velocity_step(float(v_cmd), float(w_cmd), float(dt))
+        d_trans, d_rot, velocities = ble_bridge.motion.poll_motion()
+        apply_motion_fn = getattr(robot, "apply_motion", None)
+        if callable(apply_motion_fn):
+            if velocities is not None:
+                apply_motion_fn(d_trans, d_rot, linear_vel=velocities[0], angular_vel=velocities[1])
+            else:
+                apply_motion_fn(d_trans, d_rot)
+        return d_trans, d_rot
+
+    def integrate_recorded_motion(distance: float, rotation: float) -> None:
+        if abs(distance) < 1e-9 and abs(rotation) < 1e-9:
+            return
+        apply_motion_fn = getattr(robot, "apply_motion", None)
+        if callable(apply_motion_fn):
+            apply_motion_fn(distance, rotation)
+            return
+        theta_prev = robot.theta
+        if abs(rotation) < 1e-8:
+            dx = distance * math.cos(theta_prev)
+            dy = distance * math.sin(theta_prev)
+            theta_new = theta_prev
+        else:
+            theta_new = theta_prev + rotation
+            radius = distance / rotation if abs(rotation) > 1e-8 else 0.0
+            dx = radius * (math.sin(theta_new) - math.sin(theta_prev))
+            dy = -radius * (math.cos(theta_new) - math.cos(theta_prev))
+        robot.x += dx
+        robot.y += dy
+        robot.theta = math.atan2(math.sin(theta_new), math.cos(theta_new))
+        robot.trajectory.append((robot.x, robot.y))
+        robot.odom_x = robot.x
+        robot.odom_y = robot.y
+        robot.odom_theta = robot.theta
+
     # 3. 初始扫描并建立初始地图
-    noisy, clean = lidar.scan(robot.get_pose())
+    try:
+        initial_scan = acquire_scan()
+    except StopIteration:
+        if REPLAY_RECORDED_DATA:
+            print("[REPLAY] 没有可供回放的完整雷达帧，结束运行。")
+        else:
+            print("[ERROR] 未能获取初始激光雷达数据，程序终止。")
+        return
+
+    if REPLAY_RECORDED_DATA:
+        print("[REPLAY] 离线模式：使用录制的BLE数据进行SLAM建图，不发送任何运动控制指令。按 Ctrl+C 结束可视化。")
+        noisy, clean = initial_scan
+        delta = recorded_motion_cache.get("value") or (0.0, 0.0)
+        integrate_recorded_motion(*delta)
+        est_pose = slam.update(delta, noisy, last_angles_cache.get("value"))
+        current_angles = last_angles_cache.get("value")
+        occupancy = slam.get_occupancy()
+        wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+        viz.update(
+            est_pose,
+            noisy,
+            frontiers=None,
+            target=None,
+            path=None,
+            occupancy=occupancy,
+            predicted_traj=None,
+            robot_radius=ROBOT_VISUAL_RADIUS,
+            safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
+            actual_traj=robot.trajectory,
+            actual_traj_style=explore_traj_style,
+            scan_angles=current_angles,
+            unsafe_mask=wall_safety_mask,
+        )
+        plt.pause(VISUALIZATION_UPDATE_TIME)
+
+        frames_processed = 1
+        total_distance = abs(delta[0])
+        try:
+            while True:
+                noisy, clean = acquire_scan()
+                delta = recorded_motion_cache.get("value") or (0.0, 0.0)
+                integrate_recorded_motion(*delta)
+                est_pose = slam.update(delta, noisy, last_angles_cache.get("value"))
+                current_angles = last_angles_cache.get("value")
+                occupancy = slam.get_occupancy()
+                wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+                viz.update(
+                    est_pose,
+                    noisy,
+                    frontiers=None,
+                    target=None,
+                    path=None,
+                    occupancy=occupancy,
+                    predicted_traj=None,
+                    robot_radius=ROBOT_VISUAL_RADIUS,
+                    safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
+                    actual_traj=robot.trajectory,
+                    actual_traj_style=explore_traj_style,
+                    scan_angles=current_angles,
+                    unsafe_mask=wall_safety_mask,
+                )
+                plt.pause(VISUALIZATION_UPDATE_TIME)
+                frames_processed += 1
+                total_distance += abs(delta[0])
+        except StopIteration:
+            print(f"[REPLAY] 数据回放完成，共处理 {frames_processed} 帧，累计平移 {total_distance:.2f} m。")
+        except KeyboardInterrupt:
+            print("\n[REPLAY] 用户中断了离线回放。")
+        return
+
+    if USE_REAL_BLE_DATA and not ENABLE_CONTROL_LOOP:
+        print("[BLE] 监控模式：展示实时激光雷达数据，不执行运动控制。按 Ctrl+C 退出。")
+        try:
+            noisy, clean = initial_scan
+            est_pose = slam.update((0.0, 0.0), noisy, last_angles_cache.get("value"))
+            current_angles = last_angles_cache.get("value")
+            occupancy = slam.get_occupancy()
+            wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+            viz.update(
+                est_pose,
+                noisy,
+                frontiers=None,
+                target=None,
+                path=None,
+                occupancy=occupancy,
+                predicted_traj=None,
+                robot_radius=ROBOT_VISUAL_RADIUS,
+                safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
+                actual_traj=robot.trajectory,
+                actual_traj_style=explore_traj_style,
+                scan_angles=current_angles,
+                unsafe_mask=wall_safety_mask,
+            )
+            plt.pause(VISUALIZATION_UPDATE_TIME)
+
+            last_report = time.monotonic()
+            while True:
+                noisy, clean = acquire_scan()
+                est_pose = slam.update((0.0, 0.0), noisy, last_angles_cache.get("value"))
+                current_angles = last_angles_cache.get("value")
+                occupancy = slam.get_occupancy()
+                wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+                viz.update(
+                    est_pose,
+                    noisy,
+                    frontiers=None,
+                    target=None,
+                    path=None,
+                    occupancy=occupancy,
+                    predicted_traj=None,
+                    robot_radius=ROBOT_VISUAL_RADIUS,
+                    safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
+                    actual_traj=robot.trajectory,
+                    actual_traj_style=explore_traj_style,
+                    scan_angles=current_angles,
+                    unsafe_mask=wall_safety_mask,
+                )
+                plt.pause(VISUALIZATION_UPDATE_TIME)
+
+                now = time.monotonic()
+                if now - last_report >= 0.5:
+                    finite_values = [dist for dist in noisy if math.isfinite(dist)]
+                    if finite_values:
+                        min_dist = min(finite_values)
+                        max_dist = max(finite_values)
+                    else:
+                        min_dist = float("nan")
+                        max_dist = float("nan")
+                    near_obstacles = sum(1 for dist in noisy if dist < LIDAR_MAX_RANGE * 0.9)
+                    print(
+                        f"[BLE][LIDAR] points={len(noisy)} min={min_dist:.3f} max={max_dist:.3f} near={near_obstacles}",
+                        flush=True,
+                    )
+                    last_report = now
+        except KeyboardInterrupt:
+            print("\n[BLE] 已退出雷达监控模式。")
+        return
+    noisy, clean = initial_scan
     scan = noisy
     # 打印一次雷达束数用于验证分辨率变更
     try:
         print(f"[LIDAR] beams={len(scan)}  resolution={LIDAR_ANGLE_RESOLUTION}°  (expect≈{int(360/LIDAR_ANGLE_RESOLUTION)})")
     except Exception:
         pass
-    est_pose = slam.update((0.0, 0.0), scan)  # 使用SLAM返回的估计位姿
+    est_pose = slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))  # 使用SLAM返回的估计位姿
+    current_angles = last_angles_cache.get("value")
     # 初始可视化
     robot_pose = robot.get_pose()
     # 初始不再寻找前沿
@@ -270,10 +917,26 @@ def main():
     target_cell = None  # 当前局部自由目标格（其邻居含未知）
     path = None         # 到该自由格的路径（A*或BFS重建）
     # 初始绘制：此时尚未创建DWA实例，先不显示机器人半径
-    viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=slam.get_occupancy(),
+    occupancy = slam.get_occupancy()
+    wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+    viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=occupancy,
                predicted_traj=None, robot_radius=None, actual_traj=robot.trajectory,
-               actual_traj_style=explore_traj_style)
+               actual_traj_style=explore_traj_style, scan_angles=current_angles,
+               unsafe_mask=wall_safety_mask)
     
+    # 若使用真实小车并启用控制，进入主循环前先等待一段时间以接收稳定的传感器数据
+    if USE_REAL_BLE_DATA and ENABLE_CONTROL_LOOP and CONTROL_STARTUP_DELAY > 0:
+        print(
+            f"[CONTROL] 等待 {CONTROL_STARTUP_DELAY:.1f}s 收集传感器数据后再开始控制..."
+        )
+        wait_until = time.monotonic() + CONTROL_STARTUP_DELAY
+        while time.monotonic() < wait_until:
+            try:
+                acquire_scan(BLE_SCAN_TIMEOUT)
+            except StopIteration:
+                break
+            time.sleep(0.05)
+
     # 初始化探索状态标志和探索进度跟踪
     exploration_complete = False
     total_distance_traveled = 0.0  # 总移动距离
@@ -494,10 +1157,9 @@ def main():
             debug_update(debug_points)
         return None, None, None
     
-    # 直接使用集中后的默认配置即可（原工厂函数已合并为默认值）
+    # 使用 DWA 默认配置，只设置机器人半径
     dwa_cfg = DWAConfig(
         robot_radius=ROBOT_COLLISION_RADIUS,
-        safety_clearance=BASE_SAFETY_CLEARANCE,
     )
     dwa_planner = DWAPlanner(dwa_cfg)
 
@@ -522,22 +1184,66 @@ def main():
     # 4. 前沿探索主循环
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
-    base_lookahead_steps = 15   # 默认前瞻栅格数（调近）
-    min_lookahead_steps = 12    # 弯曲段时的最小前瞻（调近）
-    max_lookahead_steps = 18   # 直线段时的最大前瞻（调近）
+    base_lookahead_steps = 14   # 默认前瞻栅格数（调近）
+    min_lookahead_steps = 2    # 弯曲段时的最小前瞻（调近）
+    max_lookahead_steps = 25   # 直线段时的最大前瞻（调近）
 
     def compute_dynamic_lookahead(path_cells, current_idx,
+                                  base_steps=base_lookahead_steps,
                                   min_steps=min_lookahead_steps,
                                   max_steps=max_lookahead_steps):
-        """采用固定前瞻步长，不再根据曲率自适应调整。"""
+        """根据局部曲率动态调整前瞻距离：弯道越急，取值越靠近目标。
+        
+        Args:
+            path_cells: 路径栅格列表
+            current_idx: 当前在路径上的最近点索引
+            base_steps: 基准前瞻步数（中等曲率时使用）
+            min_steps: 最小前瞻步数（急弯时使用）
+            max_steps: 最大前瞻步数（直线时使用）
+        """
         if not path_cells or len(path_cells) <= 1:
             return 1
-        candidate = max(min_steps, min(max_steps, base_lookahead_steps))
-        remaining = len(path_cells) - 1 - current_idx
+
+        clamped_idx = max(0, min(current_idx, len(path_cells) - 2))
+
+        def _segment_heading(p0, p1):
+            return math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+
+        headings: List[float] = []
+        start = max(0, clamped_idx - 3)
+        end = min(len(path_cells) - 2, clamped_idx + 3)
+        for i in range(start, end + 1):
+            p0 = path_cells[i]
+            p1 = path_cells[i + 1]
+            headings.append(_segment_heading(p0, p1))
+
+        curvature = 0.0
+        if len(headings) >= 2:
+            deltas = [abs(math.atan2(math.sin(headings[i + 1] - headings[i]),
+                                      math.cos(headings[i + 1] - headings[i])))
+                      for i in range(len(headings) - 1)]
+            curvature = sum(deltas) / len(deltas)
+
+        low_thresh = math.radians(5.0)
+        high_thresh = math.radians(90.0)
+        if curvature <= low_thresh:
+            curvature_ratio = 0.0
+        elif curvature >= high_thresh:
+            curvature_ratio = 1.0
+        else:
+            curvature_ratio = (curvature - low_thresh) / (high_thresh - low_thresh)
+
+        # 使用 base_steps 作为基准，根据曲率在 min_steps 和 max_steps 之间调整
+        base_candidate = base_steps
+        span = max(0, base_candidate - min_steps)
+        adjusted = base_candidate - curvature_ratio * span
+        adjusted = max(min_steps, min(max_steps, int(round(adjusted))))
+
+        remaining = len(path_cells) - 1 - clamped_idx
         if remaining <= 0:
             return 1
-        candidate = min(candidate, remaining)
-        return max(1, candidate)
+        adjusted = min(adjusted, remaining)
+        return max(1, adjusted)
 
     def plan_path_with_safety(occupancy_grid, start_cell, goal_cell,
                               safety_cells, max_unknown_allowed=0):
@@ -694,6 +1400,10 @@ def main():
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
             short_term_cell = path_cells[follow_idx]
             gx, gy = path_arr[follow_idx]
+            
+            # 调试信息：显示动态前瞻情况（返程阶段）
+            if idx % 30 == 0:
+                print(f"[返程-动态前瞻] 最近点索引={nearest_idx}/{len(path_cells)-1} 前瞻步数={lookahead} 目标索引={follow_idx}")
 
             seg_start = max(0, nearest_idx - 1)
             seg_end = min(len(path_arr), follow_idx + 2)
@@ -732,7 +1442,8 @@ def main():
                     dw_max = dwa_planner.last_dw[1]
                 max_allow = dw_max if (dw_max is not None and math.isfinite(dw_max)) else EXPLORE_MIN_SPEED
                 boost_speed = min(EXPLORE_MIN_SPEED, max_allow)
-                if boost_speed > v_cmd and dist_to_goal > 0.5:
+                if (boost_speed > v_cmd and dist_to_goal > 0.5 and
+                        abs(w_cmd) < math.radians(18.0)):
                     v_cmd = boost_speed
                     dwa_planner._last_u = (v_cmd, w_cmd)
                     if predicted_traj is not None:
@@ -752,6 +1463,7 @@ def main():
                     }
                 }
             ]
+            eval_paths_vis = getattr(dwa_planner, 'last_eval_paths', None)
 
             actual_traj_points = robot.trajectory
             actual_traj_style = explore_traj_style
@@ -770,33 +1482,39 @@ def main():
                     if extra_from_provider:
                         extra_traj_list.extend(extra_from_provider)
 
+            current_angles = last_angles_cache.get("value")
+            occupancy = slam.get_occupancy()
+            wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
             viz.update(
                 est_pose,
                 scan,
                 frontiers=None,
                 target=goal_cell,
                 path=path_cells,
-                occupancy=slam.get_occupancy(),
+                occupancy=occupancy,
                 predicted_traj=predicted_traj,
                 robot_radius=ROBOT_VISUAL_RADIUS,
                 safety_radius=get_inflated_radius(),
                 actual_traj=actual_traj_points,
                 actual_traj_style=actual_traj_style,
-                extra_trajs=extra_traj_list
+                extra_trajs=extra_traj_list,
+                scan_angles=current_angles,
+                unsafe_mask=wall_safety_mask,
+                dwa_eval_paths=eval_paths_vis,
             )
             seg_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
 
-            d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
+            d_trans, d_rot = apply_motion_update(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
             if idx % 20 == 0:
                 print(f"[{label}] idx={idx} v={float(v_cmd):.2f} w={float(w_cmd):.2f} d_trans={d_trans:.3f} d_rot={d_rot:.3f}")
             total_distance_traveled += abs(d_trans)
             seg_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
 
-            noisy, clean = lidar.scan(robot.get_pose())
+            noisy, clean = acquire_scan()
             scan = noisy
-            est_pose = slam.update((d_trans, d_rot), scan)
+            est_pose = slam.update((d_trans, d_rot), scan, last_angles_cache.get("value"))
             step_counter += 1
             seg_times.append(("slam_update", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
@@ -825,7 +1543,7 @@ def main():
         if frontier_cooldown_reenter_grace > 0:
             frontier_cooldown_reenter_grace -= 1
         # 2. 采样扫描并更新探索距离条件
-        noisy, clean = lidar.scan(robot.get_pose())
+        noisy, clean = acquire_scan()
         scan = noisy
         has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance)
         section_times.append(("scan", (time.perf_counter() - t_section) * 1000.0))
@@ -834,9 +1552,13 @@ def main():
         exit_triggered = False
         if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_no_obstacle_count=MIN_NO_OBSTACLE_COUNT):
             print(f"检测到超过180度的连续无障碍区域 - 已探索距离: {total_distance_traveled:.1f}m")
-            est_pose = slam.update((0.0, 0.0), scan)
-            viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=slam.get_occupancy(),
-                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style)
+            est_pose = slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))
+            current_angles = last_angles_cache.get("value")
+            occupancy = slam.get_occupancy()
+            wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+            viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=occupancy,
+                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style, scan_angles=current_angles,
+                       unsafe_mask=wall_safety_mask)
             should_return_to_start = True
             exit_triggered = True
         section_times.append(("exit_check_pre", (time.perf_counter() - t_section) * 1000.0))
@@ -1017,21 +1739,25 @@ def main():
 
         # 选择DWA子目标：若存在A*路径（无论是否冷却中）均基于路径最近点+前瞻；否则用前沿提示
         if current_path and len(current_path) > 1:
-            # 找到离当前机器人格子最近的路径索引
+            # 找到离当前机器人格子最近的路径索引（始终计算，不管路径长度）
+            min_d2 = 1e18
             nearest_idx = 0
-            if len(current_path) > 8:
-                # 简单全路径最近搜索；路径较长也可接受，必要时可窗口化优化
-                min_d2 = 1e18
-                for i, (px, py) in enumerate(current_path):
-                    dx = px - rx_idx
-                    dy = py - ry_idx
-                    d2 = dx*dx + dy*dy
-                    if d2 < min_d2:
-                        min_d2 = d2
-                        nearest_idx = i
+            for i, (px, py) in enumerate(current_path):
+                dx = px - rx_idx
+                dy = py - ry_idx
+                d2 = dx*dx + dy*dy
+                if d2 < min_d2:
+                    min_d2 = d2
+                    nearest_idx = i
+            
+            # 使用动态前瞻计算跟随索引
             dynamic_steps = compute_dynamic_lookahead(current_path, nearest_idx)
             follow_idx = min(len(current_path) - 1, nearest_idx + dynamic_steps)
             follow_cell = current_path[follow_idx]
+            
+            # 调试信息：显示动态前瞻情况
+            if step_counter % 30 == 0:
+                print(f"[动态前瞻] 最近点索引={nearest_idx}/{len(current_path)-1} 前瞻步数={dynamic_steps} 目标索引={follow_idx}")
         else:
             follow_cell = frontier_hint_cell if frontier_hint_cell is not None else (rx_idx, ry_idx)
         # 若处于挤出模式，覆盖可视化目标为挤出目标
@@ -1115,7 +1841,8 @@ def main():
             max_allow = dw_max if (dw_max is not None and math.isfinite(dw_max)) else EXPLORE_MIN_SPEED
             boost_speed = min(EXPLORE_MIN_SPEED, max_allow)
             dist_to_goal = math.hypot(est_pose[0] - gx, est_pose[1] - gy)
-            if boost_speed > v_cmd and dist_to_goal > 0.6:
+            if (boost_speed > v_cmd and dist_to_goal > 0.6 and
+                    abs(w_cmd) < math.radians(18.0)):
                 v_cmd = boost_speed
                 dwa_planner._last_u = (v_cmd, w_cmd)
                 if _traj is not None:
@@ -1125,19 +1852,29 @@ def main():
                     print(f"[探索] 提升前进速度 -> {v_cmd:.2f} m/s (dw_max={dw_max_disp:.2f} dist_to_goal={dist_to_goal:.2f}m)")
 
         # 先用当前估计位姿绘制预测轨迹（起点一致，避免视觉错位）
-        viz.update(
-            est_pose,
-            scan,
-            frontiers=None,
-            target=viz_target_cell,
-            path=current_path,
-            occupancy=slam.get_occupancy(),
-            predicted_traj=_traj,
-            robot_radius=ROBOT_VISUAL_RADIUS,
-            safety_radius=get_inflated_radius(),
-            actual_traj=robot.trajectory,
-            actual_traj_style=explore_traj_style
-        )
+        current_angles = last_angles_cache.get("value")
+        occupancy = slam.get_occupancy()
+        wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+        
+        # 可视化跳帧优化：每N帧更新一次
+        should_visualize = (step_counter % VISUALIZATION_SKIP_FRAMES == 0)
+        if should_visualize:
+            viz.update(
+                est_pose,
+                scan,
+                frontiers=None,
+                target=viz_target_cell,
+                path=current_path,
+                occupancy=occupancy,
+                predicted_traj=_traj,
+                robot_radius=ROBOT_VISUAL_RADIUS,
+                safety_radius=get_inflated_radius(),
+                actual_traj=robot.trajectory,
+                actual_traj_style=explore_traj_style,
+                scan_angles=current_angles,
+                unsafe_mask=wall_safety_mask,
+                dwa_eval_paths=getattr(dwa_planner, 'last_eval_paths', None)
+            )
         section_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
         # 添加 DWA 详细统计
@@ -1145,14 +1882,20 @@ def main():
             section_times.append(("dwa_planner_detail", dwa_planner.last_timing.copy()))
         
         # 再执行控制并更新SLAM
-        d_trans, d_rot = robot.velocity_step(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
+        d_trans, d_rot = apply_motion_update(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
         if (step_counter % 20 == 0) or (v_cmd < -1e-3):
             print(f"[CTRL] step={step_counter} v={float(v_cmd):.2f} w={float(w_cmd):.2f} d_trans={d_trans:.3f} d_rot={d_rot:.3f}")
         total_distance_traveled += abs(d_trans)
-        noisy, clean = lidar.scan(robot.get_pose())
-        scan = noisy
-        est_pose = slam.update((d_trans, d_rot), scan)
         section_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
+        
+        noisy, clean = acquire_scan()
+        scan = noisy
+        section_times.append(("scan", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
+        
+        est_pose = slam.update((d_trans, d_rot), scan, last_angles_cache.get("value"))
+        section_times.append(("slam_update", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
 
         step_counter += 1
@@ -1376,6 +2119,8 @@ def main():
                     def bfs_debug_callback(cells):
                         if not DFS_VISUALIZATION_ENABLED:
                             return
+                        current_angles = last_angles_cache.get("value")
+                        wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
                         viz.set_bfs_debug_points(cells, color='cyan')
                         viz.update(
                             robot.get_pose(),
@@ -1385,7 +2130,9 @@ def main():
                             path=None,
                             occupancy=occupancy,
                             actual_traj=robot.trajectory,
-                            actual_traj_style=explore_traj_style
+                            actual_traj_style=explore_traj_style,
+                            scan_angles=current_angles,
+                            unsafe_mask=wall_safety_mask
                         )
                         if len(cells) - bfs_debug_state["reported"] >= 150:
                             bfs_debug_state["reported"] = len(cells)
@@ -1418,15 +2165,20 @@ def main():
                         else:
                             viz.set_bfs_debug_points(None)
 
+                        current_angles = last_angles_cache.get("value")
+                        occupancy_latest = slam.get_occupancy()
+                        wall_safety_mask = compute_wall_safety_mask(occupancy_latest, float(frontier_safety_cells))
                         viz.update(
                             robot.get_pose(),
                             scan,
                             frontiers=None,
                             target=None,
                             path=None,
-                            occupancy=slam.get_occupancy(),
+                            occupancy=occupancy_latest,
                             actual_traj=robot.trajectory,
-                            actual_traj_style=explore_traj_style
+                            actual_traj_style=explore_traj_style,
+                            scan_angles=current_angles,
+                            unsafe_mask=wall_safety_mask
                         )
                         if bfs_debug_cells:
                             plt.pause(0.6)

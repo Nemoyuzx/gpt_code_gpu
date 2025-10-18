@@ -7,26 +7,29 @@ import resource  # 新增: 获取内存占用（Unix/macOS）
 import datetime  # 新增: 时间戳
 import csv       # 新增: 写入CSV
 import psutil  # 可选依赖
+from typing import Optional, Sequence
 
 
 
 #0.49
 #超过最大范围比例
-MAX_RANGE_FACTOR = 0.75  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.8  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
-ADJACENCY_DIFF_THRESHOLD = 0.01  # 相邻测距点之间的差异阈值 (米)
+ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 1000  # 降低ICP最大迭代次数，避免过高峰值内存
-ICP_TOLERANCE = 1e-7  # ICP收敛容忍
-ICP_CORRESPONDENCE_THRESH = 0.0001  # ICP对应点匹配距离
+ICP_MAX_ITER = 200  # 降低ICP最大迭代次数，避免过高峰值内存
+ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍 (从1e-5放宽到1e-4)
+ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "12"))  # ICP对应点匹配距离上限 (米)
+ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息
 
 # 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
-MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "20000"))
-MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "30000"))
+MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "30000"))
+MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "50000"))
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
-    def __init__(self, maze, init_pose):
+
+    def __init__(self, maze, init_pose, *, laser_angle_offset_deg: float = 0.0):
         """
         maze: Maze对象，提供占据栅格地图 (未知初始化) 和环境参数。
         init_pose: 初始位姿 (x, y, theta)。
@@ -37,6 +40,9 @@ class ICPSlam:
         self.min_y = maze.bounds[1]
         # 当前SLAM估计的机器人位姿
         self.x, self.y, self.theta = init_pose
+        # 激光雷达安装角度偏移（车体坐标系下的零度方向修正）
+        self.laser_angle_offset = math.radians(float(laser_angle_offset_deg))
+
         # 保存地图中的点云（全局坐标）用于ICP匹配
         self.map_points = []  # list of [x,y] obstacle points
         self.map_points_tensor = None  # 地图点云的PyTorch张量版本
@@ -206,7 +212,7 @@ class ICPSlam:
             # 在CUDA或CPU上直接计算
             return torch.linalg.det(matrix)
 
-    def update(self, odom_delta, scan):
+    def update(self, odom_delta, scan, angles_deg: Optional[Sequence[float]] = None):
         """
         使用新的里程计增量 odom_delta (tuple: (delta_distance, delta_theta))
         和激光扫描数据 scan (距离列表) 更新 SLAM 估计和地图。
@@ -222,11 +228,25 @@ class ICPSlam:
 
         # 步骤2: ICP 匹配校正 (使用 scan 与已有地图点云匹配修正位姿)
         # 将激光扫描点转换为全局坐标（基于预测位姿）
-        angles_np = np.radians(np.arange(0, 360, 1.0))
-        if len(scan) != len(angles_np):
+        if angles_deg is not None and len(angles_deg) == len(scan):
+            angles_array = np.array(angles_deg, dtype=float)
+            finite_mask = np.isfinite(angles_array)
+            if np.any(finite_mask):
+                angles_array = np.mod(angles_array, 360.0)
+                if not np.all(finite_mask):
+                    fallback = np.linspace(0, 360, len(scan), endpoint=False)
+                    angles_array = np.where(finite_mask, angles_array, fallback)
+                angles_np = np.radians(angles_array)
+            else:
+                angles_np = np.radians(np.linspace(0, 360, len(scan), endpoint=False))
+        else:
             angles_np = np.radians(np.linspace(0, 360, len(scan), endpoint=False))
 
-        pts_local = []
+        angle_offset = self.laser_angle_offset
+
+        angle_offset = self.laser_angle_offset
+
+        body_points = []
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR  # 80% 最大范围阈值
         adjacent_diff_threshold = ADJACENCY_DIFF_THRESHOLD       # 相邻点距离差阈值
 
@@ -255,23 +275,22 @@ class ICPSlam:
                         should_skip = True
             if should_skip:
                 continue
-            # 计算该激光点的全局坐标
-            angle = self.theta + angles_np[i]
-            px = self.x + dist * math.cos(angle)
-            py = self.y + dist * math.sin(angle)
-            pts_local.append([px, py])
+            # 计算该激光点在机器人坐标系下的坐标
+            local_angle = angle_offset + angles_np[i]
+            local_x = dist * math.cos(local_angle)
+            local_y = dist * math.sin(local_angle)
+            body_points.append([local_x, local_y])
 
-        if not pts_local:
+        if not body_points:
             # 没有有效扫描点，直接返回预测位姿（无ICP校正）
             return (self.x, self.y, self.theta)
-        pts_local = np.array(pts_local, dtype=np.float32)
+        body_points_np = np.array(body_points, dtype=np.float32)
 
         # 如果存在已有地图点云（仅内存中保留一份），则进行 ICP 匹配校正
         icp_iterations = 0
-        if (self.map_points_tensor is not None and self.map_points_tensor.numel() > 0) and pts_local.size > 0:
+        if (self.map_points_tensor is not None and self.map_points_tensor.numel() > 0) and body_points_np.size > 0:
             # 开始 ICP 前，将地图点云加载至 GPU/CPU 张量
-            # 将新扫描点转换为 PyTorch 张量
-            src = self.to_tensor(pts_local)  # 源点云 (shape: [N_src, 2])
+            src_body = self.to_tensor(body_points_np)  # 源点云（机器人坐标系，形状 [N_src, 2]）
             # 准备目标点云张量 (地图点)
             tgt = self.map_points_tensor  # 仅使用内存中的最新地图点云
             # 若目标点云过大，则随机子采样到上限，限制 cdist 峰值内存
@@ -281,32 +300,48 @@ class ICPSlam:
                     tgt = tgt.index_select(0, idx)
             except Exception:
                 pass
+
+            # 预测位姿变换（作为初始猜测）
+            cos_theta = math.cos(self.theta)
+            sin_theta = math.sin(self.theta)
+            R_total = torch.tensor(
+                [[cos_theta, -sin_theta], [sin_theta, cos_theta]],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            t_total = torch.tensor([self.x, self.y], dtype=torch.float32, device=self.device)
+
             # 在 no_grad 环境下进行 ICP 迭代，以减少显存开销
             with torch.no_grad():
-                # 提前初始化 R 和 t，若 ICP 对应点不足可保持单位变换
-                R = torch.eye(2, device=self.device)
-                t = torch.zeros(2, device=self.device)
-                # 用于避免未定义变量的占位初始化
-                H = None; U = Vt = None
-                U_cpu = Vt_cpu = None
+                R = R_total
+                t = t_total
+                src_world_prev = (R @ src_body.T).T + t
+                prev_error = float('inf')  # 追踪误差变化
+                stagnation_count = 0  # 连续停滞计数
                 # ICP 迭代过程
                 for it in range(self.icp_max_iter):
                     icp_iterations = it + 1
                     # 计算源点集到目标点集的距离矩阵并寻找最近邻
-                    dist_matrix = torch.cdist(src, tgt)  # [N_src, N_tgt]
+                    dist_matrix = torch.cdist(src_world_prev, tgt)  # [N_src, N_tgt]
                     min_dists, min_indices = torch.min(dist_matrix, dim=1)
                     # 筛选出距离在阈值内的有效对应点对
                     valid_mask = min_dists < self.icp_correspondence_thresh
-                    if torch.sum(valid_mask) < 3:
+                    valid_count = int(torch.sum(valid_mask).item())
+                    current_error = float(torch.mean(min_dists[valid_mask]).item()) if valid_count > 0 else float('inf')
+                    
+                    if valid_count < 3:
                         # 对应点太少，无法计算精确变换，退出 ICP
+                        if ICP_DEBUG:
+                            print(f"[ICP][debug] iter={it} valid_corr={valid_count} < 3, early exit")
                         break
-                    paired_src = src[valid_mask]
+                    paired_src_body = src_body[valid_mask]
+                    paired_src_world = src_world_prev[valid_mask]
                     paired_tgt = tgt[min_indices[valid_mask]]
                     # 计算配对点集的质心
-                    src_center = torch.mean(paired_src, dim=0)
+                    src_center_body = torch.mean(paired_src_body, dim=0)
                     tgt_center = torch.mean(paired_tgt, dim=0)
                     # 去中心化点集坐标
-                    src_centered = paired_src - src_center
+                    src_centered = paired_src_body - src_center_body
                     tgt_centered = paired_tgt - tgt_center
                     # 计算协方差矩阵 H
                     H = src_centered.T @ tgt_centered
@@ -320,33 +355,56 @@ class ICPSlam:
                         if torch.linalg.det(R_cpu_tensor) < 0:
                             Vt_cpu[-1, :] *= -1
                             R_cpu_tensor = Vt_cpu.T @ U_cpu.T
-                        R = R_cpu_tensor.to(self.device)
+                        R_delta = R_cpu_tensor.to(self.device)
                     else:
                         U, _, Vt = torch.linalg.svd(H)
-                        R = Vt.T @ U.T
+                        R_delta = Vt.T @ U.T
                         # 若产生反射，调整最后一行符号确保合法旋转
-                        if self.compute_determinant(R) < 0:
+                        if self.compute_determinant(R_delta) < 0:
                             Vt_fixed = Vt.clone()
                             Vt_fixed[-1, :] *= -1
-                            R = Vt_fixed.T @ U.T
+                            R_delta = Vt_fixed.T @ U.T
                     # 计算平移向量 t
-                    t = tgt_center - R @ src_center
-                    # 将变换应用于源点集合并计算最大位移差
-                    src_new = (R @ src.T).T + t
-                    diff = torch.max(torch.norm(src_new - src, dim=1))
-                    # 更新 src，为下次迭代使用更新后的点集
-                    src = src_new
+                    t_delta = tgt_center - R_delta @ src_center_body
+                    # 将新变换应用于源点集合并计算最大位移差
+                    src_world_new = (R_delta @ src_body.T).T + t_delta
+                    diff = torch.max(torch.norm(src_world_new - src_world_prev, dim=1))
+                    # 更新当前估计，为下次迭代使用
+                    R = R_delta
+                    t = t_delta
+                    src_world_prev = src_world_new
+                    
+                    # 检测停滞（误差不再显著下降）
+                    error_reduction = prev_error - current_error
+                    if abs(error_reduction) < 1e-6:  # 误差几乎不变
+                        stagnation_count += 1
+                        if stagnation_count >= 10:  # 连续10次停滞
+                            if ICP_DEBUG:
+                                print(f"[ICP][debug] iter={it+1} stagnation detected, early exit (error={current_error:.6f})")
+                            break
+                    else:
+                        stagnation_count = 0
+                    prev_error = current_error
+                    
                     if diff < self.icp_tolerance:
                         # 收敛判定：变化量小于阈值，结束迭代
+                        if ICP_DEBUG:
+                            print(f"[ICP][debug] iter={it+1} converged (diff={float(diff):.6f} < tol={self.icp_tolerance})")
                         break
+                    
+                    # 达到最大迭代次数的警告
+                    if it + 1 == self.icp_max_iter:
+                        print(f"[ICP][WARN] reached MAX_ITER={self.icp_max_iter}, diff={float(diff):.6f}, error={current_error:.6f}, valid_corr={valid_count}/{len(src_body)} (tgt_pts={len(tgt)})")
+                        
                 # 提取最终结果到 CPU（numpy）用于更新机器人位姿
                 R_cpu = R.cpu().numpy()
                 t_cpu = t.cpu().numpy()
                 # 显式删除大张量释放显存
                 for name in [
                     'dist_matrix', 'min_dists', 'min_indices', 'valid_mask',
-                    'paired_src', 'paired_tgt', 'src_center', 'tgt_center',
-                    'src_centered', 'tgt_centered', 'src_new', 'src', 'tgt',
+                    'paired_src_body', 'paired_src_world', 'paired_tgt',
+                    'src_center_body', 'tgt_center', 'src_centered', 'tgt_centered',
+                    'src_world_new', 'src_world_prev', 'src_body', 'tgt',
                     'U', 'Vt', 'U_cpu', 'Vt_cpu'
                 ]:
                     if name in locals():
@@ -359,14 +417,12 @@ class ICPSlam:
                     torch.cuda.empty_cache()
                 elif self.device.type == 'mps' and hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
                     torch.mps.empty_cache()
-            # 利用 ICP 计算得到的 R_cpu 和 t_cpu 修正机器人位姿
-            angle_correction = math.atan2(R_cpu[1, 0], R_cpu[0, 0])
-            self.theta = math.atan2(math.sin(self.theta + angle_correction),
-                                    math.cos(self.theta + angle_correction))
-            self.x += t_cpu[0]
-            self.y += t_cpu[1]
+            # 利用 ICP 直接求得的绝对位姿修正机器人状态
+            self.theta = math.atan2(R_cpu[1, 0], R_cpu[0, 0])
+            self.x = float(t_cpu[0])
+            self.y = float(t_cpu[1])
             # 使用修正后的位姿更新当前激光点的全局坐标（numpy 计算）
-            pts_local = pts_local.dot(R_cpu.T) + t_cpu
+            pts_local = body_points_np.dot(R_cpu.T) + t_cpu
         # （若未进入 ICP，例如地图为空，仅根据里程计预测，则直接使用预测位姿进行建图）
 
         # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
@@ -403,7 +459,10 @@ class ICPSlam:
 
 
             # 计算该激光束末端的全局坐标 (end_x, end_y)
-            beam_angle = self.theta + (angles_np[i] if 'angles_np' in locals() else math.radians(i))
+            if 'angles_np' in locals() and i < len(angles_np):
+                beam_angle = self.theta + angle_offset + angles_np[i]
+            else:
+                beam_angle = self.theta + angle_offset + math.radians(i)
             beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))  # 归一化角度
             hit_obstacle = dist < max_range and dist <= far_threshold and not math.isinf(dist)
             effective_dist = dist if hit_obstacle else min(far_threshold, dist if dist < float('inf') else far_threshold)

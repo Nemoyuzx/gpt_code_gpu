@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from matplotlib.patches import Circle, Rectangle
+from matplotlib.patches import Patch
 import math
 import numpy as np
 
@@ -53,7 +55,8 @@ class Visualizer:
 
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
                predicted_traj=None, robot_radius=None, safety_radius=None,
-               actual_traj=None, actual_traj_style=None, extra_trajs=None):
+               actual_traj=None, actual_traj_style=None, extra_trajs=None,
+               scan_angles=None, unsafe_mask=None, dwa_eval_paths=None):
         self._render_update(
             robot_pose,
             scan,
@@ -67,11 +70,15 @@ class Visualizer:
             actual_traj=actual_traj,
             actual_traj_style=actual_traj_style,
             extra_trajs=extra_trajs,
+            scan_angles=scan_angles,
+            unsafe_mask=unsafe_mask,
+            dwa_eval_paths=dwa_eval_paths,
         )
 
     def _render_update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
                        predicted_traj=None, robot_radius=None, safety_radius=None,
-                       actual_traj=None, actual_traj_style=None, extra_trajs=None):
+                       actual_traj=None, actual_traj_style=None, extra_trajs=None,
+                       scan_angles=None, unsafe_mask=None, dwa_eval_paths=None):
         """
         更新绘制当前状态。
         robot_pose: 机器人位姿 (x, y, theta)。
@@ -99,6 +106,17 @@ class Visualizer:
             min_x, min_y, max_x, max_y = self.maze.bounds
             extent = (min_x, max_x, min_y, max_y)
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
+            if unsafe_mask is not None:
+                try:
+                    overlay = np.zeros((h, w), dtype=float)
+                    overlay[np.logical_and(unsafe_mask, occupancy != 1)] = 1.0
+                    if np.any(overlay > 0):
+                        self.ax.imshow(overlay, origin='lower', cmap='Reds', extent=extent,
+                                        vmin=0.0, vmax=1.0, alpha=0.22)
+                        self.ax.add_patch(Patch(facecolor=(1.0, 0.4, 0.4, 0.22), edgecolor='none',
+                                                label='安全缓冲区'))
+                except Exception:
+                    pass
             known_mask = occupancy != -1
             if np.any(known_mask):
                 ys, xs = np.nonzero(known_mask)
@@ -166,11 +184,15 @@ class Visualizer:
             scan_pts_y = []
             num_beams = len(scan)
             max_range = LIDAR_DISPLAY_MAX_RANGE  # 使用固定的最大范围
+            angle_offset = getattr(self.slam, "laser_angle_offset", 0.0)
             for i, dist in enumerate(scan):
                 if dist < max_range:
-                    angle = theta + math.radians(i * (360.0/num_beams))
-                    sx = x + dist * math.cos(angle)
-                    sy = y + dist * math.sin(angle)
+                    if scan_angles is not None and i < len(scan_angles) and math.isfinite(scan_angles[i]):
+                        beam_angle = theta + angle_offset + math.radians(scan_angles[i])
+                    else:
+                        beam_angle = theta + angle_offset + i * (2.0 * math.pi / max(1, num_beams))
+                    sx = x + dist * math.cos(beam_angle)
+                    sy = y + dist * math.sin(beam_angle)
                     scan_pts_x.append(sx)
                     scan_pts_y.append(sy)
             self.ax.scatter(scan_pts_x, scan_pts_y, c='b', s=5, label='Lidar Points')
@@ -180,6 +202,21 @@ class Visualizer:
                 px = predicted_traj[:, 0]
                 py = predicted_traj[:, 1]
                 self.ax.plot(px, py, "-g", linewidth=2, alpha=0.8, label="Predicted Traj")
+            except Exception:
+                pass
+        # 绘制DWA采样评估范围（灰色线簇）
+        if dwa_eval_paths:
+            try:
+                segments = []
+                for pts in dwa_eval_paths:
+                    arr = np.asarray(pts, dtype=float)
+                    if arr.ndim != 2 or arr.shape[0] < 2:
+                        continue
+                    segments.append(arr[:, :2])
+                if segments:
+                    lc = LineCollection(segments, colors=(0.6, 0.6, 0.6, 0.4), linewidths=0.6)
+                    lc.set_label('DWA Evaluated Traj')
+                    self.ax.add_collection(lc)
             except Exception:
                 pass
         # 绘制实际轨迹（橙色折线）

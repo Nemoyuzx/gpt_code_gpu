@@ -29,13 +29,13 @@ class LegacyDWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 1.0  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
-    min_speed: float = -1.0  # 默认禁倒车（如需倒车可设为负）。
-    max_yaw_rate: float = 120.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
-    max_accel: float = 1.2  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
-    max_delta_yaw_rate: float = 120.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
-    v_resolution: float = 0.05  # 速度采样步长。越小越细但更慢；常取 0.03~0.06。
-    yaw_rate_resolution: float = 0.5 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
+    max_speed: float = 0.7  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
+    min_speed: float = -0.7  # 默认禁倒车（如需倒车可设为负）。
+    max_yaw_rate: float = 160.0 * math.pi / 180.0  # 最大角速度上限，进一步放宽w窗口支持急转。
+    max_accel: float = 0.8  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_delta_yaw_rate: float = 360.0 * math.pi / 180.0  # 角速度变化率上限，加大w窗口对急转更友好。
+    v_resolution: float = 0.1  # 速度采样步长。越小越细但更慢；调整0.05->0.06降低采样数。
+    yaw_rate_resolution: float = 8.0 * math.pi / 180.0  # 角速度采样步长。调整0.5°->8°降低采样数。
     dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
     predict_time: float = 1.4  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
     to_goal_cost_gain: float = 0.6  # 目标朝向代价权重。大→更快对准目标方向。
@@ -48,15 +48,15 @@ class LegacyDWAConfig:
     smoothing_alpha: float = 0.6  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
     small_angle: float = 10.0 * math.pi / 180.0  # 认为“已较好对齐”的角度阈值，用于若干条件。
     small_angle_rot_scale: float = 3.0  # 小角度时增加旋转代价的比例，鼓励直行。
-    robot_radius: float = 0.3  # 机器人半径(m)。与地图分辨率/真实底盘匹配。
+    robot_radius: float = 0.25  # 机器人半径(m)。与地图分辨率/真实底盘匹配。
     stuck_vel: float = 0.01  # 判定“卡住”的速度阈值。
-    safety_clearance: float = 0.3  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
-    clearance_cost_gain: float = 3.0  # 接近膨胀半径时的代价权重。大→更远离墙。
+    safety_clearance: float = 0  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
+    clearance_cost_gain: float = 1.0  # 接近膨胀半径时的代价权重。大→更远离墙。
     spin_penalty_gain: float = 0.3  # 适度降低自旋惩罚，结合转向更灵活。
     min_forward_ratio: float = 0.15  # 小角度时最低前进速度占比。
-    near_wall_threshold: float = 0.6  # 判定“靠墙”的gap阈值(m)。
-    near_wall_rot_boost: float = 0.5  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
-    near_wall_forward_bias_gain: float = 0.8  # 靠墙且前进速度不足时的附加惩罚增益。
+    near_wall_threshold: float = 0.1  # 判定“靠墙”的gap阈值(m)。
+    near_wall_rot_boost: float = 0.3  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
+    near_wall_forward_bias_gain: float = 0.3  # 靠墙且前进速度不足时的附加惩罚增益。
     align_deadband: float = 3.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
     forward_bias_min_disp: float = 0.01  # 预测末端位移阈值。位移很小却大旋转→惩罚。
     forward_bias_cost_gain: float = 1.2  # 上述惩罚权重。
@@ -77,8 +77,8 @@ class LegacyDWAConfig:
     accel_boost_speed: float = 0.3  # 低速阶段触发临时放宽线速度上界的门限。
     accel_boost_factor: float = 3.0  # 触发时上界放宽倍数。
     # 角度偏转减速：当朝向与目标方向存在较大偏差时降低允许前进最大速度
-    turn_slow_angle: float = 15.0 * math.pi / 180.0  # 超过该角度开始对前进速度降额。
-    turn_min_speed_scale: float = 0.08  # 在最大朝向偏差(≈pi)时的最大速度比例。
+    turn_slow_angle: float = 12.0 * math.pi / 180.0  # 降低触发门槛，使较小偏角也会减速转弯。
+    turn_min_speed_scale: float = 0.05  # 在最大朝向偏差(≈pi)时进一步降低可用前进速度。
     turn_debug: bool = False  # 打印转向减速信息。
     # ---- 反复前后抖动抑制相关配置 ----
     allow_reverse: bool = True  # 是否允许倒车（全局开关）。
@@ -121,6 +121,7 @@ class LegacyDWAConfig:
     reverse_brake_boost_factor: float = 2.0  # 倒车→前进时允许更大正向加速度以快速刹停。
     reverse_continue_penalty_gain: float = 2.2  # 已对齐仍倒车的惩罚。
     reverse_reward_angle_gate_deg: float = 6.0  # 角度误差阈值(度)，小于此不再奖励倒车。
+    reverse_small_heading_gap: float = 0.22  # 小角度面向目标时允许倒车的最大前向净空(m)。
     # ---- 前进优先 / 启动阶段策略 ----
     initial_no_reverse_steps: int = 0  # 启动阶段不额外禁倒车（已整体禁倒车）。
     forward_pref_angle_deg: float = 40.0  # 角度小于该值时偏好前进而非倒车。
@@ -141,6 +142,8 @@ class LegacyDWAConfig:
     brake_enable: bool = True                        # 开启基于前向净空的速度上界裁剪
     brake_react_time: float = 0.1                    # 反应时间(s)，v*treact
     brake_margin_m: float = 0.3                    # 额外安全裕度(m)
+    brake_margin_min: float = 0.05                  # 动态裁剪时保证的最小裕度（避免完全清零gap）。
+    brake_margin_ratio: float = 0.45                # 裕度随gap缩放比，gap越小越少扣减。
     brake_decel_factor: float = 1.3                  # 相对 max_accel 的制动放大倍数
     brake_skip_smoothing: bool = True                # 制动时跳过线速度平滑
     brake_drop_threshold: float = 0.15               # 需要降速超过该阈值则跳过平滑
@@ -148,7 +151,7 @@ class LegacyDWAConfig:
     # ---- 全局路径贴合（仅作方向提示，不改变终点） ----
     path_align_gain: float = 0.5      # 和路径切向对齐的角度代价权重
     path_deviation_gain: float = 0.8  # 相对路径的横向偏差（米）代价权重
-    path_progress_gain: float = 0.3   # 可选：沿路径前进的奖励（默认关闭）
+    path_progress_gain: float = 0   # 可选：沿路径前进的奖励（默认关闭）
     # ---- 实现中用到的通用阈值（统一收口，消除魔法数） ----
     # 倒车判定/采样与惩罚相关的小阈值
     reverse_sample_eps: float = 0.01     # 采样/判定倒车使用的速度阈值(|v|>eps 才视作倒车)
@@ -168,9 +171,10 @@ class LegacyDWAConfig:
     # 振荡检测中将近零速度当作0的阈值
     oscillation_sign_eps: float = 0.01
     # ---- 内存与性能优化：障碍物评估参数 ----
-    obstacle_eval_local_radius: float = 5.0  # 仅评估轨迹附近该半径(米)内的障碍
-    obstacle_eval_step_stride: int = 2       # 轨迹评估步长（每隔多少个时间步采样一次）
-    obstacle_eval_max_points: int = 2000     # 参与评估的障碍点最大数量上限
+    obstacle_eval_local_radius: float = 4.0  # 仅评估轨迹附近该半径(米)内的障碍（降低5.0->4.0）
+    obstacle_eval_step_stride: int = 3       # 轨迹评估步长（每隔多少个时间步采样一次，2->3）
+    obstacle_eval_max_points: int = 1500     # 参与评估的障碍点最大数量上限（2000->1500）
+    visual_eval_max_paths: int = 60          # 可视化时最多展示的采样候选轨迹数（120->60）
 
 
 class LegacyDWAPlanner:
@@ -190,6 +194,7 @@ class LegacyDWAPlanner:
         self.last_timing = {}
         self._obs_local_cache = None  # 缓存当前周期的局部障碍点
         self._path_hint_cache = None  # 缓存预计算的路径段信息
+        self.last_eval_paths = None    # 用于可视化的采样轨迹集合
 
     def plan(self, state: np.ndarray, goal: Tuple[float, float], obstacles: np.ndarray, path_hint: np.ndarray | None = None):
         """核心规划：返回平滑后的控制 (v, w) 及最佳轨迹。"""
@@ -232,6 +237,7 @@ class LegacyDWAPlanner:
         best_u = (0.0, 0.0)
         best_traj = None
         best_components = None
+        eval_paths = []
 
         # 目标方向参数
         start_x, start_y = state[0], state[1]
@@ -251,6 +257,7 @@ class LegacyDWAPlanner:
         small_angle_loose = small_angle * 0.7
         reverse_sample_eps = self.cfg.reverse_sample_eps
         inplace_angle_rad = math.radians(self.cfg.inplace_angle_deg)
+        reverse_small_heading_gap = getattr(self.cfg, 'reverse_small_heading_gap', None)
         # 预计算循环内常量
         inflated_r = self.cfg.robot_radius + self.cfg.safety_clearance
         robot_radius = self.cfg.robot_radius
@@ -323,6 +330,11 @@ class LegacyDWAPlanner:
                     # 小角度且前向净空充足时，采样阶段也直接忽略倒车（双重保护）
                     small_heading = (heading_diff < forward_pref_angle_rad)
                     small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < forward_pref_angle_rad)
+                    if (reverse_small_heading_gap is not None and reverse_small_heading_gap > 0):
+                        gap_now = getattr(self, '_front_gap_cache', float('inf'))
+                        if ((small_heading or small_path_align) and gap_now > reverse_small_heading_gap and not direct_reverse_zone):
+                            timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                            continue
                     if ((small_heading or small_path_align) and 
                         self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
                         timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
@@ -338,8 +350,10 @@ class LegacyDWAPlanner:
                     and v > -reverse_sample_eps
                     and abs(v) < align_small_speed
                 ):
-                    timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                    continue
+                    close_obstacle_ahead = math.isfinite(obs_min_dist) and obs_min_dist <= (inflated_r + 0.12)
+                    if not close_obstacle_ahead:
+                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                        continue
                 if ang_c < small_angle_loose:
                     base_need = 0.5 * min_forward_speed
                     if v >= 0:
@@ -356,6 +370,18 @@ class LegacyDWAPlanner:
                 
                 t_other = time.perf_counter()
                 any_candidate = True
+
+                try:
+                    traj_xy = traj[:, :2]
+                    stride = max(1, int(len(traj_xy) / 6))
+                    sampled = traj_xy[::stride]
+                    if sampled.shape[0] == 0:
+                        sampled = traj_xy[-1:, :]
+                    elif not np.array_equal(sampled[-1], traj_xy[-1]):
+                        sampled = np.vstack((sampled, traj_xy[-1]))
+                    eval_paths.append(np.asarray(sampled, dtype=np.float32))
+                except Exception:
+                    pass
 
                 to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
                 speed_c = self.cfg.speed_cost_gain * (self.cfg.max_speed - abs(traj[-1, 3]))
@@ -498,6 +524,17 @@ class LegacyDWAPlanner:
                         obs_min_dist, obs_raw_cost = self._obstacle_cost_components(traj, obstacles)
                         if obs_min_dist <= self.cfg.robot_radius:
                             continue
+                        try:
+                            traj_xy = traj[:, :2]
+                            stride = max(1, int(len(traj_xy) / 6))
+                            sampled = traj_xy[::stride]
+                            if sampled.shape[0] == 0:
+                                sampled = traj_xy[-1:, :]
+                            elif not np.array_equal(sampled[-1], traj_xy[-1]):
+                                sampled = np.vstack((sampled, traj_xy[-1]))
+                            eval_paths.append(np.asarray(sampled, dtype=np.float32))
+                        except Exception:
+                            pass
                         to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
                         speed_c = self.cfg.speed_cost_gain * (self.cfg.max_speed - abs(traj[-1, 3]))
                         if v < -self.cfg.reverse_sample_eps and direct_reverse_zone:
@@ -519,6 +556,17 @@ class LegacyDWAPlanner:
                     for w in w_samples:
                         traj = self._predict_trajectory(state, v, w)
                         ang_c, dist_c = self._goal_cost(traj, goal)
+                        try:
+                            traj_xy = traj[:, :2]
+                            stride = max(1, int(len(traj_xy) / 6))
+                            sampled = traj_xy[::stride]
+                            if sampled.shape[0] == 0:
+                                sampled = traj_xy[-1:, :]
+                            elif not np.array_equal(sampled[-1], traj_xy[-1]):
+                                sampled = np.vstack((sampled, traj_xy[-1]))
+                            eval_paths.append(np.asarray(sampled, dtype=np.float32))
+                        except Exception:
+                            pass
                         to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
                         speed_c = self.cfg.speed_cost_gain * (self.cfg.max_speed - abs(traj[-1, 3]))
                         if v < -self.cfg.reverse_sample_eps and direct_reverse_zone:
@@ -607,6 +655,15 @@ class LegacyDWAPlanner:
         timing['post_update'] = (time.perf_counter() - post_start) * 1000.0
         timing['total'] = (time.perf_counter() - start_time) * 1000.0
         self.last_timing = timing
+        # 采样轨迹可视化缓存（裁剪数量以避免绘制过载）
+        if eval_paths:
+            max_paths = max(0, int(getattr(self.cfg, 'visual_eval_max_paths', 0)))
+            if max_paths > 0 and len(eval_paths) > max_paths:
+                step = int(math.ceil(len(eval_paths) / max_paths))
+                eval_paths = eval_paths[::step]
+            self.last_eval_paths = [p for p in eval_paths if isinstance(p, np.ndarray) and p.shape[0] >= 2]
+        else:
+            self.last_eval_paths = None
         return self._last_u, out_traj
 
     def _prepare_local_obstacles(self, state: np.ndarray, obstacles: np.ndarray | None):
@@ -782,7 +839,12 @@ class LegacyDWAPlanner:
         if self.cfg.brake_enable and hasattr(self, '_front_gap_cache'):
             gap = max(0.0, float(self._front_gap_cache))  # gap = 前向清距 - 机器人半径
             a_brake = max(1e-6, cfg.max_accel * self.cfg.brake_decel_factor)
-            eff_gap = max(0.0, gap - self.cfg.brake_margin_m)
+            margin = self.cfg.brake_margin_m
+            if gap > 1e-6:
+                adaptive = gap * max(0.0, self.cfg.brake_margin_ratio)
+                margin = min(margin, max(self.cfg.brake_margin_min, adaptive))
+                margin = min(margin, gap * 0.95)
+            eff_gap = max(0.0, gap - margin)
             t = max(0.0, self.cfg.brake_react_time)
             # v_max 解: v^2/(2a) + v*t <= eff_gap  => v = -a*t + sqrt((a*t)^2 + 2*a*eff_gap)
             disc = (a_brake * t) ** 2 + 2.0 * a_brake * eff_gap
@@ -1279,3 +1341,5 @@ class DWAPlanner:
             )
             parts.append(f"[{detail}]")
         print(" ".join(parts))
+
+

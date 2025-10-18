@@ -1,6 +1,7 @@
 from collections import deque
 import heapq
 import math
+import numpy as np
 
 class FrontierExplorer:
     """前沿探索与路径规划模块。确定下一个目标前沿并规划路径。"""
@@ -11,7 +12,57 @@ class FrontierExplorer:
         参数:
         - safety_distance: 路径规划时与障碍物保持的安全距离（栅格单位）
         """
-        self.safety_distance = safety_distance
+        self.safety_distance = float(safety_distance)
+        # 前沿缓存
+        self._cached_frontiers = None
+        self._cached_occupancy_hash = None
+
+    def set_safety_distance(self, safety_distance: float) -> None:
+        """Update the default safety distance (in grid units)."""
+        self.safety_distance = float(max(0.0, safety_distance))
+
+    def _cluster_frontiers(self, frontiers, cluster_radius=3):
+        """
+        将前沿点聚类，每个簇选一个代表点。
+        
+        参数:
+        - frontiers: 前沿点列表 [(x, y), ...]
+        - cluster_radius: 聚类半径（栅格单位）
+        
+        返回: 聚类后的代表点列表
+        """
+        if not frontiers:
+            return []
+        
+        frontiers = list(frontiers)
+        clusters = []
+        used = set()
+        
+        for i, (fx, fy) in enumerate(frontiers):
+            if i in used:
+                continue
+            
+            # 创建新簇
+            cluster = [(fx, fy)]
+            used.add(i)
+            
+            # 找到所有邻近的前沿点
+            for j, (ox, oy) in enumerate(frontiers):
+                if j in used:
+                    continue
+                dist = math.sqrt((fx - ox)**2 + (fy - oy)**2)
+                if dist <= cluster_radius:
+                    cluster.append((ox, oy))
+                    used.add(j)
+            
+            # 计算簇的质心作为代表点
+            cx = sum(p[0] for p in cluster) / len(cluster)
+            cy = sum(p[1] for p in cluster) / len(cluster)
+            # 找到最接近质心的实际前沿点
+            rep = min(cluster, key=lambda p: (p[0]-cx)**2 + (p[1]-cy)**2)
+            clusters.append(rep)
+        
+        return clusters
 
     def find_frontiers(self, occupancy):
         """
@@ -44,11 +95,12 @@ class FrontierExplorer:
 
     def find_nearest_frontier(self, occupancy, start):
         """
-        从start出发，使用多策略方法找到最近的前沿单元及路径。
+        从start出发，使用多策略方法找到最近的前沿单元及路径（优化版本）。
         
-        策略顺序：
-        1. 局部BFS搜索 - 从起点开始在连通区域内搜索前沿
-        2. 全局前沿检测 - 如果局部搜索失败，寻找所有前沿并选择最近的
+        优化策略：
+        1. 局部BFS搜索（快速）- 扩大搜索限制
+        2. 全局前沿检测 + 聚类（减少候选数量）
+        3. 限制路径规划次数
         
         参数:
         - occupancy: 占用栅格地图
@@ -61,84 +113,198 @@ class FrontierExplorer:
         h, w = occupancy.shape
         sx, sy = start
 
-        # 策略1: 局部BFS搜索
+        if not (0 <= sx < w and 0 <= sy < h):
+            return None, None
+
+        # 策略1: 局部BFS搜索（保持原有逻辑，较快）
         visited = [[False]*w for _ in range(h)]
         parent = {}
         dq = deque()
         dq.append((sx, sy))
         visited[sy][sx] = True
         parent[(sx, sy)] = None
-        frontier_cell = None
+        bfs_limit = min(w * h, 10000)  # 扩大BFS范围限制（5000->10000）
+        bfs_count = 0
         
-        while dq:
+        while dq and bfs_count < bfs_limit:
             x, y = dq.popleft()
-            # 检查当前点是否为前沿
+            bfs_count += 1
+
             if occupancy[y, x] == 0:
-                is_frontier = False
-                for (nx, ny) in [(x-1,y), (x+1,y), (x,y-1), (x,y+1),
-                                (x-1,y-1), (x+1,y+1), (x-1,y+1), (x+1,y-1)]:
-                    if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
-                        is_frontier = True
-                        break
-                    if is_frontier and (x, y) != (sx, sy):
-                        if not self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
-                            continue
-                        frontier_cell = (x, y)
-                        break
-                    
+                neighbor_unknown = any(
+                    0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1
+                    for nx, ny in [
+                        (x-1, y), (x+1, y), (x, y-1), (x, y+1),
+                        (x-1, y-1), (x+1, y+1), (x-1, y+1), (x+1, y-1)
+                    ]
+                )
+
+                if neighbor_unknown and (x, y) != (sx, sy):
+                    if self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
+                        path = []
+                        cur = (x, y)
+                        while cur is not None:
+                            path.append(cur)
+                            cur = parent[cur]
+                        path.reverse()
+                        return (x, y), path
+
             # BFS扩展
             for dx, dy in [(-1,0), (1,0), (0,-1), (0,1),
                           (-1,-1), (1,1), (-1,1), (1,-1)]:
                 nx, ny = x + dx, y + dy
                 if (0 <= nx < w and 0 <= ny < h and 
                     not visited[ny][nx] and
-                    (occupancy[ny, nx] == 0 or occupancy[ny, nx] == -1)):  # 允许扩展到未知区域
+                    (occupancy[ny, nx] == 0 or occupancy[ny, nx] == -1)):
                     
-                    # 检查安全距离
-                    if not self._is_safe(occupancy, nx, ny, safety_distance=max(0.5, self.safety_distance)):  # 降低安全距离要求
+                    if not self._is_safe(occupancy, nx, ny, safety_distance=max(0.5, self.safety_distance)):
                         continue
                     
-                    # 对角线移动时检查墙角
                     if abs(dx) == 1 and abs(dy) == 1:
-                        if (occupancy[y, x + dx] == 1) or (occupancy[y + dy, x] == 1):  # 只检查确定的障碍物
+                        if (occupancy[y, x + dx] == 1) or (occupancy[y + dy, x] == 1):
                             continue
                     
                     visited[ny][nx] = True
                     parent[(nx, ny)] = (x, y)
                     dq.append((nx, ny))
 
-        # 如果BFS找到了前沿，构建路径并返回
-        if frontier_cell is not None:
-            path = []
-            cur = frontier_cell
-            while cur is not None:
-                path.append(cur)
-                cur = parent[cur]
-            path.reverse()
-            return frontier_cell, path
-
-        # 策略2: 全局前沿检测
+        # 策略2: 全局前沿检测 + 简化的聚类优化
         frontiers = self._find_all_frontiers(occupancy)
         if not frontiers:
-            return None, None  # 没有找到任何前沿
+            return None, None
 
-        # 计算到每个前沿的距离，选择最近的
+        # 简化聚类：只在前沿点很多时才聚类
+        if len(frontiers) > 100:
+            clustered_frontiers = self._cluster_frontiers(frontiers, cluster_radius=5)
+        else:
+            clustered_frontiers = frontiers
+        
+        origin = (sx, sy)
+        # 按启发式距离排序
+        clustered_frontiers = sorted(clustered_frontiers, key=lambda cell: self._heuristic(origin, cell))
+        
         best_frontier = None
         best_path = None
         min_dist = float('inf')
+        max_candidates = 50  # 进一步减少候选数量（80->50）
 
-        for frontier in frontiers:
-            # 使用A*算法尝试规划路径
+        for idx, frontier in enumerate(clustered_frontiers):
+            if idx >= max_candidates:
+                break
+            heuristic_lower = self._heuristic(origin, frontier)
+            if heuristic_lower >= min_dist:
+                break
+            
+            # 直接使用标准A*，不限制范围（限制范围反而可能更慢）
             path = self.plan_path(occupancy, start, frontier)
+            
+            if path is None:
+                relaxed_sd = max(0.0, self.safety_distance * 0.6)
+                path = self.plan_path(
+                    occupancy,
+                    start,
+                    frontier,
+                    safety_distance=relaxed_sd,
+                    max_unknown_cells=12,
+                    unknown_step_penalty=1.5,
+                )
+            
             if path is not None:
-                # 计算路径长度
                 path_length = len(path)
                 if path_length < min_dist:
                     min_dist = path_length
                     best_frontier = frontier
                     best_path = path
+                    if path_length <= heuristic_lower + 1:
+                        break
 
         return best_frontier, best_path
+
+    def _plan_path_limited(self, occupancy, start, goal, max_radius):
+        """
+        A*路径规划的限制版本，只在指定半径范围内搜索。
+        
+        参数:
+        - max_radius: 最大搜索半径（栅格单位）
+        """
+        sx, sy = start
+        gx, gy = goal
+        if start == goal:
+            return [start]
+
+        h, w = occupancy.shape
+        sd = self.safety_distance
+        
+        start_state = (sx, sy)
+        open_set = []
+        start_h = self._heuristic((sx, sy), (gx, gy))
+        heapq.heappush(open_set, (start_h, 0.0, sx, sy))
+
+        came_from = {}
+        g_score = {start_state: 0.0}
+        closed_set = set()
+        
+        directions = [
+            (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
+            (-1, -1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (1, 1, 1.414)
+        ]
+        
+        while open_set:
+            f_current, g_current, x, y = heapq.heappop(open_set)
+
+            state = (x, y)
+            if state in closed_set:
+                continue
+            
+            # 检查是否超出搜索半径
+            dist_from_start = math.sqrt((x - sx)**2 + (y - sy)**2)
+            if dist_from_start > max_radius:
+                continue
+                
+            closed_set.add(state)
+
+            if (x, y) == (gx, gy):
+                path = []
+                current_state = state
+                while current_state in came_from:
+                    cx, cy = current_state
+                    path.append((cx, cy))
+                    current_state = came_from[current_state]
+                path.append(start)
+                path.reverse()
+                return path
+
+            for dx, dy, cost in directions:
+                nx, ny = x + dx, y + dy
+                
+                if not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                
+                if occupancy[ny, nx] != 0:
+                    continue
+                
+                if not self._is_safe(occupancy, nx, ny, safety_distance=sd):
+                    continue
+                
+                if abs(dx) == 1 and abs(dy) == 1:
+                    if (0 <= x + dx < w and 0 <= y < h and occupancy[y, x + dx] == 1) or \
+                       (0 <= x < w and 0 <= y + dy < h and occupancy[y + dy, x] == 1):
+                        continue
+                
+                next_state = (nx, ny)
+                if next_state in closed_set:
+                    continue
+                    
+                tentative_g = g_score[state] + cost
+
+                if next_state not in g_score or tentative_g < g_score[next_state]:
+                    came_from[next_state] = state
+                    g_score[next_state] = tentative_g
+                    heuristic = self._heuristic((nx, ny), (gx, gy))
+                    f_score = tentative_g + heuristic
+                    heapq.heappush(open_set, (f_score, tentative_g, nx, ny))
+        
+        return None
 
     def plan_path(self, occupancy, start, goal, safety_distance=None,
                   max_unknown_cells=0, unknown_step_penalty=2.0):
@@ -308,7 +474,6 @@ class FrontierExplorer:
                 if not (0 <= nx < w and 0 <= ny < h):
                     continue
                 
-                # 只检查是否为可通行区域，不考虑安全距离
                 if occupancy[ny, nx] != 0:
                     continue
                 
@@ -340,7 +505,11 @@ class FrontierExplorer:
 
     def _is_safe(self, occupancy, x, y, safety_distance=1.0, allow_unknown_cell=False):
         """
-        检查点(x,y)是否与障碍物保持足够的安全距离。
+        检查点(x,y)是否与障碍物保持足够的安全距离（混合策略优化版本）。
+        
+        策略：
+        - 对于小范围检查（safety_distance <= 5）：使用快速局部搜索
+        - 对于大范围或全局检测：使用距离变换图（仅在 _find_all_frontiers 中）
         
         参数:
         - occupancy: 占用栅格地图
@@ -353,53 +522,79 @@ class FrontierExplorer:
         """
         h, w = occupancy.shape
         
+        # 检查边界
+        if not (0 <= x < w and 0 <= y < h):
+            return False
+        
         # 检查是否该点本身是障碍物
         cell_value = occupancy[y, x]
         if cell_value == 1:
             return False
         if cell_value == -1 and not allow_unknown_cell:
             return False
-            
-        # 检查周围一定范围内是否有障碍物
+        
+        # 使用快速局部搜索（对于大多数调用场景更快）
         search_range = math.ceil(safety_distance)
         for dy in range(-search_range, search_range + 1):
             for dx in range(-search_range, search_range + 1):
-                # 跳过超出边界的点
                 nx, ny = x + dx, y + dy
                 if not (0 <= nx < w and 0 <= ny < h):
                     continue
-                    
-                # 如果是障碍物，计算实际距离
-                if occupancy[ny, nx] == 1:  # 1表示障碍物
-                    # 计算与障碍物的欧氏距离
+                if occupancy[ny, nx] == 1:
                     actual_dist = math.sqrt(dx * dx + dy * dy)
                     if actual_dist <= safety_distance:
                         return False
-                        
         return True
     
     def _find_all_frontiers(self, occupancy):
         """
-        遍历整张地图找出所有满足安全距离的前沿点。
+        遍历整张地图找出所有满足安全距离的前沿点（优化版本）。
+        使用缓存和聚类减少重复计算。
         前沿定义为：已知空闲且邻接未知区域的栅格。
 
         返回:
         - list[(x, y)]: 所有前沿点的坐标列表
         """
+        # 检查缓存
+        occupancy_hash = hash(occupancy.tobytes())
+        if self._cached_occupancy_hash == occupancy_hash and self._cached_frontiers is not None:
+            return self._cached_frontiers
+        
         h, w = occupancy.shape
         frontiers = []
+        
+        # 只检查空闲栅格
+        free_mask = (occupancy == 0)
+        # 找到邻接未知区域的栅格
         directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)]
-
+        
+        # 优化：先找到所有潜在前沿点（邻接未知区域），再批量检查安全距离
+        potential_frontiers = []
         for y in range(h):
             for x in range(w):
-                if occupancy[y, x] != 0:
+                if not free_mask[y, x]:
                     continue
+                
+                # 快速检查是否邻接未知区域
+                has_unknown_neighbor = False
                 for dx, dy in directions:
                     nx, ny = x + dx, y + dy
                     if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
-                        if self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
-                            frontiers.append((x, y))
+                        has_unknown_neighbor = True
                         break
+                
+                if has_unknown_neighbor:
+                    potential_frontiers.append((x, y))
+        
+        # 批量检查安全距离（只对潜在前沿点检查）
+        for x, y in potential_frontiers:
+            if self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
+                frontiers.append((x, y))
+        
+        # 缓存结果
+        self._cached_frontiers = frontiers
+        self._cached_occupancy_hash = occupancy_hash
+        
         return frontiers
 
     def calculate_path_length(self, path, resolution):

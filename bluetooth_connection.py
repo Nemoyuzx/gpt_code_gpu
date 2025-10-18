@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import sys
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,8 +22,9 @@ except ImportError as exc:  # pragma: no cover - environment check
 
 @dataclass
 class LaserSample:
-    angle: int
-    distance: int
+    angle: float  # degrees
+    distance: float  # millimetres
+    index: int
 
 
 @dataclass
@@ -71,16 +73,22 @@ class ParsedDataWriter:
         self.parsed_path = parsed_path
         self.raw_path = raw_path
         self._lock = threading.Lock()
-        self._init_files()
+        self._reset_files()
 
-    def _init_files(self) -> None:
+    def _reset_files(self) -> None:
         for path in (self.parsed_path, self.raw_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8"):
                 pass
 
-    def write_laser_point(self, sample: LaserSample, raw_bytes: bytes, idx: int) -> None:
-        parsed_line = f"LASER idx={idx} angle={sample.angle} distance={sample.distance}"
+    def reset(self) -> None:
+        with self._lock:
+            self._reset_files()
+
+    def write_laser_point(self, sample: LaserSample, raw_bytes: bytes) -> None:
+        parsed_line = (
+            f"LASER idx={sample.index} angle={sample.angle:.2f} distance_mm={sample.distance:.1f}"
+        )
         raw_line = "LASER_RAW " + " ".join(f"0x{b:02X}" for b in raw_bytes)
         self._append(parsed_line, raw_line)
 
@@ -117,6 +125,151 @@ def get_mpu_status() -> Optional[MpuStatus]:
 def clear_buffers() -> None:
     """Reset all cached frames (mainly for tests)."""
     DATA_POOL.clear()
+
+
+class BleBackgroundListener:
+    """Run the BLE notification loop in a dedicated background thread."""
+
+    def __init__(
+        self,
+        address: str,
+        notify_char: str,
+        *,
+        adapter: Optional[str] = None,
+        connect_timeout: float = 8.0,
+        delimiter: str = "\n",
+        decode_errors: str = "replace",
+        show_raw: bool = False,
+        reconnect_delay: float = 3.0,
+    ) -> None:
+        if not address:
+            raise ValueError("BLE address must be provided for background listener")
+        if not notify_char:
+            raise ValueError("notify_char is required for background listener")
+        self._args = argparse.Namespace(
+            address=address,
+            adapter=adapter,
+            connect_timeout=connect_timeout,
+            list_services=False,
+            notify_char=notify_char,
+            write_char=None,
+            write_without_response=False,
+            read_char=None,
+            message="",
+            binary=False,
+            no_write=True,
+            stream=False,
+            duration=0.0,
+            decode_errors=decode_errors,
+            show_raw=show_raw,
+        )
+        self._delimiter_str = delimiter
+        self._reconnect_delay = max(0.5, reconnect_delay)
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
+        self._last_error: Optional[BaseException] = None
+
+    @property
+    def ready_event(self) -> threading.Event:
+        return self._ready_event
+
+    @property
+    def stop_event(self) -> threading.Event:
+        return self._stop_event
+
+    @property
+    def last_error(self) -> Optional[BaseException]:
+        return self._last_error
+
+    def start(self, *, thread_name: str = "BleBackgroundListener") -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name=thread_name, daemon=True)
+        self._thread.start()
+
+    def stop(self, *, join: bool = True, timeout: Optional[float] = None) -> None:
+        self._stop_event.set()
+        if join and self._thread is not None:
+            self._thread.join(timeout=timeout)
+
+    def wait_ready(self, timeout: Optional[float] = None) -> bool:
+        """Block until the listener is ready or timeout expires."""
+        return self._ready_event.wait(timeout)
+
+    def _run(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        payload = b""
+        try:
+            delimiter = parse_delimiter(self._delimiter_str)
+        except ValueError as exc:
+            self._last_error = exc
+            self._ready_event.set()
+            loop.close()
+            return
+
+        def mark_ready() -> None:
+            if not self._ready_event.is_set():
+                self._ready_event.set()
+
+        while not self._stop_event.is_set():
+            try:
+                loop.run_until_complete(
+                    connect_and_probe(
+                        self._args,
+                        payload,
+                        delimiter,
+                        stop_event=self._stop_event,
+                        on_connected=mark_ready,
+                    )
+                )
+            except SystemExit as exc:
+                self._last_error = exc
+                break
+            except Exception as exc:
+                self._last_error = exc
+                if self._stop_event.is_set():
+                    break
+                print(
+                    f"[WARN] BLE listener encountered {exc!r}, retrying in {self._reconnect_delay:.1f}s"
+                )
+                try:
+                    time.sleep(self._reconnect_delay)
+                except Exception:
+                    pass
+                continue
+            else:
+                break
+
+        mark_ready()
+        loop.close()
+
+
+def start_background_listener(
+    address: str,
+    notify_char: str,
+    *,
+    adapter: Optional[str] = None,
+    connect_timeout: float = 8.0,
+    delimiter: str = "\n",
+    decode_errors: str = "replace",
+    show_raw: bool = False,
+    reconnect_delay: float = 3.0,
+) -> BleBackgroundListener:
+    DATA_WRITER.reset()
+    listener = BleBackgroundListener(
+        address,
+        notify_char,
+        adapter=adapter,
+        connect_timeout=connect_timeout,
+        delimiter=delimiter,
+        decode_errors=decode_errors,
+        show_raw=show_raw,
+        reconnect_delay=reconnect_delay,
+    )
+    listener.start()
+    return listener
 
 
 def parse_payload(message: str, binary_mode: bool) -> bytes:
@@ -214,19 +367,21 @@ class FrameParser:
                 print(f"[ERROR] Failed to parse frame {frame.hex()}: {exc}")
 
     def _handle_laser_frame(self, frame: bytes) -> None:
-        angle = int.from_bytes(frame[1:3], byteorder="little", signed=False)
-        distance = int.from_bytes(frame[3:5], byteorder="little", signed=False)
-        sample = LaserSample(angle=angle, distance=distance)
-        self._pool.add_laser_sample(sample)
+        raw_angle = (frame[1] << 8) | frame[2]
+        raw_distance = (frame[3] << 8) | frame[4]
+        angle_deg = raw_angle / 100.0
+        distance_mm = float(raw_distance)
         group_idx = self._laser_count % self.LASER_PAIR_COUNT
+        sample = LaserSample(angle=angle_deg, distance=distance_mm, index=group_idx)
+        self._pool.add_laser_sample(sample)
         self._laser_count += 1
-        self._writer.write_laser_point(sample, bytes(frame), group_idx)
-        print(f"[LASER] idx={group_idx} angle={angle} distance={distance}")
+        self._writer.write_laser_point(sample, bytes(frame))
+        print(f"[LASER] idx={group_idx} angle={angle_deg:.2f} distance_mm={distance_mm:.1f}")
 
     def _handle_mpu_frame(self, frame: bytes) -> None:
-        degree_x = int.from_bytes(frame[1:3], byteorder="little", signed=True)
-        count_run1 = int.from_bytes(frame[3:7], byteorder="little", signed=False)
-        count_run2 = int.from_bytes(frame[7:11], byteorder="little", signed=False)
+        degree_x = int.from_bytes(frame[1:3], byteorder="big", signed=True)
+        count_run1 = int.from_bytes(frame[3:7], byteorder="big", signed=False)
+        count_run2 = int.from_bytes(frame[7:11], byteorder="big", signed=False)
         status = MpuStatus(degree_x=degree_x, count_run1=count_run1, count_run2=count_run2)
         self._pool.set_mpu_status(status)
         print(f"[MPU] degree_x={degree_x} count1={count_run1} count2={count_run2}")
@@ -250,7 +405,14 @@ def build_notification_handler(
     return handler
 
 
-async def connect_and_probe(args: argparse.Namespace, payload: bytes, delimiter: bytes) -> None:
+async def connect_and_probe(
+    args: argparse.Namespace,
+    payload: bytes,
+    delimiter: bytes,
+    *,
+    stop_event: Optional[threading.Event] = None,
+    on_connected: Optional[Callable[[], None]] = None,
+) -> None:
     print(f"[INFO] Connecting to {args.address} (timeout={args.connect_timeout:.1f}s)...")
     try:
         async with BleakClient(
@@ -259,6 +421,11 @@ async def connect_and_probe(args: argparse.Namespace, payload: bytes, delimiter:
             adapter=args.adapter,
         ) as client:
             print("[OK] Connected to device.")
+            if on_connected is not None:
+                try:
+                    on_connected()
+                except Exception as exc:
+                    print(f"[WARN] on_connected handler raised: {exc}")
 
             if args.list_services:
                 print("[INFO] Available services/characteristics:")
@@ -304,9 +471,17 @@ async def connect_and_probe(args: argparse.Namespace, payload: bytes, delimiter:
                 try:
                     if args.duration <= 0:
                         while True:
+                            if stop_event is not None and stop_event.is_set():
+                                break
                             await asyncio.sleep(1.0)
                     else:
-                        await asyncio.sleep(args.duration)
+                        total = 0.0
+                        step = min(1.0, args.duration)
+                        while total < args.duration:
+                            if stop_event is not None and stop_event.is_set():
+                                break
+                            await asyncio.sleep(min(step, args.duration - total))
+                            total += step
                 except KeyboardInterrupt:
                     print("\n[INFO] Notification stream interrupted by user.")
                 finally:
@@ -319,6 +494,9 @@ async def connect_and_probe(args: argparse.Namespace, payload: bytes, delimiter:
                     await asyncio.sleep(args.duration)
 
     except BleakError as err:
+        if stop_event is not None and stop_event.is_set():
+            print(f"[INFO] BLE operation terminated: {err}")
+            return
         print(f"[ERROR] BLE operation failed: {err}")
         raise SystemExit(2) from err
 
@@ -357,6 +535,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    DATA_WRITER.reset()
 
     if args.scan:
         asyncio.run(scan_devices(args.scan_timeout))
