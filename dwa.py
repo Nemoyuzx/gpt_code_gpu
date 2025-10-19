@@ -29,7 +29,7 @@ class LegacyDWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 0.5  # 降低最大线速度，配合低角速度提升SLAM稳定性
+    max_speed: float = 0.9  # 调高最大线速度，配合真实小车1m/s级别
     min_speed: float = -0.7  # 默认禁倒车（如需倒车可设为负）。
     max_yaw_rate: float = 110.0 * math.pi / 180.0  # 提升最大角速度以增强转弯响应
     max_accel: float = 0.6  # 降低加速度，让运动更平滑(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
@@ -167,6 +167,11 @@ class LegacyDWAConfig:
     spin_penalty_v_eps: float = 0.05
     # 制动判定中的“前向净空很小”下限，和 safety_clearance 取较大者
     brake_small_gap_min: float = 0.25
+    # ---- 输出缩放（迁移自 real_robot_bridge，便于直接在DWA内调节） ----
+    command_speed_scale: float = 1.0   # 线速度输出缩放因子（保持1:1输出）
+    command_yaw_scale: float = 1.0     # 角速度输出缩放因子（通常匹配线速度）
+    command_linear_deadband: float = 0.0  # 输出线速度死区，避免微小抖动
+    command_angular_deadband: float = 0.0  # 输出角速度死区，避免微小抖动
     # （已删除脱困相关参数）
     # 振荡检测中将近零速度当作0的阈值
     oscillation_sign_eps: float = 0.01
@@ -182,6 +187,8 @@ class LegacyDWAPlanner:
         self.cfg = config
         # 使用 tuple[float, float]，运行时可容纳 numpy.float64
         self._last_u = (0.0, 0.0)
+        self.last_raw_cmd = (0.0, 0.0)
+        self.last_cmd_scaled = (0.0, 0.0)
         self._dwell_count = 0  # 连续选择极低线速度计数
         # 振荡检测历史（必须在 __init__ 内）
         self._pos_hist = deque(maxlen=config.oscillation_window_steps)
@@ -620,12 +627,13 @@ class LegacyDWAPlanner:
         # 最终一重保护：禁倒车时确保线速度非负
         if not self.cfg.allow_reverse and sm_v < 0:
             sm_v = 0.0
-        self._last_u = (sm_v, sm_w)
+        self.override_last_command(sm_v, sm_w, scaled=False)
         self.last_cost_components = best_components
         # 让可视化的预测轨迹与最终(平滑后的)控制一致，避免显示与执行不符
         out_traj = best_traj
-        if best_traj is not None and (abs(sm_v - best_u[0]) > 1e-9 or abs(sm_w - best_u[1]) > 1e-9):
-            out_traj = self._predict_trajectory(state, sm_v, sm_w)
+        if out_traj is not None:
+            scaled_v, scaled_w = self.last_cmd_scaled
+            out_traj = self._predict_trajectory(state, scaled_v, scaled_w)
         timing['smoothing'] = (time.perf_counter() - smooth_start) * 1000.0
 
         # --- 6. dwell计数 ---
@@ -651,7 +659,8 @@ class LegacyDWAPlanner:
 
         # --- 8. Debug ---
         if self.cfg.debug and isinstance(best_components, dict):
-            print(f"[DWA] v={best_u[0]:.2f} w={best_u[1]:.2f} cost={best_cost:.3f} comps={best_components}")
+            sv, sw = self.last_cmd_scaled
+            print(f"[DWA] v={sv:.2f} w={sw:.2f} cost={best_cost:.3f} comps={best_components}")
         # 全局步计数（用于启动阶段前进优先策略）
         self._global_step += 1
         timing['post_update'] = (time.perf_counter() - post_start) * 1000.0
@@ -666,7 +675,7 @@ class LegacyDWAPlanner:
             self.last_eval_paths = [p for p in eval_paths if isinstance(p, np.ndarray) and p.shape[0] >= 2]
         else:
             self.last_eval_paths = None
-        return self._last_u, out_traj
+        return self.last_cmd_scaled, out_traj
 
     def _prepare_local_obstacles(self, state: np.ndarray, obstacles: np.ndarray | None):
         """预先筛选当前周期关心的障碍点，供采样阶段重复使用。"""
@@ -892,6 +901,53 @@ class LegacyDWAPlanner:
                     extra = f" cap={self._last_brake_v_cap:.2f} gap={last_gap:.2f}"
                 print(f"[DW] v:[{dw[0]:.2f},{dw[1]:.2f}] w:[{dw[2]:.2f},{dw[3]:.2f}]" + extra)
         return dw
+
+    def _command_scaling_params(self) -> Tuple[float, float, float, float]:
+        scale_v = float(getattr(self.cfg, "command_speed_scale", 1.0))
+        scale_w = float(getattr(self.cfg, "command_yaw_scale", scale_v if abs(scale_v) > 1e-9 else 1.0))
+        lin_db = float(getattr(self.cfg, "command_linear_deadband", 0.0))
+        ang_db = float(getattr(self.cfg, "command_angular_deadband", 0.0))
+        return scale_v, scale_w, lin_db, ang_db
+
+    def _apply_command_scaling(self, v: float, w: float) -> Tuple[float, float]:
+        scale_v, scale_w, lin_db, ang_db = self._command_scaling_params()
+        scaled_v = v * scale_v
+        scaled_w = w * scale_w
+        if abs(scaled_v) < lin_db:
+            scaled_v = 0.0
+        if abs(scaled_w) < ang_db:
+            scaled_w = 0.0
+        return scaled_v, scaled_w
+
+    def _unscale_command(self, v: float, w: float) -> Tuple[float, float]:
+        scale_v, scale_w, lin_db, ang_db = self._command_scaling_params()
+        raw_v = v / scale_v if abs(scale_v) > 1e-9 else 0.0
+        raw_w = w / scale_w if abs(scale_w) > 1e-9 else 0.0
+        # Deadband应用后的值被视为0，则反推时也归零
+        if abs(v) < lin_db:
+            raw_v = 0.0
+        if abs(w) < ang_db:
+            raw_w = 0.0
+        return raw_v, raw_w
+
+    def override_last_command(self, v: float, w: float, *, scaled: bool = False) -> None:
+        """外部强制覆盖上一控制量，保持缩放/原始状态同步。"""
+        if scaled:
+            raw_v, raw_w = self._unscale_command(v, w)
+            scaled_v, scaled_w = v, w
+            _, _, lin_db, ang_db = self._command_scaling_params()
+            if abs(scaled_v) < lin_db:
+                scaled_v = 0.0
+                raw_v = 0.0
+            if abs(scaled_w) < ang_db:
+                scaled_w = 0.0
+                raw_w = 0.0
+        else:
+            raw_v, raw_w = v, w
+            scaled_v, scaled_w = self._apply_command_scaling(v, w)
+        self._last_u = (raw_v, raw_w)
+        self.last_raw_cmd = (raw_v, raw_w)
+        self.last_cmd_scaled = (scaled_v, scaled_w)
 
     def _front_clearance(self, state, obstacles):
         """估算当前朝向前方锥形区内的最近障碍距离。"""

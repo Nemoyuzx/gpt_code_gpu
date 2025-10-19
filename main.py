@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -78,7 +78,7 @@ BLE_SCAN_TIMEOUT = float(os.getenv("BLE_SCAN_TIMEOUT", "0.6"))
 BLE_SCAN_MIN_FILL = float(os.getenv("BLE_SCAN_MIN_FILL", "0.75"))
 BLE_SCAN_POLL_INTERVAL = float(os.getenv("BLE_SCAN_POLL_INTERVAL", "0.02"))
 BLE_DISTANCE_SCALE = float(os.getenv("BLE_DISTANCE_SCALE", "0.001"))
-BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "2000.0"))
+BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "30.0"))
 RECORDED_TICKS_PER_METER = float(
     os.getenv("RECORDED_TICKS_PER_METER", str(BLE_TICKS_PER_METER))
 )
@@ -546,17 +546,14 @@ def main():
         if not timings:
             return
         # 过滤掉字典类型的值，只显示数值型timing
-        summary = " | ".join(f"{name}={elapsed:.2f}ms" for name, elapsed in timings if isinstance(elapsed, (int, float)))
-        # 展开 DWA 内部详细统计（如果存在）
-        if "dwa_plan" in dict(timings):
-            dwa_detail = None
-            for name, _ in timings:
-                if name == "dwa_planner_detail":
-                    dwa_detail = _
-                    break
-            if dwa_detail and isinstance(dwa_detail, dict):
-                dwa_breakdown = " | ".join(f"dwa_{k}={v:.2f}ms" for k, v in dwa_detail.items() if isinstance(v, (int, float)))
-                summary += f" | {dwa_breakdown}"
+        filtered = []
+        for name, elapsed in timings:
+            if not isinstance(elapsed, (int, float)):
+                continue
+            if name.startswith("dwa"):
+                continue
+            filtered.append(f"{name}={elapsed:.2f}ms")
+        summary = " | ".join(filtered)
         print(f"[Timing] {tag} {summary}")
     return_traj_split_idx = None
     
@@ -634,7 +631,7 @@ def main():
         # 电机控制参数（单独传递）
         motor_control_params = {
             "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
-            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "0.1")),  # 速度缩放到10%
+            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
         }
         print("[BLE] 启动实时数据监听线程...")
@@ -723,8 +720,10 @@ def main():
                 num_beams = 0
 
             if num_beams > 0:
+                offset_deg = getattr(lidar, "last_start_offset_deg", 0.0)
                 raw_angles_clockwise = [
-                    (-float(i) * LIDAR_ANGLE_RESOLUTION) % 360.0 for i in range(num_beams)
+                    (-(offset_deg + float(i) * LIDAR_ANGLE_RESOLUTION)) % 360.0
+                    for i in range(num_beams)
                 ]
                 noisy_norm, clean_norm, norm_angles = normalize_scan(
                     list(noisy_raw),
@@ -1233,10 +1232,6 @@ def main():
     cmd_hist = deque(maxlen=STUCK_WINDOW_STEPS)   # (v_cmd, w_cmd, |d_trans|)
     disp_hist = deque(maxlen=STUCK_WINDOW_STEPS)  # |d_trans|
     stuck_cooldown_steps = 0
-    recovery_active = False
-    recovery_steps_left = 0
-    recovery_target_world = None  # (tx, ty)
-    recovery_target_cell = None   # 用于可视化
 
     # 4. 前沿探索主循环
     # 初始化运动历史变量（用于SLAM更新）
@@ -1388,7 +1383,10 @@ def main():
                     return False
             return True
 
-        dwa_planner._last_u = (0.0, 0.0)
+        if hasattr(dwa_planner, "override_last_command"):
+            dwa_planner.override_last_command(0.0, 0.0, scaled=True)
+        else:
+            dwa_planner._last_u = (0.0, 0.0)
         if hasattr(dwa_planner, '_dwell_count'):
             dwa_planner._dwell_count = 0
         if hasattr(dwa_planner, '_reverse_block_count'):
@@ -1498,15 +1496,22 @@ def main():
             t_section = time.perf_counter()
 
             if v_cmd > 1e-6:
-                dw_max = None
+                dw_max_raw = None
                 if hasattr(dwa_planner, "last_dw") and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
-                    dw_max = dwa_planner.last_dw[1]
-                max_allow = dw_max if (dw_max is not None and math.isfinite(dw_max)) else EXPLORE_MIN_SPEED
+                    dw_max_raw = dwa_planner.last_dw[1]
+                scale_v = getattr(dwa_cfg, "command_speed_scale", 1.0)
+                dw_max_scaled = None
+                if dw_max_raw is not None and math.isfinite(dw_max_raw):
+                    dw_max_scaled = dw_max_raw * scale_v
+                max_allow = dw_max_scaled if (dw_max_scaled is not None and math.isfinite(dw_max_scaled)) else EXPLORE_MIN_SPEED
                 boost_speed = min(EXPLORE_MIN_SPEED, max_allow)
                 if (boost_speed > v_cmd and dist_to_goal > 0.5 and
                         abs(w_cmd) < math.radians(18.0)):
                     v_cmd = boost_speed
-                    dwa_planner._last_u = (v_cmd, w_cmd)
+                    if hasattr(dwa_planner, "override_last_command"):
+                        dwa_planner.override_last_command(v_cmd, w_cmd, scaled=True)
+                    else:
+                        dwa_planner._last_u = (v_cmd, w_cmd)
                     if predicted_traj is not None:
                         predicted_traj = dwa_planner._predict_trajectory(state, v_cmd, w_cmd)
 
@@ -1826,24 +1831,15 @@ def main():
             follow_cell = frontier_hint_cell if frontier_hint_cell is not None else (rx_idx, ry_idx)
         # 若处于挤出模式，覆盖可视化目标为挤出目标
         viz_target_cell = None
-        if recovery_active and recovery_target_world is not None:
-            r_ix = int((recovery_target_world[0] - maze.bounds[0]) / maze.resolution)
-            r_iy = int((recovery_target_world[1] - maze.bounds[1]) / maze.resolution)
-            recovery_target_cell = (r_ix, r_iy)
-            viz_target_cell = recovery_target_cell
-        else:
-            viz_target_cell = follow_cell
+        viz_target_cell = follow_cell
         if step_counter % 20 == 0 or same_target_counter == 0:
             print(f"[目标] 自由格: {prev_target_cell} 邻接未知: {current_unknown_neighbor} (忽略A*:{'是' if frontier_cooldown_steps>0 or current_path is None else '否'}) 连续相同={same_target_counter}")
         section_times.append(("target_selection", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
 
         # 将跟随的栅格点转换为世界坐标，作为DWA目标点（挤出模式下由临时目标覆盖）
-        if recovery_active and recovery_target_world is not None:
-            gx, gy = float(recovery_target_world[0]), float(recovery_target_world[1])
-        else:
-            gx = maze.bounds[0] + (follow_cell[0] + 0.5) * maze.resolution
-            gy = maze.bounds[1] + (follow_cell[1] + 0.5) * maze.resolution
+        gx = maze.bounds[0] + (follow_cell[0] + 0.5) * maze.resolution
+        gy = maze.bounds[1] + (follow_cell[1] + 0.5) * maze.resolution
 
         # 使用最新的占据栅格数据生成障碍物（SLAM已在循环开始时更新）
         obstacles = occupancy_to_obstacles(
@@ -1854,20 +1850,17 @@ def main():
         )
         # DWA路径提示：若处于挤出模式则使用“当前位置→临时目标”直线；否则若存在A*路径（无论是否冷却中）则使用之；否则使用“当前位置→前沿提示”的直线
         path_hint_world = None
-        if recovery_active and recovery_target_world is not None:
-            path_hint_world = np.asarray([(est_pose[0], est_pose[1]), (gx, gy)], dtype=float)
-        else:
-            if current_path and len(current_path) >= 2:
-                pts = []
-                for cx, cy in current_path:
-                    wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
-                    wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
-                    pts.append((wx, wy))
-                path_hint_world = np.asarray(pts, dtype=float)
-            elif frontier_hint_cell is not None:
-                fx = maze.bounds[0] + (frontier_hint_cell[0] + 0.5) * maze.resolution
-                fy = maze.bounds[1] + (frontier_hint_cell[1] + 0.5) * maze.resolution
-                path_hint_world = np.asarray([(est_pose[0], est_pose[1]), (fx, fy)], dtype=float)
+        if current_path and len(current_path) >= 2:
+            pts = []
+            for cx, cy in current_path:
+                wx = maze.bounds[0] + (cx + 0.5) * maze.resolution
+                wy = maze.bounds[1] + (cy + 0.5) * maze.resolution
+                pts.append((wx, wy))
+            path_hint_world = np.asarray(pts, dtype=float)
+        elif frontier_hint_cell is not None:
+            fx = maze.bounds[0] + (frontier_hint_cell[0] + 0.5) * maze.resolution
+            fy = maze.bounds[1] + (frontier_hint_cell[1] + 0.5) * maze.resolution
+            path_hint_world = np.asarray([(est_pose[0], est_pose[1]), (fx, fy)], dtype=float)
         section_times.append(("path_prepare", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
         # --- DWA 执行 (保持在 while True 循环内) ---
@@ -1900,20 +1893,27 @@ def main():
         t_section = time.perf_counter()
 
         if v_cmd > 1e-6:
-            dw_max = None
+            dw_max_raw = None
             if hasattr(dwa_planner, "last_dw") and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
-                dw_max = dwa_planner.last_dw[1]
-            max_allow = dw_max if (dw_max is not None and math.isfinite(dw_max)) else EXPLORE_MIN_SPEED
+                dw_max_raw = dwa_planner.last_dw[1]
+            scale_v = getattr(dwa_cfg, "command_speed_scale", 1.0)
+            dw_max_scaled = None
+            if dw_max_raw is not None and math.isfinite(dw_max_raw):
+                dw_max_scaled = dw_max_raw * scale_v
+            max_allow = dw_max_scaled if (dw_max_scaled is not None and math.isfinite(dw_max_scaled)) else EXPLORE_MIN_SPEED
             boost_speed = min(EXPLORE_MIN_SPEED, max_allow)
             dist_to_goal = math.hypot(est_pose[0] - gx, est_pose[1] - gy)
             if (boost_speed > v_cmd and dist_to_goal > 0.6 and
                     abs(w_cmd) < math.radians(18.0)):
                 v_cmd = boost_speed
-                dwa_planner._last_u = (v_cmd, w_cmd)
+                if hasattr(dwa_planner, "override_last_command"):
+                    dwa_planner.override_last_command(v_cmd, w_cmd, scaled=True)
+                else:
+                    dwa_planner._last_u = (v_cmd, w_cmd)
                 if _traj is not None:
                     _traj = dwa_planner._predict_trajectory(state, v_cmd, w_cmd)
                 if step_counter % 40 == 0:
-                    dw_max_disp = dw_max if (dw_max is not None and math.isfinite(dw_max)) else float('nan')
+                    dw_max_disp = dw_max_scaled if (dw_max_scaled is not None and math.isfinite(dw_max_scaled)) else float('nan')
                     print(f"[探索] 提升前进速度 -> {v_cmd:.2f} m/s (dw_max={dw_max_disp:.2f} dist_to_goal={dist_to_goal:.2f}m)")
 
         # 先用当前估计位姿绘制预测轨迹（起点一致，避免视觉错位）
@@ -1973,62 +1973,9 @@ def main():
         else:
             stagnation_counter += 1
 
-        # --- 挤出恢复：检测原地打转/微小进退，朝最远净空方向短距离移动 ---
-        if recovery_active and recovery_target_world is not None:
-            # 到达或超时则结束挤出
-            dist_to_recover = math.hypot(robot.x - recovery_target_world[0], robot.y - recovery_target_world[1])
-            recovery_steps_left = max(0, recovery_steps_left - 1)
-            if dist_to_recover < 0.20 or recovery_steps_left == 0:
-                print(f"[恢复-完成] 挤出结束，剩余步={recovery_steps_left} dist={dist_to_recover:.2f}m")
-                recovery_active = False
-                recovery_target_world = None
-                recovery_target_cell = None
-                stuck_cooldown_steps = STUCK_COOLDOWN_STEPS
-        else:
-            if stuck_cooldown_steps > 0:
-                stuck_cooldown_steps -= 1
-            # 仅在未处于挤出模式时评估是否卡住
-            spin_like = False
-            tiny_progress = False
-            if len(cmd_hist) == STUCK_WINDOW_STEPS:
-                mean_w = sum(abs(w) for _, w, _ in cmd_hist) / STUCK_WINDOW_STEPS
-                mean_v = sum(abs(v) for v, _, _ in cmd_hist) / STUCK_WINDOW_STEPS
-                spin_like = (mean_w > STUCK_SPIN_W_THRESH and mean_v < STUCK_V_SMALL)
-            if len(disp_hist) == STUCK_WINDOW_STEPS:
-                total_disp = sum(disp_hist)
-                tiny_progress = (total_disp < STUCK_PROGRESS_EPS)
-            should_recover = ((stagnation_counter > stagnation_steps and same_target_counter > same_target_max) or
-                              (stagnation_counter > 2 * stagnation_steps) or spin_like or tiny_progress)
-            if should_recover and stuck_cooldown_steps == 0:
-                # 选取当前扫描中最远净空方向
-                angle_step = math.radians(LIDAR_ANGLE_RESOLUTION)
-                try:
-                    idx = int(np.argmax(clean)) if len(clean) > 0 else 0
-                    max_clear = float(clean[idx]) if len(clean) > 0 else LIDAR_MAX_RANGE
-                except Exception:
-                    idx = 0
-                    max_clear = LIDAR_MAX_RANGE
-                rx, ry, rth = robot.get_pose()
-                ang_world = rth + idx * angle_step
-                inflated_radius = get_inflated_radius()
-                recovery_margin = dwa_cfg.robot_radius + RECOVERY_EXTRA_MARGIN
-                safe_margin = max(inflated_radius, recovery_margin)
-                advance = max(0.0, max_clear - safe_margin)
-                advance = max(0.0, min(RECOVERY_MAX_ADVANCE, advance))
-                if advance >= RECOVERY_MIN_ADVANCE:
-                    tx = rx + advance * math.cos(ang_world)
-                    ty = ry + advance * math.sin(ang_world)
-                    recovery_target_world = (tx, ty)
-                    recovery_steps_left = RECOVERY_STEP_LIMIT
-                    recovery_active = True
-                    print(f"[恢复-挤出] 卡住判定(spin={spin_like}, disp<={STUCK_PROGRESS_EPS:.2f}m:{tiny_progress}) -> 朝 {idx*LIDAR_ANGLE_RESOLUTION:.0f}° 方向移动 {advance:.2f}m")
-                    # 重置滞留相关计数，下一步开始执行挤出
-                    stagnation_counter = 0
-                    same_target_counter = 0
-                else:
-                    # 无足够净空，跳过本次挤出并进入短冷却
-                    print(f"[恢复-挤出] 判定卡住但净空不足(max={max_clear:.2f}m, 需>{safe_margin+RECOVERY_MIN_ADVANCE:.2f}m)，跳过")
-                    stuck_cooldown_steps = max(stuck_cooldown_steps, STUCK_WINDOW_STEPS)
+        # 原卡住挤出逻辑已移除，仅保留冷却计数器递减
+        if stuck_cooldown_steps > 0:
+            stuck_cooldown_steps -= 1
         section_times.append(("stuck_recovery", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
         # 7. 再次出口检测（单步后）

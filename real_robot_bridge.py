@@ -341,7 +341,7 @@ class BleRobotBridge:
         
         motor_ctrl_params = motor_control_params or {}
         min_encoder_speed = motor_ctrl_params.get("min_encoder_speed", 20)
-        speed_scale = motor_ctrl_params.get("speed_scale", 0.1)  # 默认缩放到10%，降低速度
+        speed_scale = motor_ctrl_params.get("speed_scale", 1.0)  # 保持1:1输出，缩放交由规划器控制
         deadband_threshold = motor_ctrl_params.get("deadband_threshold", 0.01)
         
         self.motor_controller = MotorController(
