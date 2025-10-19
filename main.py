@@ -444,9 +444,10 @@ def main():
         robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose, laser_angle_offset_deg=LIDAR_ANGLE_OFFSET_DEG)
+    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.02
     frontier_safety_cells = max(
         0,
-        int(math.ceil(FRONTIER_SAFETY_DISTANCE_METERS / maze.resolution))
+        int(math.ceil(base_frontier_safety / maze.resolution))
     )
     explorer = FrontierExplorer(safety_distance=float(frontier_safety_cells))  # 设置与障碍物的安全距离
     explorer.set_safety_distance(float(frontier_safety_cells))
@@ -1225,6 +1226,7 @@ def main():
     inflated_radius = get_inflated_radius()
     dynamic_wall_margin = max(1, int(inflated_radius / maze.resolution) + 1)
     explore_safety_cells = float(frontier_safety_cells)
+    dynamic_wall_margin = max(dynamic_wall_margin, frontier_safety_cells)
     if dwa_cfg.debug:
         print(f"[DWA模式=orig] 安全格距离: {dynamic_wall_margin} (半径={inflated_radius:.2f}m, 格长={maze.resolution:.2f}m)")
 
