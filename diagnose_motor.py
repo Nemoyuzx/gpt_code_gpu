@@ -55,10 +55,24 @@ print("-" * 60)
 try:
     from real_robot_bridge import MotorController
     
+    cmdset_max_value = float(os.getenv("CMDSET_MAX_VALUE", "999"))
+    cmdset_max_speed = max(1e-6, float(os.getenv("CMDSET_MAX_SPEED", "1.2")))
+    default_speed_scale = float(
+        os.getenv(
+            "MOTOR_SPEED_SCALE",
+            f"{cmdset_max_value / (cmdset_max_speed * 2000.0):.6f}"
+        )
+    )
+
     controller = MotorController(
         wheel_track=0.168,
         ticks_per_meter=2000.0,
-        min_encoder_speed=20
+    min_encoder_speed=30,
+        min_linear_speed=0.003,
+        speed_scale=default_speed_scale,
+        turn_min_scale=0.5,
+        max_turn_rate=0.6,
+        turn_max_ticks=60.0,
     )
     
     # 测试用例
@@ -66,7 +80,8 @@ try:
         (0.3, 0.0, "直线前进"),
         (0.0, 1.0, "原地左转"),
         (0.35, 0.52, "右转"),
-        (0.01, 0.0, "极低速(会被保护)"),
+        (0.01, 0.0, "极低速"),
+        (0.005, 0.0, "超低速"),
     ]
     
     print("  测试速度命令转换:")

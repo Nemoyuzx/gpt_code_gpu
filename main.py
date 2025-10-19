@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -53,7 +53,7 @@ FRONTIER_SAFETY_DISTANCE_METERS = (
 # 迷宫和机器人参数
 MAZE_FILE = "4.json"  # 默认迷宫文件
 ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
-VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
+VIRTUAL_WALL_RESOLUTION_FACTOR = 1  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数没有可达的未知区域，探索结束。
@@ -78,7 +78,7 @@ BLE_SCAN_TIMEOUT = float(os.getenv("BLE_SCAN_TIMEOUT", "0.6"))
 BLE_SCAN_MIN_FILL = float(os.getenv("BLE_SCAN_MIN_FILL", "0.75"))
 BLE_SCAN_POLL_INTERVAL = float(os.getenv("BLE_SCAN_POLL_INTERVAL", "0.02"))
 BLE_DISTANCE_SCALE = float(os.getenv("BLE_DISTANCE_SCALE", "0.001"))
-BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "30.0"))
+BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "2000.0"))
 RECORDED_TICKS_PER_METER = float(
     os.getenv("RECORDED_TICKS_PER_METER", str(BLE_TICKS_PER_METER))
 )
@@ -294,7 +294,7 @@ ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
 MOVEMENT_THRESHOLD = 1e-6  # 移动距离阈值
 
 # 速度底线配置
-EXPLORE_MIN_SPEED = 0.14  # 探索阶段的最小前进速度
+EXPLORE_MIN_SPEED = float(os.getenv("EXPLORE_MIN_SPEED", "0.06"))  # 探索阶段最小前进速度（默认6cm/s）
 # 卡住判定与挤出恢复参数
 STUCK_WINDOW_STEPS = 16             # 判定窗口步数
 STUCK_SPIN_W_THRESH = 1.1           # 认为“原地打转”的角速度阈值(rad/s)
@@ -444,7 +444,7 @@ def main():
         robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose, laser_angle_offset_deg=LIDAR_ANGLE_OFFSET_DEG)
-    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.02
+    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.03
     frontier_safety_cells = max(
         0,
         int(math.ceil(base_frontier_safety / maze.resolution))
@@ -630,10 +630,30 @@ def main():
             "invert_right": BLE_INVERT_RIGHT,
         }
         # 电机控制参数（单独传递）
+        default_min_linear = float(os.getenv("MIN_LINEAR_SPEED", "0.003"))
+        derived_min_encoder = int(round(default_min_linear * BLE_TICKS_PER_METER))
+        min_encoder_env = os.getenv("MIN_ENCODER_SPEED")
+        if min_encoder_env is not None:
+            try:
+                min_encoder_speed = int(min_encoder_env)
+            except ValueError:
+                min_encoder_speed = derived_min_encoder
+        else:
+            min_encoder_speed = derived_min_encoder
+
+        cmdset_max_value = float(os.getenv("CMDSET_MAX_VALUE", "999"))
+        cmdset_max_speed = max(1e-6, float(os.getenv("CMDSET_MAX_SPEED", "1.2")))
+        default_speed_scale = cmdset_max_value / (cmdset_max_speed * BLE_TICKS_PER_METER)
+        min_encoder_speed = max(30, min_encoder_speed)
+
         motor_control_params = {
-            "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
-            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
+            "min_encoder_speed": min_encoder_speed,
+            "min_linear_speed": max(0.0, default_min_linear),
+            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", f"{default_speed_scale:.6f}")),
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
+            "turn_min_scale": float(os.getenv("MOTOR_TURN_MIN_SCALE", "0.5")),
+            "max_turn_rate": float(os.getenv("MOTOR_MAX_TURN_RATE", "0.6")),
+            "turn_max_ticks": float(os.getenv("MOTOR_TURN_MAX_TICKS", "60.0")),
         }
         print("[BLE] 启动实时数据监听线程...")
         ble_bridge = BleRobotBridge(
@@ -1218,6 +1238,14 @@ def main():
     dwa_cfg = DWAConfig(
         robot_radius=ROBOT_COLLISION_RADIUS,
     )
+    dwa_cfg.command_speed_scale = float(os.getenv("DWA_COMMAND_SPEED_SCALE", "0.25"))
+    dwa_cfg.command_yaw_scale = float(os.getenv("DWA_COMMAND_YAW_SCALE", "0.25"))
+    max_speed_env = float(os.getenv("DWA_MAX_SPEED", "0.18"))
+    max_yaw_env = float(os.getenv("DWA_MAX_YAW_RATE", str(math.radians(40.0))))
+    turn_min_scale_env = float(os.getenv("DWA_TURN_MIN_SPEED_SCALE", "0.1"))
+    dwa_cfg.max_speed = min(dwa_cfg.max_speed, max_speed_env)
+    dwa_cfg.max_yaw_rate = min(dwa_cfg.max_yaw_rate, max_yaw_env)
+    dwa_cfg.turn_min_speed_scale = min(dwa_cfg.turn_min_speed_scale, turn_min_scale_env)
     dwa_planner = DWAPlanner(dwa_cfg)
 
     def get_inflated_radius() -> float:
@@ -2392,20 +2420,93 @@ def main():
         if not path_cells or len(path_cells) < 2:
             return False
 
-        path_cells = list(path_cells)
-
-        initial_path_cells = list(path_cells)
-        initial_path_arr = np.array([
-            [
-                maze.bounds[0] + (cx + 0.5) * maze.resolution,
-                maze.bounds[1] + (cy + 0.5) * maze.resolution
-            ]
-            for cx, cy in initial_path_cells
-        ], dtype=float)
-
         path_safety_val = float(used_safety) if used_safety is not None else None
 
-        def replan_return_path():
+        path_cells_current: List[Tuple[int, int]] = list(path_cells)
+        initial_path_cells: List[Tuple[int, int]] = []
+        initial_path_arr: np.ndarray | None = None
+        waypoint_indices: List[int] = []
+        path_segments: List[List[Tuple[int, int]]] = []
+
+        def cells_to_world_arr(cells: List[Tuple[int, int]]) -> np.ndarray:
+            return np.array([
+                [
+                    maze.bounds[0] + (cx + 0.5) * maze.resolution,
+                    maze.bounds[1] + (cy + 0.5) * maze.resolution
+                ]
+                for cx, cy in cells
+            ], dtype=float)
+
+        def heading_diff(a: float, b: float) -> float:
+            return math.atan2(math.sin(a - b), math.cos(a - b))
+
+        def compute_waypoint_indices(points: np.ndarray,
+                                     *,
+                                     curvature_scale: float = 3.5,
+                                     budget_threshold: float = 4.0,
+                                     min_span: int = 1,
+                                     max_span: int = 6) -> List[int]:
+            n = points.shape[0]
+            if n <= 2:
+                return [0, n - 1]
+
+            headings = [
+                math.atan2(points[i + 1, 1] - points[i, 1], points[i + 1, 0] - points[i, 0])
+                for i in range(n - 1)
+            ]
+            curvature = [0.0] * n
+            for i in range(1, n - 1):
+                curvature[i] = abs(heading_diff(headings[i], headings[i - 1]))
+
+            densities: List[float] = []
+            for seg_idx in range(n - 1):
+                left_curve = curvature[seg_idx]
+                right_curve = curvature[seg_idx + 1] if seg_idx + 1 < n else curvature[seg_idx]
+                curve = max(left_curve, right_curve)
+                norm = min(1.0, curve / math.pi)
+                densities.append(1.0 + curvature_scale * norm)
+
+            indices = [0]
+            budget = 0.0
+            last_idx = 0
+            for seg_idx, density in enumerate(densities[:-1]):
+                budget += density
+                span = (seg_idx + 1) - last_idx
+                if span < min_span:
+                    continue
+                if budget >= budget_threshold or span >= max_span:
+                    waypoint_idx = seg_idx + 1
+                    if waypoint_idx > last_idx:
+                        indices.append(waypoint_idx)
+                        budget = 0.0
+                        last_idx = waypoint_idx
+
+            if indices[-1] != n - 1:
+                indices.append(n - 1)
+            return indices
+
+        def set_path(new_path: List[Tuple[int, int]], verbose: bool = False) -> None:
+            nonlocal path_cells_current, initial_path_cells, initial_path_arr, waypoint_indices, path_segments
+            path_cells_current = list(new_path)
+            initial_path_cells = list(new_path)
+            initial_path_arr = cells_to_world_arr(initial_path_cells)
+            waypoint_indices = compute_waypoint_indices(initial_path_arr)
+            path_segments = []
+            for idx in range(len(waypoint_indices) - 1):
+                start = waypoint_indices[idx]
+                end = waypoint_indices[idx + 1]
+                segment = initial_path_cells[start:end + 1]
+                if len(segment) >= 2:
+                    path_segments.append(segment)
+            if not path_segments and len(initial_path_cells) >= 2:
+                path_segments = [initial_path_cells]
+            if verbose:
+                print(
+                    f"{label}: 路径 {len(initial_path_cells) - 1} 栅格 -> {len(waypoint_indices)} 个 waypoint，拆分 {len(path_segments)} 段"
+                )
+
+        def replan_return_path() -> List[Tuple[int, int]] | None:
+            nonlocal path_safety_val
             pose_now = robot.get_pose()
             current_idx_x_update = int((pose_now[0] - maze.bounds[0]) / maze.resolution)
             current_idx_y_update = int((pose_now[1] - maze.bounds[1]) / maze.resolution)
@@ -2420,7 +2521,7 @@ def main():
 
             anchor_path_cells = None
             anchor_idx = None
-            if len(initial_path_cells) >= 2 and initial_path_arr.shape[0] == len(initial_path_cells):
+            if len(initial_path_cells) >= 2 and initial_path_arr is not None:
                 dists_initial = np.hypot(initial_path_arr[:, 0] - pose_now[0], initial_path_arr[:, 1] - pose_now[1])
                 nearest_on_initial = int(np.argmin(dists_initial))
                 lookahead_offset = max(RETURN_REPLAN_ANCHOR_LOOKAHEAD, RETURN_REPLAN_MIN_ADVANCE)
@@ -2436,7 +2537,7 @@ def main():
                     max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
                 )
 
-            updated_path = None
+            updated_path: List[Tuple[int, int]] | None = None
             if anchor_path_cells and len(anchor_path_cells) >= 2 and anchor_idx is not None:
                 updated_path = list(anchor_path_cells)
                 remainder = initial_path_cells[anchor_idx + 1:]
@@ -2453,23 +2554,33 @@ def main():
                     max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
                 )
 
-            if (not updated_path or len(updated_path) < 2) and path_safety_val is not None:
-                updated_path = explorer.plan_path(
+            if updated_path and len(updated_path) >= 2:
+                path_safety_val = float(safety_cells_return)
+                set_path(updated_path, verbose=True)
+                return updated_path
+
+            if path_safety_val is not None:
+                fallback_path = explorer.plan_path(
                     occupancy_update,
                     (current_idx_x_update, current_idx_y_update),
                     (start_idx_x, start_idx_y),
                     safety_distance=path_safety_val,
                     max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
                 )
+                if fallback_path and len(fallback_path) >= 2:
+                    set_path(fallback_path, verbose=True)
+                    return fallback_path
 
-            if not updated_path or len(updated_path) < 2:
-                updated_path = explorer.plan_path_no_safety(
-                    occupancy_update,
-                    (current_idx_x_update, current_idx_y_update),
-                    (start_idx_x, start_idx_y)
-                )
+            no_safety_path = explorer.plan_path_no_safety(
+                occupancy_update,
+                (current_idx_x_update, current_idx_y_update),
+                (start_idx_x, start_idx_y)
+            )
+            if no_safety_path and len(no_safety_path) >= 2:
+                set_path(no_safety_path, verbose=True)
+                return no_safety_path
 
-            return updated_path
+            return None
 
         if return_traj_split_idx is None:
             return_traj_split_idx = len(robot.trajectory)
@@ -2494,16 +2605,34 @@ def main():
                 'extra_trajs': extra_segments or None
             }
 
-        return drive_path_with_dwa_segment(
-            path_cells,
-            label=label,
-            arrival_tol=0.18,
-            max_iter_factor=80,
-            replan_callback=replan_return_path,
-            replan_interval=18,
-            path_safety_cells=path_safety_val,
-            viz_context_provider=return_viz_context
-        )
+        set_path(path_cells_current, verbose=True)
+
+        segment_idx = 0
+        while segment_idx < len(path_segments):
+            segment_path = path_segments[segment_idx]
+            segment_label = f"{label}-段{segment_idx + 1}/{len(path_segments)}"
+            print(f"{segment_label}: 目标包含 {len(segment_path) - 1} 栅格，使用DWA跟随节点")
+            reached = drive_path_with_dwa_segment(
+                segment_path,
+                label=segment_label,
+                arrival_tol=0.18,
+                max_iter_factor=80,
+                path_safety_cells=path_safety_val,
+                viz_context_provider=return_viz_context
+            )
+            if reached:
+                segment_idx += 1
+                continue
+
+            print(f"{segment_label}: 未能到达指定节点，尝试重新规划返程路径...")
+            updated_path = replan_return_path()
+            if not updated_path or len(updated_path) < 2:
+                print("返回路径重新规划失败，终止返程。")
+                return False
+            segment_idx = 0
+
+        print(f"{label}: 全部 {len(path_segments)} 段 waypoint 已完成。")
+        return True
 
     if back_path:
         used_safety_val = float(used_safety) if used_safety is not None else 0.0

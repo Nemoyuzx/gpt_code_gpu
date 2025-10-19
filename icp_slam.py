@@ -17,10 +17,16 @@ MAX_RANGE_FACTOR = 0.9  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = 200  # 降低ICP最大迭代次数，避免过高峰值内存
-ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍 (从1e-5放宽到1e-4)
+ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "1000"))  # ICP最大迭代次数，可通过环境变量调整
+ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
 ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "12"))  # ICP对应点匹配距离上限 (米)
 ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息
+
+ICP_ACCUM_TRANS_THRESHOLD = float(os.environ.get("ICP_ACCUM_TRANS", "0.02"))
+ICP_ACCUM_ROT_THRESHOLD = float(os.environ.get("ICP_ACCUM_ROT", "0.05"))
+ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(95.0))))
+ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "0.6"))
+ICP_FAIL_SKIP_FRAMES = int(os.environ.get("ICP_FAIL_SKIP", "3"))
 
 # 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
 MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "30000"))
@@ -50,6 +56,14 @@ class ICPSlam:
         self.icp_max_iter = ICP_MAX_ITER
         self.icp_tolerance = ICP_TOLERANCE  # 收敛容忍度
         self.icp_correspondence_thresh = ICP_CORRESPONDENCE_THRESH  # 对应点匹配距离阈值
+
+        self.icp_accum_trans_threshold = max(0.0, ICP_ACCUM_TRANS_THRESHOLD)
+        self.icp_accum_rot_threshold = max(0.0, ICP_ACCUM_ROT_THRESHOLD)
+        self._motion_accum_trans = 0.0
+        self._motion_accum_rot = 0.0
+        self.icp_max_angle_correction = max(0.0, ICP_MAX_ANGLE_CORRECTION)
+        self.icp_max_pos_correction = max(0.0, ICP_MAX_POS_CORRECTION)
+        self.icp_fail_skip_frames = max(0, ICP_FAIL_SKIP_FRAMES)
         
         # 设备检测与选择
         self.device = torch.device("cpu")  # 默认使用CPU
@@ -281,13 +295,33 @@ class ICPSlam:
         
         # 检查是否实际有运动
         is_moving = (abs(d_trans) >= MOTION_THRESHOLD_TRANS or abs(d_rot) >= MOTION_THRESHOLD_ROT)
-        
+
         # 步骤1: 预测位姿 (根据里程计增量更新估计位姿)
         self.theta += d_rot
         self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
         # 假设 d_trans 沿当前朝向方向
         self.x += d_trans * math.cos(self.theta)
         self.y += d_trans * math.sin(self.theta)
+
+        pred_x, pred_y, pred_theta = self.x, self.y, self.theta
+
+        if is_moving:
+            self._motion_accum_trans += abs(d_trans)
+            self._motion_accum_rot += abs(d_rot)
+        else:
+            # 静止时缓慢衰减累计量，避免长时间停留后立刻触发ICP
+            self._motion_accum_trans *= 0.5
+            self._motion_accum_rot *= 0.5
+
+        accum_ready = True
+        if self.icp_accum_trans_threshold > 0.0 or self.icp_accum_rot_threshold > 0.0:
+            accum_ready = False
+            if self.icp_accum_trans_threshold > 0.0 and self._motion_accum_trans >= self.icp_accum_trans_threshold:
+                accum_ready = True
+            if self.icp_accum_rot_threshold > 0.0 and self._motion_accum_rot >= self.icp_accum_rot_threshold:
+                accum_ready = True
+
+        should_attempt_icp = is_moving and accum_ready
 
         # 步骤2: ICP 匹配校正 (仅在有实际运动时使用 scan 与已有地图点云匹配修正位姿)
         # 将激光扫描点转换为全局坐标（基于预测位姿）
@@ -304,8 +338,6 @@ class ICPSlam:
                 angles_np = np.radians(np.linspace(0, 360, len(scan), endpoint=False))
         else:
             angles_np = np.radians(np.linspace(0, 360, len(scan), endpoint=False))
-
-        angle_offset = self.laser_angle_offset
 
         angle_offset = self.laser_angle_offset
 
@@ -357,8 +389,10 @@ class ICPSlam:
         icp_last_error: Optional[float] = None
         icp_converged = False
         icp_performed = False
+        icp_pose_valid = False
+        icp_failure_reason: Optional[str] = None
         skip_icp = False
-        if is_moving and self.icp_skip_frames > 0:
+        if should_attempt_icp and self.icp_skip_frames > 0:
             remaining = self.icp_skip_frames
             self.icp_skip_frames = max(0, self.icp_skip_frames - 1)
             skip_icp = True
@@ -367,7 +401,7 @@ class ICPSlam:
             self.icp_last_status = "skipping"
 
         if (
-            is_moving
+            should_attempt_icp
             and not skip_icp
             and self.map_points_tensor is not None
             and self.map_points_tensor.numel() > 0
@@ -417,11 +451,6 @@ class ICPSlam:
                     if math.isfinite(current_error):
                         icp_last_error = current_error
                     
-                    if valid_count < 3:
-                        # 对应点太少，无法计算精确变换，退出 ICP
-                        if ICP_DEBUG:
-                            print(f"[ICP][debug] iter={it} valid_corr={valid_count} < 3, early exit")
-                        break
                     paired_src_body = src_body[valid_mask]
                     paired_src_world = src_world_prev[valid_mask]
                     paired_tgt = tgt[min_indices[valid_mask]]
@@ -508,12 +537,31 @@ class ICPSlam:
                     torch.cuda.empty_cache()
                 elif self.device.type == 'mps' and hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
                     torch.mps.empty_cache()
-            # 利用 ICP 直接求得的绝对位姿修正机器人状态
-            self.theta = math.atan2(R_cpu[1, 0], R_cpu[0, 0])
-            self.x = float(t_cpu[0])
-            self.y = float(t_cpu[1])
+            # 利用 ICP 结果修正机器人状态（若校验通过）
+            theta_candidate = math.atan2(R_cpu[1, 0], R_cpu[0, 0])
+            delta_theta = abs(math.atan2(math.sin(theta_candidate - pred_theta), math.cos(theta_candidate - pred_theta)))
+            delta_pos = math.hypot(float(t_cpu[0]) - pred_x, float(t_cpu[1]) - pred_y)
+            pose_jump = False
+            if self.icp_max_angle_correction > 0.0 and delta_theta > self.icp_max_angle_correction:
+                pose_jump = True
+            if self.icp_max_pos_correction > 0.0 and delta_pos > self.icp_max_pos_correction:
+                pose_jump = True
+
+            if pose_jump:
+                icp_pose_valid = False
+                icp_failure_reason = (
+                    f"ICP姿态跳变 Δθ={math.degrees(delta_theta):.1f}° Δs={delta_pos:.3f}m"
+                )
+                if ICP_DEBUG:
+                    print(f"[ICP][debug] rejected pose update: {icp_failure_reason}")
+                if self.icp_fail_skip_frames > 0:
+                    self.icp_skip_frames = max(self.icp_skip_frames, self.icp_fail_skip_frames)
+            else:
+                icp_pose_valid = True
+                self.theta = theta_candidate
+                self.x = float(t_cpu[0])
+                self.y = float(t_cpu[1])
             # 使用修正后的位姿更新当前激光点的全局坐标（numpy 计算）
-            pts_local = body_points_np.dot(R_cpu.T) + t_cpu
         else:
             # 若未进入 ICP（地图为空、静止或无运动），仅根据里程计预测位姿进行建图
             # 这种情况下位姿已经在步骤1更新，无需额外处理
@@ -521,22 +569,25 @@ class ICPSlam:
                 print(f"[ICP][debug] 机器人静止 (d_trans={d_trans:.6f}, d_rot={d_rot:.6f})，跳过ICP以避免噪声漂移")
 
         if icp_performed:
-            if icp_converged:
+            if icp_converged and icp_pose_valid:
                 self._handle_icp_success()
             else:
-                reason = "ICP未收敛"
-                if icp_iterations >= self.icp_max_iter:
-                    reason = "ICP达到最大迭代次数"
-                elif icp_valid_pairs < 3:
-                    reason = "ICP有效对应点不足"
-                elif icp_last_diff is not None:
-                    reason = "ICP迭代停滞"
+                reason = icp_failure_reason or "ICP未收敛"
+                if icp_failure_reason is None:
+                    if icp_iterations >= self.icp_max_iter:
+                        reason = "ICP达到最大迭代次数"
+                    elif icp_valid_pairs < 3:
+                        reason = "ICP有效对应点不足"
+                    elif icp_last_diff is not None:
+                        reason = "ICP迭代停滞"
                 self._handle_icp_failure(
                     reason=reason,
                     valid_pairs=icp_valid_pairs,
                     last_error=icp_last_error,
                     last_diff=icp_last_diff,
                 )
+            self._motion_accum_trans = 0.0
+            self._motion_accum_rot = 0.0
         elif is_moving and not skip_icp and self.icp_consecutive_failures > 0:
             self._handle_icp_success()
 

@@ -29,14 +29,14 @@ class LegacyDWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 0.9  # 调高最大线速度，配合真实小车1m/s级别
-    min_speed: float = -0.7  # 默认禁倒车（如需倒车可设为负）。
+    max_speed: float = 0.5  # 调高最大线速度，配合真实小车1m/s级别
+    min_speed: float = -0.4  # 默认禁倒车（如需倒车可设为负）。
     max_yaw_rate: float = 110.0 * math.pi / 180.0  # 提升最大角速度以增强转弯响应
-    max_accel: float = 0.6  # 降低加速度，让运动更平滑(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_accel: float = 0.1  # 降低加速度，让运动更平滑(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
     max_delta_yaw_rate: float = 220.0 * math.pi / 180.0  # 角速度变化率上限，加大w窗口对急转更友好。
     v_resolution: float = 0.1  # 速度采样步长。越小越细但更慢；调整0.05->0.06降低采样数。
     yaw_rate_resolution: float = 5.0 * math.pi / 180.0  # 角速度采样步长。调整0.5°->8°降低采样数。
-    dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
+    dt: float = 0.05  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
     predict_time: float = 1.4  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
     to_goal_cost_gain: float = 0.8  # 目标朝向代价权重。大→更快对准目标方向。
     to_goal_dist_cost_gain: float = 0.6  # 目标距离代价权重。大→更偏好缩短终点距离。
@@ -658,9 +658,9 @@ class LegacyDWAPlanner:
             self._reverse_block_count -= 1
 
         # --- 8. Debug ---
-        if self.cfg.debug and isinstance(best_components, dict):
+        if self.cfg.debug:
             sv, sw = self.last_cmd_scaled
-            print(f"[DWA] v={sv:.2f} w={sw:.2f} cost={best_cost:.3f} comps={best_components}")
+            print(f"[DWA] v={sv:.2f} w={sw:.2f} cost={best_cost:.3f}")
         # 全局步计数（用于启动阶段前进优先策略）
         self._global_step += 1
         timing['post_update'] = (time.perf_counter() - post_start) * 1000.0
@@ -1397,12 +1397,6 @@ class DWAPlanner:
         return x
 
     def _print_debug(self, command: Tuple[float, float], cost: float, components: Optional[dict]) -> None:
-        parts = [f"[DWA] v={command[0]:.2f} w={command[1]:.2f} cost={cost:.3f}"]
-        if components:
-            detail = ", ".join(
-                f"{k}:{v:.3f}" for k, v in components.items() if isinstance(v, (int, float))
-            )
-            parts.append(f"[{detail}]")
-        print(" ".join(parts))
+        print(f"[DWA] v={command[0]:.2f} w={command[1]:.2f} cost={cost:.3f}")
 
 
