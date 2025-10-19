@@ -1,0 +1,209 @@
+(base) nemoyu@Nemos-MacBook-Pro gpt_code_gpu % conda activate SmallSemester_Slim
+(SmallSemester_Slim) nemoyu@Nemos-MacBook-Pro gpt_code_gpu % /opt/anaconda3/envs/SmallSemester_Slim/bin/python /Users/n
+emoyu/Desktop/小学期/gpt_code_gpu/main.py
+[2025-10-19 22:25:31.0680 [MODE] replay=OFF | real_ble=ON | control_loop=ON
+[2025-10-19 22:25:31.0682 入口位置: (2.35, 2.35), X范围: [1.35, 3.35], 安全边界Y >= 2.24
+[2025-10-19 22:25:31.0762 [ICPSlam] 使用MPS设备进行加速 (Apple Metal)，对不支持的操作将降级到CPU
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 128205 (\N{ROUND PUSHPIN}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 20165 (\N{CJK UNIFIED IDEOGRAPH-4EC5}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 24314 (\N{CJK UNIFIED IDEOGRAPH-5EFA}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 27169 (\N{CJK UNIFIED IDEOGRAPH-6A21}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 24335 (\N{CJK UNIFIED IDEOGRAPH-5F0F}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 25353 (\N{CJK UNIFIED IDEOGRAPH-6309}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 21551 (\N{CJK UNIFIED IDEOGRAPH-542F}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 21160 (\N{CJK UNIFIED IDEOGRAPH-52A8}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+[2025-10-19 22:25:31.3696 
+============================================================
+[2025-10-19 22:25:31.3697 🎮 键盘控制说明：
+[2025-10-19 22:25:31.3697   [s] - 启动自动控制（开始发送电机命令）
+[2025-10-19 22:25:31.3697   [p] - 强制停止小车（立即发送 CMD-SET 0 0）
+[2025-10-19 22:25:31.3697   [m] - 保存地图和路径到文件
+[2025-10-19 22:25:31.3697   [空格] - 暂停/继续可视化更新
+[2025-10-19 22:25:31.3697 ============================================================
+
+[2025-10-19 22:25:31.3697 ⚠️  当前模式：真实小车 + 控制循环已启用
+[2025-10-19 22:25:31.3697    程序启动后将进入【仅建图模式】
+[2025-10-19 22:25:31.3697    请在matplotlib窗口中按 's' 键启动自动控制
+
+[2025-10-19 22:25:31.3699 [NoiseFilter] 滤波器初始化 - 状态: 禁用
+[2025-10-19 22:25:31.3699 [降噪滤波器] 滤波器已禁用
+[2025-10-19 22:25:31.3699 [BLE] 启动实时数据监听线程...
+[2025-10-19 22:25:31.3706 [INFO] Connecting to 60E2ECE4-761B-6B31-FD1F-6FD559C4FE52 (timeout=8.0s)...
+[2025-10-19 22:25:32.1226 [OK] Connected to device.
+[2025-10-19 22:25:32.1227 [INFO] Subscribing to notifications on 0000ffe1-0000-1000-8000-00805f9b34fb...
+[2025-10-19 22:25:32.1228 [BLE] 后台监听已就绪，使用真实小车数据驱动系统。
+[2025-10-19 22:25:32.3766 [INFO] Listening for notifications (Ctrl+C to stop)...
+[2025-10-19 22:25:32.4515 [ICPSlam][Mem] RSS(cur/peak): 406.8/416544.0 MB | MPS curr/driver: 0.0/38.5 MB | map_points: 127 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:32.4657 [LASER] ✓ 已接收完整扫描 (第1组，共250点)
+[2025-10-19 22:25:32.5157 [CONTROL] 等待 2.0s 收集传感器数据后再开始控制...
+[2025-10-19 22:25:32.5585 [LASER] ✓ 已接收完整扫描 (第2组，共250点)
+[2025-10-19 22:25:32.7411 [LASER] ✓ 已接收完整扫描 (第3组，共250点)
+[2025-10-19 22:25:32.8621 [LASER] ✓ 已接收完整扫描 (第4组，共250点)
+[2025-10-19 22:25:32.9517 [LASER] ✓ 已接收完整扫描 (第5组，共250点)
+[2025-10-19 22:25:33.1321 [LASER] ✓ 已接收完整扫描 (第6组，共250点)
+[2025-10-19 22:25:33.3401 [LASER] ✓ 已接收完整扫描 (第7组，共250点)
+[2025-10-19 22:25:33.4978 [LASER] ✓ 已接收完整扫描 (第8组，共250点)
+[2025-10-19 22:25:33.6749 [LASER] ✓ 已接收完整扫描 (第9组，共250点)
+[2025-10-19 22:25:33.8672 [LASER] ✓ 已接收完整扫描 (第10组，共250点)
+[2025-10-19 22:25:34.0307 [LASER] ✓ 已接收完整扫描 (第11组，共250点)
+[2025-10-19 22:25:34.2118 [LASER] ✓ 已接收完整扫描 (第12组，共250点)
+[2025-10-19 22:25:34.3911 [LASER] ✓ 已接收完整扫描 (第13组，共250点)
+[2025-10-19 22:25:34.5598 [LASER] ✓ 已接收完整扫描 (第14组，共250点)
+[2025-10-19 22:25:34.5620 [DWA模式=orig] 安全格距离: 7 (半径=0.11m, 格长=0.02m)
+[2025-10-19 22:25:34.6219 [ICPSlam][Mem] RSS(cur/peak): 462.0/473104.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 187 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:34.6253 [动态前瞻] 最近点索引=0/17 前瞻步数=14 目标索引=14
+[2025-10-19 22:25:34.6253 [目标] 自由格: (113, 134) 邻接未知: (112, 135) (忽略A*:否) 连续相同=0
+[2025-10-19 22:25:34.6257 [DW] v:[0.00,0.02] w:[-0.19,0.19] cap=0.34 gap=0.77
+[2025-10-19 22:25:34.6260 [DWA] v=0.00 w=-0.06 cost=1.944
+[2025-10-19 22:25:34.6995 [CTRL] step=0 v=0.00 w=-0.06 d_trans=0.000 d_rot=0.000
+[2025-10-19 22:25:34.6995 [Timing] step=0 scan=0.13ms | slam_update=60.02ms | exit_check=0.00ms | frontier_update=3.06ms | target_selection=0.06ms | path_prepare=0.29ms | visualize=73.45ms | motion_update=0.05ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=137.49ms
+[2025-10-19 22:25:34.7254 [ICPSlam][Mem] RSS(cur/peak): 523.5/536096.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 187 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:34.7296 [DWA] v=0.00 w=-0.09 cost=2.229
+[2025-10-19 22:25:34.7551 [LASER] ✓ 已接收完整扫描 (第15组，共250点)
+[2025-10-19 22:25:34.8794 [WARN] poll_motion timeout after 88.1ms, using cached data
+[2025-10-19 22:25:34.8795 [Timing] step=1 scan=0.12ms | slam_update=26.19ms | exit_check=0.00ms | frontier_update=2.59ms | target_selection=0.02ms | path_prepare=0.66ms | visualize=61.72ms | motion_update=88.10ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=179.91ms
+[2025-10-19 22:25:34.9070 [ICPSlam][Mem] RSS(cur/peak): 533.0/545824.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 212 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:34.9112 [DWA] v=0.00 w=-0.10 cost=2.522
+[2025-10-19 22:25:34.9422 [LASER] ✓ 已接收完整扫描 (第16组，共250点)
+[2025-10-19 22:25:35.0753 [WARN] poll_motion timeout after 88.1ms, using cached data
+[2025-10-19 22:25:35.0754 [Timing] step=2 scan=0.12ms | slam_update=28.15ms | exit_check=0.00ms | frontier_update=2.68ms | target_selection=0.02ms | path_prepare=0.29ms | visualize=76.05ms | motion_update=88.13ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=195.89ms
+[2025-10-19 22:25:35.1031 [ICPSlam][Mem] RSS(cur/peak): 551.1/572224.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 229 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:35.1066 [DWA] v=0.00 w=-0.10 cost=2.790
+[2025-10-19 22:25:35.1257 [LASER] ✓ 已接收完整扫描 (第17组，共250点)
+[2025-10-19 22:25:35.2158 [WARN] poll_motion timeout after 84.7ms, using cached data
+[2025-10-19 22:25:35.2159 [Timing] step=3 scan=0.12ms | slam_update=27.78ms | exit_check=0.00ms | frontier_update=2.57ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=24.43ms | motion_update=84.80ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=140.48ms
+[2025-10-19 22:25:35.2401 [ICPSlam][Mem] RSS(cur/peak): 551.7/572224.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 229 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:35.2444 [DWA] v=0.00 w=-0.10 cost=3.089
+[2025-10-19 22:25:35.2884 [LASER] ✓ 已接收完整扫描 (第18组，共250点)
+[2025-10-19 22:25:35.3978 [WARN] poll_motion timeout after 88.1ms, using cached data
+[2025-10-19 22:25:35.3978 [Timing] step=4 scan=0.13ms | slam_update=24.33ms | exit_check=0.00ms | frontier_update=3.21ms | target_selection=0.02ms | path_prepare=0.35ms | visualize=65.28ms | motion_update=88.16ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=181.93ms
+[2025-10-19 22:25:35.4303 [ICPSlam][Mem] RSS(cur/peak): 552.2/572224.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 230 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:35.4343 [DWA] v=0.00 w=-0.10 cost=3.389
+[2025-10-19 22:25:35.4615 [Visualizer] ✅ 自动控制已启动！现在将开始发送电机命令。
+[2025-10-19 22:25:35.4615 [Visualizer] 💡 提示：按 'm' 键可随时保存地图和路径
+[2025-10-19 22:25:35.4672 [LASER] ✓ 已接收完整扫描 (第19组，共250点)
+[2025-10-19 22:25:35.5092 [MOTOR] CMD-SET 0 0 (v=0.000 w=-0.104)
+[2025-10-19 22:25:35.5967 [WARN] poll_motion timeout after 87.5ms, using cached data
+[2025-10-19 22:25:35.5967 [Timing] step=5 scan=0.14ms | slam_update=32.67ms | exit_check=0.00ms | frontier_update=2.83ms | target_selection=0.03ms | path_prepare=0.35ms | visualize=74.82ms | motion_update=87.58ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=198.87ms
+[2025-10-19 22:25:35.6244 [ICPSlam][Mem] RSS(cur/peak): 638.0/663216.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 236 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:35.6285 [DWA] v=0.00 w=-0.10 cost=3.689
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 128663 (\N{AUTOMOBILE}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 33258 (\N{CJK UNIFIED IDEOGRAPH-81EA}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 25511 (\N{CJK UNIFIED IDEOGRAPH-63A7}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 21046 (\N{CJK UNIFIED IDEOGRAPH-5236}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 20013 (\N{CJK UNIFIED IDEOGRAPH-4E2D}) missing from font(s) DejaVu Sans.
+  plt.pause(VISUALIZATION_UPDATE_TIME)
+[2025-10-19 22:25:35.6613 [LASER] ✓ 已接收完整扫描 (第20组，共250点)
+[2025-10-19 22:25:35.6956 [MOTOR] CMD-SET 0 0 (v=0.000 w=-0.105)
+[2025-10-19 22:25:35.7824 [WARN] poll_motion timeout after 86.8ms, using cached data
+[2025-10-19 22:25:35.7825 [Timing] step=6 scan=0.13ms | slam_update=28.27ms | exit_check=0.00ms | frontier_update=2.55ms | target_selection=0.02ms | path_prepare=0.36ms | visualize=67.02ms | motion_update=86.93ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=185.73ms
+[2025-10-19 22:25:35.8104 [ICPSlam][Mem] RSS(cur/peak): 642.3/667456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 237 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:35.8140 [DWA] v=0.00 w=-0.10 cost=3.989
+[2025-10-19 22:25:35.8416 [LASER] ✓ 已接收完整扫描 (第21组，共250点)
+[2025-10-19 22:25:35.8783 [MOTOR] CMD-SET 0 0 (v=0.000 w=-0.105)
+[2025-10-19 22:25:35.9641 [WARN] poll_motion timeout after 85.7ms, using cached data
+[2025-10-19 22:25:35.9641 [Timing] step=7 scan=0.13ms | slam_update=27.94ms | exit_check=0.00ms | frontier_update=2.63ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=64.29ms | motion_update=85.84ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=181.62ms
+[2025-10-19 22:25:35.9935 [ICPSlam][Mem] RSS(cur/peak): 646.4/671840.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 240 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:35.9978 [DWA] v=0.00 w=-0.10 cost=4.315
+[2025-10-19 22:25:36.0211 [LASER] ✓ 已接收完整扫描 (第22组，共250点)
+[2025-10-19 22:25:36.0582 [MOTOR] CMD-SET 0 0 (v=0.000 w=-0.105)
+[2025-10-19 22:25:36.1459 [WARN] poll_motion timeout after 87.6ms, using cached data
+[2025-10-19 22:25:36.1459 [Timing] step=8 scan=0.13ms | slam_update=29.93ms | exit_check=0.00ms | frontier_update=2.87ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=60.37ms | motion_update=87.67ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=181.75ms
+[2025-10-19 22:25:36.1724 [ICPSlam][Mem] RSS(cur/peak): 646.5/671840.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 240 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:36.1764 [DWA] v=0.00 w=-0.10 cost=4.615
+[2025-10-19 22:25:36.1964 [MOTOR] CMD-SET 0 0 (v=0.000 w=-0.105)
+[2025-10-19 22:25:36.1968 [LASER] ✓ 已接收完整扫描 (第23组，共250点)
+[2025-10-19 22:25:36.2824 [WARN] poll_motion timeout after 86.0ms, using cached data
+[2025-10-19 22:25:36.2824 [Timing] step=9 scan=0.14ms | slam_update=27.02ms | exit_check=0.00ms | frontier_update=2.55ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=19.92ms | motion_update=86.05ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=136.50ms
+[2025-10-19 22:25:36.3067 [ICPSlam][Mem] RSS(cur/peak): 646.5/672016.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 240 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:36.3102 [DW] v:[0.00,0.02] w:[-0.19,0.19] cap=0.29 gap=0.65
+[2025-10-19 22:25:36.3106 [DWA] v=0.00 w=-0.10 cost=4.915
+[2025-10-19 22:25:36.3773 [LASER] ✓ 已接收完整扫描 (第24组，共250点)
+[2025-10-19 22:25:36.3795 [MOTOR] CMD-SET 0 0 (v=0.000 w=-0.105)
+[2025-10-19 22:25:36.4668 [WARN] poll_motion timeout after 87.2ms, using cached data
+[2025-10-19 22:25:36.4668 [Timing] step=10 scan=0.13ms | slam_update=24.43ms | exit_check=0.00ms | frontier_update=2.78ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=68.85ms | motion_update=87.32ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=184.35ms
+[2025-10-19 22:25:36.4935 [ICPSlam][Mem] RSS(cur/peak): 646.8/672080.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 241 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:36.4977 [DWA] v=0.00 w=1.11 cost=5.215
+[2025-10-19 22:25:36.5653 [MOTOR] CMD-SET -42 42 (v=0.000 w=1.110)
+[2025-10-19 22:25:36.5800 [LASER] ✓ 已接收完整扫描 (第25组，共250点)
+[2025-10-19 22:25:36.6525 [WARN] poll_motion timeout after 87.1ms, using cached data
+[2025-10-19 22:25:36.6525 [Timing] step=11 scan=0.15ms | slam_update=27.42ms | exit_check=0.00ms | frontier_update=2.55ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=67.57ms | motion_update=87.21ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=185.70ms
+[2025-10-19 22:25:36.6782 [ICPSlam][Mem] RSS(cur/peak): 646.9/672384.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 241 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[2025-10-19 22:25:36.6826 [DWA] v=0.00 w=1.60 cost=5.818
+[2025-10-19 22:25:36.7283 [LASER] ✓ 已接收完整扫描 (第26组，共250点)
+[2025-10-19 22:25:36.7458 [MOTOR] CMD-SET -42 42 (v=0.000 w=1.596)
+[2025-10-19 22:25:36.7459 [Timing] step=12 scan=0.14ms | slam_update=25.84ms | exit_check=0.00ms | frontier_update=2.93ms | target_selection=0.02ms | path_prepare=0.68ms | visualize=63.13ms | motion_update=0.05ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=93.30ms
+[2025-10-19 22:25:36.9115 [ICPSlam][Mem] RSS(cur/peak): 725.1/742544.0 MB | MPS curr/driver: 0.2/68.3 MB | map_points: 247 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 15
+[2025-10-19 22:25:36.9157 [DWA] v=0.00 w=1.79 cost=6.245
+[2025-10-19 22:25:36.9325 [LASER] ✓ 已接收完整扫描 (第27组，共250点)
+[2025-10-19 22:25:36.9819 [Visualizer] 🛑 强制停止！小车将立即停止并关闭自动控制。
+[2025-10-19 22:25:36.9821 [CONTROL] 🛑 检测到强制停止请求，发送 CMD-SET 0 0
+[2025-10-19 22:25:36.9821 [MOTOR] CMD-SET 0 0 (v=0.000 w=0.000)
+[2025-10-19 22:25:36.9821 [Timing] step=13 scan=0.12ms | slam_update=166.31ms | exit_check=0.00ms | frontier_update=2.58ms | target_selection=0.02ms | path_prepare=0.31ms | visualize=66.35ms | motion_update=0.04ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=236.23ms
+[2025-10-19 22:25:37.0881 [LASER] ✓ 已接收完整扫描 (第28组，共250点)
+[2025-10-19 22:25:37.1472 [ICPSlam][Mem] RSS(cur/peak): 750.8/768816.0 MB | MPS curr/driver: 0.2/68.3 MB | map_points: 264 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 29
+[2025-10-19 22:25:37.1509 [DWA] v=0.00 w=1.87 cost=6.065
+[2025-10-19 22:25:37.2156 [DWA] step=15 v=0.00 w=1.87
+[2025-10-19 22:25:37.2157 [Timing] step=14 scan=0.14ms | slam_update=165.27ms | exit_check=0.00ms | frontier_update=2.66ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=64.72ms | motion_update=0.01ms | stuck_recovery=0.03ms | exit_check_post=0.00ms | loop_total=233.56ms
+[2025-10-19 22:25:37.2696 [LASER] ✓ 已接收完整扫描 (第29组，共250点)
+[2025-10-19 22:25:37.3643 [ICPSlam][Mem] RSS(cur/peak): 762.5/780752.0 MB | MPS curr/driver: 0.3/68.3 MB | map_points: 383 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 25
+[2025-10-19 22:25:37.3678 [目标] 自由格: (111, 142) 邻接未知: (110, 143) (忽略A*:否) 连续相同=0
+[2025-10-19 22:25:37.3684 [RELAX] 首次采样无候选，放宽过滤重新采样 (禁用fallback)
+[2025-10-19 22:25:37.3686 [DWA] v=0.00 w=1.90 cost=1.524
+[2025-10-19 22:25:37.4407 [Timing] step=15 scan=0.12ms | slam_update=148.71ms | exit_check=0.00ms | frontier_update=3.22ms | target_selection=0.04ms | path_prepare=0.29ms | visualize=72.10ms | motion_update=0.01ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=225.00ms
+[2025-10-19 22:25:37.4517 [LASER] ✓ 已接收完整扫描 (第30组，共250点)
+[2025-10-19 22:25:37.6133 [ICPSlam][Mem] RSS(cur/peak): 818.0/837680.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 465 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 32
+[2025-10-19 22:25:37.6179 [目标] 自由格: (110, 145) 邻接未知: (109, 146) (忽略A*:否) 连续相同=0
+[2025-10-19 22:25:37.6188 [DWA] v=0.00 w=1.91 cost=10.997
+[2025-10-19 22:25:37.6514 [LASER] ✓ 已接收完整扫描 (第31组，共250点)
+[2025-10-19 22:25:37.6895 [Timing] step=16 scan=0.14ms | slam_update=172.83ms | exit_check=0.00ms | frontier_update=4.19ms | target_selection=0.03ms | path_prepare=0.31ms | visualize=70.62ms | motion_update=0.01ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=248.70ms
+[2025-10-19 22:25:37.8136 [LASER] ✓ 已接收完整扫描 (第32组，共250点)
+[2025-10-19 22:25:37.9314 [ICPSlam][Mem] RSS(cur/peak): 832.2/852160.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 604 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 55
+[2025-10-19 22:25:38.0039 [目标] 自由格: (91, 154) 邻接未知: (90, 154) (忽略A*:是) 连续相同=0
+[2025-10-19 22:25:38.0050 [DWA] v=0.00 w=1.92 cost=11.940
+[2025-10-19 22:25:38.0485 [LASER] ✓ 已接收完整扫描 (第33组，共250点)
+[2025-10-19 22:25:38.0779 [Timing] step=17 scan=0.14ms | slam_update=242.15ms | exit_check=0.00ms | frontier_update=72.10ms | target_selection=0.07ms | path_prepare=0.33ms | visualize=72.88ms | motion_update=0.01ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=388.42ms
+[2025-10-19 22:25:38.1683 [LASER] ✓ 已接收完整扫描 (第34组，共250点)
+[2025-10-19 22:25:38.2125 [ICPSlam][Mem] RSS(cur/peak): 845.7/865984.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 642 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 20
+[2025-10-19 22:25:38.4263 没有可达的未知区域，探索结束。
+[2025-10-19 22:25:38.4264 [Timing] step=18 scan=0.12ms | slam_update=134.67ms | exit_check=0.00ms | frontier_update=213.65ms | loop_total=348.44ms
+[2025-10-19 22:25:38.4265 探索完成：迷宫内部区域已完全探索。
+[2025-10-19 22:25:38.4265 探索总结 - 总移动距离: 0.8m, 总共探索了 0 个前沿点
+[2025-10-19 22:25:38.4265 规划返回起点路径...
+[2025-10-19 22:25:38.4265 使用探索阶段的安全距离 5.0 栅格规划返程路线
+[2025-10-19 22:25:38.4266 无安全距离最短路径长度: 0.00 米 (0 栅格步数)
+[2025-10-19 22:25:38.4266 返程DWA未能在限定步数内抵达起点。
+[2025-10-19 22:25:38.4266 仿真结束：迷宫探索完成，机器人已返回起点。
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 128205 (\N{ROUND PUSHPIN}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 20165 (\N{CJK UNIFIED IDEOGRAPH-4EC5}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 24314 (\N{CJK UNIFIED IDEOGRAPH-5EFA}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 27169 (\N{CJK UNIFIED IDEOGRAPH-6A21}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 24335 (\N{CJK UNIFIED IDEOGRAPH-5F0F}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 25353 (\N{CJK UNIFIED IDEOGRAPH-6309}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 21551 (\N{CJK UNIFIED IDEOGRAPH-542F}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 21160 (\N{CJK UNIFIED IDEOGRAPH-52A8}) missing from font(s) DejaVu Sans.
+  self.fig.savefig(filename)
+[2025-10-19 22:25:38.4448 [LASER] ✓ 已接收完整扫描 (第35组，共250点)

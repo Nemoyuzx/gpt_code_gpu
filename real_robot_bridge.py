@@ -203,13 +203,9 @@ class MotorController:
         self,
         wheel_track: float,
         ticks_per_meter: float,
-        min_encoder_speed: int = 0,
-        min_linear_speed: float = 0.01,
+        min_encoder_speed: int = 20,
         speed_scale: float = 1.0,
         deadband_threshold: float = 0.01,
-        turn_min_scale: float = 0.5,
-        max_turn_rate: float = 0.6,
-        turn_max_ticks: Optional[float] = None,
     ) -> None:
         """
         Args:
@@ -221,13 +217,9 @@ class MotorController:
         """
         self._wheel_track = wheel_track
         self._ticks_per_meter = ticks_per_meter
-        self._min_encoder_speed = max(0, int(min_encoder_speed))
-        self._min_linear_speed = max(0.0, float(min_linear_speed))
+        self._min_encoder_speed = min_encoder_speed
         self._speed_scale = speed_scale
         self._deadband_threshold = deadband_threshold
-        self._turn_min_scale = max(0.0, float(turn_min_scale))
-        self._max_turn_rate = max(0.0, float(max_turn_rate))
-        self._turn_max_ticks = None if turn_max_ticks is None else max(0.0, float(turn_max_ticks))
         self._command_queue: List[str] = []
         self._lock = threading.Lock()
 
@@ -247,8 +239,6 @@ class MotorController:
             (left_speed, right_speed): 左右轮编码器速度
         """
         # 计算左右轮线速度
-        if self._max_turn_rate > 0.0:
-            w = max(-self._max_turn_rate, min(self._max_turn_rate, w))
         v_left = v - (w * self._wheel_track / 2.0)
         v_right = v + (w * self._wheel_track / 2.0)
         
@@ -258,22 +248,9 @@ class MotorController:
         if abs(v_right) < self._deadband_threshold:
             v_right = 0.0
         
-        # 线速度最小阈值：不足以克服静摩擦时按阈值放大
-        min_lin = self._min_linear_speed
-        if 0.0 < min_lin:
-            if 0 < abs(v_left) < min_lin:
-                v_left = math.copysign(min_lin, v_left)
-            if 0 < abs(v_right) < min_lin:
-                v_right = math.copysign(min_lin, v_right)
-
         # 转换为编码器速度 (ticks/s) 并应用缩放因子
         encoder_left = v_left * self._ticks_per_meter * self._speed_scale
         encoder_right = v_right * self._ticks_per_meter * self._speed_scale
-
-        effective_min_ticks = 0
-        if self._ticks_per_meter > 0:
-            effective_min_ticks = int(round(self._ticks_per_meter * self._min_linear_speed))
-        effective_min_ticks = max(self._min_encoder_speed, effective_min_ticks)
         
         # 改进的最小速度保护逻辑：
         # 1. 如果两个轮子速度都非常小，直接停止
@@ -284,23 +261,18 @@ class MotorController:
         elif abs(encoder_left - encoder_right) > 5.0:
             # 这是转弯指令，保持速度差的比例
             max_wheel = max(abs(encoder_left), abs(encoder_right))
-            turn_min_ticks = effective_min_ticks * self._turn_min_scale
-            turn_min_ticks = max(0.0, turn_min_ticks)
-            if max_wheel < turn_min_ticks and turn_min_ticks > 0:
-                scale_factor = turn_min_ticks / max(1.0, max_wheel)
-                encoder_left *= scale_factor
-                encoder_right *= scale_factor
-            if self._turn_max_ticks and max_wheel > self._turn_max_ticks > 0:
-                scale_factor = self._turn_max_ticks / max_wheel
+            if max_wheel < self._min_encoder_speed:
+                # 两个轮子都低于最小速度，按比例放大
+                scale_factor = self._min_encoder_speed / max_wheel
                 encoder_left *= scale_factor
                 encoder_right *= scale_factor
             # 如果只有一个轮子低于最小速度，不强制提升（保持差速）
         # 3. 直行或速度差很小时，应用标准最小速度保护
         else:
-            if 0 < abs(encoder_left) < effective_min_ticks:
-                encoder_left = effective_min_ticks if encoder_left > 0 else -effective_min_ticks
-            if 0 < abs(encoder_right) < effective_min_ticks:
-                encoder_right = effective_min_ticks if encoder_right > 0 else -effective_min_ticks
+            if 0 < abs(encoder_left) < self._min_encoder_speed:
+                encoder_left = self._min_encoder_speed if encoder_left > 0 else -self._min_encoder_speed
+            if 0 < abs(encoder_right) < self._min_encoder_speed:
+                encoder_right = self._min_encoder_speed if encoder_right > 0 else -self._min_encoder_speed
         
         return int(round(encoder_left)), int(round(encoder_right))
 
@@ -369,23 +341,15 @@ class BleRobotBridge:
         
         motor_ctrl_params = motor_control_params or {}
         min_encoder_speed = motor_ctrl_params.get("min_encoder_speed", 20)
-        min_linear_speed = motor_ctrl_params.get("min_linear_speed", 0.01)
-        speed_scale = motor_ctrl_params.get("speed_scale", 1.0)  # 速度缩放（默认根据 CMD-SET ↔ 速度映射推导）
+        speed_scale = motor_ctrl_params.get("speed_scale", 1.0)  # 保持1:1输出，缩放交由规划器控制
         deadband_threshold = motor_ctrl_params.get("deadband_threshold", 0.01)
-        turn_min_scale = motor_ctrl_params.get("turn_min_scale", 0.5)
-        max_turn_rate = motor_ctrl_params.get("max_turn_rate", 0.6)
-        turn_max_ticks = motor_ctrl_params.get("turn_max_ticks")
         
         self.motor_controller = MotorController(
             wheel_track=wheel_track,
             ticks_per_meter=ticks_per_meter,
             min_encoder_speed=min_encoder_speed,
-            min_linear_speed=min_linear_speed,
             speed_scale=speed_scale,
             deadband_threshold=deadband_threshold,
-            turn_min_scale=turn_min_scale,
-            max_turn_rate=max_turn_rate,
-            turn_max_ticks=turn_max_ticks,
         )
         
         # 写入特征UUID（用于发送控制命令）

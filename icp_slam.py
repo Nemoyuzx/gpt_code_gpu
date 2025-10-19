@@ -17,8 +17,8 @@ MAX_RANGE_FACTOR = 0.9  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "1000"))  # ICP最大迭代次数，可通过环境变量调整
-ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
+ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "200"))  # ICP最大迭代次数，可通过环境变量调整
+ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-3"))  # ICP收敛容忍，默认放宽以加速收敛
 ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "12"))  # ICP对应点匹配距离上限 (米)
 ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息
 

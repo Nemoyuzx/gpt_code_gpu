@@ -2,6 +2,7 @@ import time
 import math
 import os
 import re
+import threading
 from pathlib import Path
 import matplotlib.pyplot as plt
 from maze_loader import MazeLoader
@@ -17,7 +18,7 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 
 
-REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
+REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "1") == "1"
 DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
@@ -91,6 +92,81 @@ BLE_ENCODER_MODULUS = (
 # Reduced timeout from 0.25s to 0.08s to prevent motion_update blocking
 BLE_ENCODER_TIMEOUT = float(os.getenv("BLE_ENCODER_TIMEOUT", "0.08"))
 BLE_ENCODER_POLL_INTERVAL = float(os.getenv("BLE_ENCODER_POLL_INTERVAL", "0.01"))
+
+# CMD-SET 输出缩放：999 对应 1.2 m/s（可通过环境变量调整）
+CMD_SET_MAX_VALUE = float(os.getenv("CMD_SET_MAX_VALUE", "999"))
+CMD_SET_MAX_SPEED = float(os.getenv("CMD_SET_MAX_SPEED", "1.2"))
+CMD_SET_SCALE = (
+    CMD_SET_MAX_VALUE / CMD_SET_MAX_SPEED
+    if CMD_SET_MAX_SPEED > 0.0
+    else 0.0
+)
+SIM_CONTROL_INTERVAL = float(os.getenv("SIM_CONTROL_INTERVAL", "0.01"))
+SIM_MAX_DT = float(os.getenv("SIM_MAX_DT", "0.12"))
+
+
+class SimMotionController:
+    """背景线程，按最新速度指令持续推进仿真机器人。"""
+
+    def __init__(
+        self,
+        robot: Robot,
+        *,
+        control_interval: float,
+        max_dt: float,
+    ) -> None:
+        self._robot = robot
+        self._cmd_lock = threading.Lock()
+        self._command = (0.0, 0.0)
+        self._delta_lock = threading.Lock()
+        self._delta = (0.0, 0.0)
+        self._running = True
+        self._interval = max(0.001, float(control_interval))
+        self._max_dt = max(self._interval, float(max_dt))
+        self._thread = threading.Thread(
+            target=self._run,
+            name="SimMotionController",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def set_command(self, v_cmd: float, w_cmd: float) -> None:
+        with self._cmd_lock:
+            self._command = (float(v_cmd), float(w_cmd))
+
+    def consume_delta(self) -> tuple[float, float]:
+        with self._delta_lock:
+            delta = self._delta
+            self._delta = (0.0, 0.0)
+        return delta
+
+    def shutdown(self) -> None:
+        if not self._running:
+            return
+        self.set_command(0.0, 0.0)
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=1.5)
+            self._thread = None
+
+    def _run(self) -> None:
+        last_time = time.perf_counter()
+        while self._running:
+            now = time.perf_counter()
+            dt = now - last_time
+            last_time = now
+            if dt <= 0.0:
+                dt = self._interval
+            elif dt > self._max_dt:
+                dt = self._max_dt
+            with self._cmd_lock:
+                v_cmd, w_cmd = self._command
+            d_trans, d_rot = self._robot.velocity_step(v_cmd, w_cmd, dt)
+            with self._delta_lock:
+                self._delta = (self._delta[0] + d_trans, self._delta[1] + d_rot)
+            sleep_remaining = self._interval - (time.perf_counter() - now)
+            if sleep_remaining > 0.0:
+                time.sleep(sleep_remaining)
 
 # ==================== 录制数据回放配置 ====================
 RECORDED_LASER_LOG = Path(os.getenv("RECORDED_LASER_LOG", "ble_parsed.log"))
@@ -294,7 +370,7 @@ ROTATION_THRESHOLD = 1e-3  # 旋转角度阈值
 MOVEMENT_THRESHOLD = 1e-6  # 移动距离阈值
 
 # 速度底线配置
-EXPLORE_MIN_SPEED = float(os.getenv("EXPLORE_MIN_SPEED", "0.06"))  # 探索阶段最小前进速度（默认6cm/s）
+EXPLORE_MIN_SPEED = 0.14  # 探索阶段的最小前进速度
 # 卡住判定与挤出恢复参数
 STUCK_WINDOW_STEPS = 16             # 判定窗口步数
 STUCK_SPIN_W_THRESH = 1.1           # 认为“原地打转”的角速度阈值(rad/s)
@@ -444,7 +520,7 @@ def main():
         robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose, laser_angle_offset_deg=LIDAR_ANGLE_OFFSET_DEG)
-    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.03
+    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.04
     frontier_safety_cells = max(
         0,
         int(math.ceil(base_frontier_safety / maze.resolution))
@@ -630,30 +706,10 @@ def main():
             "invert_right": BLE_INVERT_RIGHT,
         }
         # 电机控制参数（单独传递）
-        default_min_linear = float(os.getenv("MIN_LINEAR_SPEED", "0.003"))
-        derived_min_encoder = int(round(default_min_linear * BLE_TICKS_PER_METER))
-        min_encoder_env = os.getenv("MIN_ENCODER_SPEED")
-        if min_encoder_env is not None:
-            try:
-                min_encoder_speed = int(min_encoder_env)
-            except ValueError:
-                min_encoder_speed = derived_min_encoder
-        else:
-            min_encoder_speed = derived_min_encoder
-
-        cmdset_max_value = float(os.getenv("CMDSET_MAX_VALUE", "999"))
-        cmdset_max_speed = max(1e-6, float(os.getenv("CMDSET_MAX_SPEED", "1.2")))
-        default_speed_scale = cmdset_max_value / (cmdset_max_speed * BLE_TICKS_PER_METER)
-        min_encoder_speed = max(30, min_encoder_speed)
-
         motor_control_params = {
-            "min_encoder_speed": min_encoder_speed,
-            "min_linear_speed": max(0.0, default_min_linear),
-            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", f"{default_speed_scale:.6f}")),
+            "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
+            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
-            "turn_min_scale": float(os.getenv("MOTOR_TURN_MIN_SCALE", "0.5")),
-            "max_turn_rate": float(os.getenv("MOTOR_MAX_TURN_RATE", "0.6")),
-            "turn_max_ticks": float(os.getenv("MOTOR_TURN_MAX_TICKS", "60.0")),
         }
         print("[BLE] 启动实时数据监听线程...")
         ble_bridge = BleRobotBridge(
@@ -682,6 +738,16 @@ def main():
     last_scan_cache: dict[str, Optional[tuple[List[float], List[float]]]] = {"value": None}
     last_angles_cache: dict[str, Optional[List[float]]] = {"value": None}
     recorded_motion_cache: dict[str, Optional[Tuple[float, float]]] = {"value": None}
+    sim_motion_controller: Optional[SimMotionController] = None
+    if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA:
+        sim_motion_controller = SimMotionController(
+            robot,
+            control_interval=SIM_CONTROL_INTERVAL,
+            max_dt=SIM_MAX_DT,
+        )
+        import atexit
+
+        atexit.register(sim_motion_controller.shutdown)
 
     def normalize_scan(
         distances: List[float],
@@ -791,8 +857,30 @@ def main():
     def apply_motion_update(v_cmd: float, w_cmd: float, dt: float):
         """应用运动更新：仿真模式直接执行，真实小车模式发送控制命令并读取传感器反馈"""
         if ble_bridge is None:
-            # 仿真模式：直接执行速度命令
-            return robot.velocity_step(float(v_cmd), float(w_cmd), float(dt))
+            # 仿真模式：后台线程持续推进机器人，导航线程只更新指令
+            v_cmd = float(v_cmd)
+            w_cmd = float(w_cmd)
+            dt = float(dt)
+            if sim_motion_controller is not None:
+                d_trans, d_rot = sim_motion_controller.consume_delta()
+                sim_motion_controller.set_command(v_cmd, w_cmd)
+            else:
+                d_trans, d_rot = robot.velocity_step(v_cmd, w_cmd, dt)
+            wheel_half = WHEEL_TRACK / 2.0
+            v_left = v_cmd - w_cmd * wheel_half
+            v_right = v_cmd + w_cmd * wheel_half
+            cmd_left = v_left * CMD_SET_SCALE
+            cmd_right = v_right * CMD_SET_SCALE
+            if CMD_SET_MAX_VALUE > 0.0:
+                cmd_left = max(-CMD_SET_MAX_VALUE, min(CMD_SET_MAX_VALUE, cmd_left))
+                cmd_right = max(-CMD_SET_MAX_VALUE, min(CMD_SET_MAX_VALUE, cmd_right))
+            cmd_left_int = int(round(cmd_left))
+            cmd_right_int = int(round(cmd_right))
+            print(
+                f"[MOTOR] CMD-SET {cmd_left_int} {cmd_right_int} "
+                f"(v={v_cmd:.3f} w={w_cmd:.3f})"
+            )
+            return d_trans, d_rot
         
         # 真实小车模式：
         # 1. 检查强制停止请求
@@ -1238,14 +1326,6 @@ def main():
     dwa_cfg = DWAConfig(
         robot_radius=ROBOT_COLLISION_RADIUS,
     )
-    dwa_cfg.command_speed_scale = float(os.getenv("DWA_COMMAND_SPEED_SCALE", "0.25"))
-    dwa_cfg.command_yaw_scale = float(os.getenv("DWA_COMMAND_YAW_SCALE", "0.25"))
-    max_speed_env = float(os.getenv("DWA_MAX_SPEED", "0.18"))
-    max_yaw_env = float(os.getenv("DWA_MAX_YAW_RATE", str(math.radians(40.0))))
-    turn_min_scale_env = float(os.getenv("DWA_TURN_MIN_SPEED_SCALE", "0.1"))
-    dwa_cfg.max_speed = min(dwa_cfg.max_speed, max_speed_env)
-    dwa_cfg.max_yaw_rate = min(dwa_cfg.max_yaw_rate, max_yaw_env)
-    dwa_cfg.turn_min_speed_scale = min(dwa_cfg.turn_min_speed_scale, turn_min_scale_env)
     dwa_planner = DWAPlanner(dwa_cfg)
 
     def get_inflated_radius() -> float:
@@ -1424,6 +1504,8 @@ def main():
 
         for idx in range(max_iters):
             while viz.paused:
+                if sim_motion_controller is not None:
+                    sim_motion_controller.set_command(0.0, 0.0)
                 plt.pause(VISUALIZATION_PAUSE_TIME)
 
             loop_label = f"{label}-idx={idx}"
@@ -1522,6 +1604,16 @@ def main():
                 obstacles,
                 path_hint=path_hint_segment
             )
+            turn_speed_limit = getattr(dwa_cfg, "turn_speed_limit", None)
+            if (
+                turn_speed_limit is not None
+                and turn_speed_limit > 0.0
+                and abs(w_cmd) > getattr(dwa_cfg, "turn_speed_threshold", 0.0)
+            ):
+                v_cmd = math.copysign(
+                    min(abs(v_cmd), turn_speed_limit),
+                    v_cmd,
+                )
             seg_times.append(("dwa_plan", (time.perf_counter() - t_section) * 1000.0))
             t_section = time.perf_counter()
 
@@ -1539,7 +1631,7 @@ def main():
                         abs(w_cmd) < math.radians(18.0)):
                     v_cmd = boost_speed
                     if hasattr(dwa_planner, "override_last_command"):
-                        dwa_planner.override_last_command(v_cmd, w_cmd, scaled=True)
+                        dwa_planner.override_last_command(float(v_cmd), float(w_cmd), scaled=True)
                     else:
                         dwa_planner._last_u = (v_cmd, w_cmd)
                     if predicted_traj is not None:
@@ -1630,6 +1722,8 @@ def main():
     while True:
         # 1. 暂停检查
         if viz.paused:
+            if sim_motion_controller is not None:
+                sim_motion_controller.set_command(0.0, 0.0)
             plt.pause(VISUALIZATION_PAUSE_TIME)
             continue
         loop_step_label = f"step={step_counter}"
@@ -1903,6 +1997,16 @@ def main():
             robot.angular_vel
         ])
         (v_cmd, w_cmd), _traj = dwa_planner.plan(state, (gx, gy), obstacles, path_hint=path_hint_world)
+        turn_speed_limit = getattr(dwa_cfg, "turn_speed_limit", None)
+        if (
+            turn_speed_limit is not None
+            and turn_speed_limit > 0.0
+            and abs(w_cmd) > getattr(dwa_cfg, "turn_speed_threshold", 0.0)
+        ):
+            v_cmd = math.copysign(
+                min(abs(v_cmd), turn_speed_limit),
+                v_cmd,
+            )
 
         dwa_elapsed = (time.perf_counter() - t_section) * 1000.0
         section_times.append(("dwa_plan", dwa_elapsed))
@@ -1937,7 +2041,7 @@ def main():
                     abs(w_cmd) < math.radians(18.0)):
                 v_cmd = boost_speed
                 if hasattr(dwa_planner, "override_last_command"):
-                    dwa_planner.override_last_command(v_cmd, w_cmd, scaled=True)
+                    dwa_planner.override_last_command(float(v_cmd), float(w_cmd), scaled=True)
                 else:
                     dwa_planner._last_u = (v_cmd, w_cmd)
                 if _traj is not None:
