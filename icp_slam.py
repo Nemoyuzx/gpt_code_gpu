@@ -75,6 +75,10 @@ class ICPSlam:
             # 如果设备初始化失败，回退到CPU
             self.device = torch.device("cpu")
             print(f"[ICPSlam] GPU初始化失败，回退到CPU: {str(e)}")
+
+        self.icp_consecutive_failures = 0
+        self.icp_skip_frames = 0
+        self.icp_last_status = "init"
             
     def _print_memory_usage(self, icp_iterations=None):
         """打印当前进程与设备的内存占用信息，可选附带本轮ICP迭代次数。"""
@@ -212,6 +216,57 @@ class ICPSlam:
             # 在CUDA或CPU上直接计算
             return torch.linalg.det(matrix)
 
+    def _shrink_map_points(self, keep: int) -> None:
+        if self.map_points_tensor is None:
+            return
+        total = int(self.map_points_tensor.shape[0])
+        if total <= keep:
+            return
+        try:
+            idx = torch.randperm(total, device=self.device)[:keep]
+        except Exception:
+            idx_cpu = torch.randperm(total)[:keep]
+            try:
+                idx = idx_cpu.to(self.device)
+            except Exception:
+                idx = idx_cpu
+                self.map_points_tensor = self.map_points_tensor.cpu()
+        self.map_points_tensor = self.map_points_tensor.index_select(0, idx)
+        if self.map_points_tensor.device != self.device:
+            self.map_points_tensor = self.map_points_tensor.to(self.device)
+
+    def _handle_icp_failure(
+        self,
+        *,
+        reason: str,
+        valid_pairs: int,
+        last_error: Optional[float],
+        last_diff: Optional[float],
+    ) -> None:
+        self.icp_consecutive_failures += 1
+        detail_parts = []
+        if last_error is not None and math.isfinite(last_error):
+            detail_parts.append(f"error={last_error:.4f}")
+        if last_diff is not None and math.isfinite(last_diff):
+            detail_parts.append(f"delta={last_diff:.4f}")
+        detail_parts.append(f"pairs={valid_pairs}")
+        print(
+            f"[ICP][WARN] {reason} ({', '.join(detail_parts)}) -> consecutive_failures={self.icp_consecutive_failures}"
+        )
+        self.icp_last_status = "fail"
+        target_keep = max(int(MAX_TGT_POINTS_FOR_ICP * 0.7), 15000)
+        self._shrink_map_points(target_keep)
+        if self.icp_consecutive_failures >= 3:
+            self.icp_skip_frames = max(self.icp_skip_frames, 2)
+            self.icp_last_status = "skipping"
+
+    def _handle_icp_success(self) -> None:
+        if self.icp_consecutive_failures > 0:
+            print(f"[ICP] recovered after {self.icp_consecutive_failures} failure(s)")
+        self.icp_consecutive_failures = 0
+        self.icp_skip_frames = 0
+        self.icp_last_status = "ok"
+
     def update(self, odom_delta, scan, angles_deg: Optional[Sequence[float]] = None):
         """
         使用新的里程计增量 odom_delta (tuple: (delta_distance, delta_theta))
@@ -219,6 +274,14 @@ class ICPSlam:
         返回更新后的位姿估计 (x, y, theta)。
         """
         d_trans, d_rot = odom_delta
+        
+        # 运动阈值：当运动量小于此值时，认为机器人静止，跳过ICP以避免噪声导致的漂移
+        MOTION_THRESHOLD_TRANS = float(os.environ.get("ICP_MIN_TRANS", "0.005"))  # 5mm
+        MOTION_THRESHOLD_ROT = float(os.environ.get("ICP_MIN_ROT", "0.01"))      # ~0.57度
+        
+        # 检查是否实际有运动
+        is_moving = (abs(d_trans) >= MOTION_THRESHOLD_TRANS or abs(d_rot) >= MOTION_THRESHOLD_ROT)
+        
         # 步骤1: 预测位姿 (根据里程计增量更新估计位姿)
         self.theta += d_rot
         self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
@@ -226,7 +289,7 @@ class ICPSlam:
         self.x += d_trans * math.cos(self.theta)
         self.y += d_trans * math.sin(self.theta)
 
-        # 步骤2: ICP 匹配校正 (使用 scan 与已有地图点云匹配修正位姿)
+        # 步骤2: ICP 匹配校正 (仅在有实际运动时使用 scan 与已有地图点云匹配修正位姿)
         # 将激光扫描点转换为全局坐标（基于预测位姿）
         if angles_deg is not None and len(angles_deg) == len(scan):
             angles_array = np.array(angles_deg, dtype=float)
@@ -286,9 +349,31 @@ class ICPSlam:
             return (self.x, self.y, self.theta)
         body_points_np = np.array(body_points, dtype=np.float32)
 
-        # 如果存在已有地图点云（仅内存中保留一份），则进行 ICP 匹配校正
+        # 如果存在已有地图点云且机器人在运动，则进行 ICP 匹配校正
+        # 静止时跳过ICP以避免传感器噪声导致的位姿漂移
         icp_iterations = 0
-        if (self.map_points_tensor is not None and self.map_points_tensor.numel() > 0) and body_points_np.size > 0:
+        icp_valid_pairs = 0
+        icp_last_diff: Optional[float] = None
+        icp_last_error: Optional[float] = None
+        icp_converged = False
+        icp_performed = False
+        skip_icp = False
+        if is_moving and self.icp_skip_frames > 0:
+            remaining = self.icp_skip_frames
+            self.icp_skip_frames = max(0, self.icp_skip_frames - 1)
+            skip_icp = True
+            if self.icp_last_status != "skipping":
+                print(f"[ICP][INFO] skipping ICP for recovery ({remaining} frame(s) left)")
+            self.icp_last_status = "skipping"
+
+        if (
+            is_moving
+            and not skip_icp
+            and self.map_points_tensor is not None
+            and self.map_points_tensor.numel() > 0
+            and body_points_np.size > 0
+        ):
+            icp_performed = True
             # 开始 ICP 前，将地图点云加载至 GPU/CPU 张量
             src_body = self.to_tensor(body_points_np)  # 源点云（机器人坐标系，形状 [N_src, 2]）
             # 准备目标点云张量 (地图点)
@@ -328,6 +413,9 @@ class ICPSlam:
                     valid_mask = min_dists < self.icp_correspondence_thresh
                     valid_count = int(torch.sum(valid_mask).item())
                     current_error = float(torch.mean(min_dists[valid_mask]).item()) if valid_count > 0 else float('inf')
+                    icp_valid_pairs = valid_count
+                    if math.isfinite(current_error):
+                        icp_last_error = current_error
                     
                     if valid_count < 3:
                         # 对应点太少，无法计算精确变换，退出 ICP
@@ -369,6 +457,7 @@ class ICPSlam:
                     # 将新变换应用于源点集合并计算最大位移差
                     src_world_new = (R_delta @ src_body.T).T + t_delta
                     diff = torch.max(torch.norm(src_world_new - src_world_prev, dim=1))
+                    icp_last_diff = float(diff)
                     # 更新当前估计，为下次迭代使用
                     R = R_delta
                     t = t_delta
@@ -390,11 +479,13 @@ class ICPSlam:
                         # 收敛判定：变化量小于阈值，结束迭代
                         if ICP_DEBUG:
                             print(f"[ICP][debug] iter={it+1} converged (diff={float(diff):.6f} < tol={self.icp_tolerance})")
+                        icp_converged = True
                         break
                     
                     # 达到最大迭代次数的警告
                     if it + 1 == self.icp_max_iter:
                         print(f"[ICP][WARN] reached MAX_ITER={self.icp_max_iter}, diff={float(diff):.6f}, error={current_error:.6f}, valid_corr={valid_count}/{len(src_body)} (tgt_pts={len(tgt)})")
+                        break
                         
                 # 提取最终结果到 CPU（numpy）用于更新机器人位姿
                 R_cpu = R.cpu().numpy()
@@ -423,7 +514,31 @@ class ICPSlam:
             self.y = float(t_cpu[1])
             # 使用修正后的位姿更新当前激光点的全局坐标（numpy 计算）
             pts_local = body_points_np.dot(R_cpu.T) + t_cpu
-        # （若未进入 ICP，例如地图为空，仅根据里程计预测，则直接使用预测位姿进行建图）
+        else:
+            # 若未进入 ICP（地图为空、静止或无运动），仅根据里程计预测位姿进行建图
+            # 这种情况下位姿已经在步骤1更新，无需额外处理
+            if ICP_DEBUG and not is_moving:
+                print(f"[ICP][debug] 机器人静止 (d_trans={d_trans:.6f}, d_rot={d_rot:.6f})，跳过ICP以避免噪声漂移")
+
+        if icp_performed:
+            if icp_converged:
+                self._handle_icp_success()
+            else:
+                reason = "ICP未收敛"
+                if icp_iterations >= self.icp_max_iter:
+                    reason = "ICP达到最大迭代次数"
+                elif icp_valid_pairs < 3:
+                    reason = "ICP有效对应点不足"
+                elif icp_last_diff is not None:
+                    reason = "ICP迭代停滞"
+                self._handle_icp_failure(
+                    reason=reason,
+                    valid_pairs=icp_valid_pairs,
+                    last_error=icp_last_error,
+                    last_diff=icp_last_diff,
+                )
+        elif is_moving and not skip_icp and self.icp_consecutive_failures > 0:
+            self._handle_icp_success()
 
         # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
         rx = int((self.x - self.min_x) / self.resolution)

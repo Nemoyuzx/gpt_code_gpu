@@ -11,14 +11,14 @@ from icp_slam import ICPSlam
 from frontier_explorer import FrontierExplorer
 from dwa import LegacyDWAPlanner as DWAPlanner, LegacyDWAConfig as DWAConfig, occupancy_to_obstacles
 from collections import deque
-from visualizer import Visualizer
+from visualizer import Visualizer, LIDAR_DISPLAY_MAX_RANGE
 from noise_filter import NoiseFilter
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -67,6 +67,7 @@ CONTROL_STARTUP_DELAY = float(os.getenv("CONTROL_STARTUP_DELAY", "2.0"))
 # ==================== BLE 硬件集成配置 ====================
 BLE_DEVICE_ADDRESS = os.getenv("BLE_DEVICE_ADDRESS", DEFAULT_BLE_DEVICE_ADDRESS)
 BLE_NOTIFY_CHAR = os.getenv("BLE_NOTIFY_CHAR", DEFAULT_BLE_NOTIFY_CHAR)
+BLE_WRITE_CHAR = os.getenv("BLE_WRITE_CHAR", DEFAULT_BLE_NOTIFY_CHAR)  # 默认使用相同的特征
 BLE_ADAPTER_ID = os.getenv("BLE_ADAPTER_ID") or None
 BLE_CONNECT_TIMEOUT = float(os.getenv("BLE_CONNECT_TIMEOUT", "8.0"))
 BLE_RECONNECT_DELAY = float(os.getenv("BLE_RECONNECT_DELAY", "3.0"))
@@ -314,8 +315,8 @@ VISUALIZATION_SKIP_FRAMES = 1  # 可视化跳帧：每N帧更新一次（降低�
 OBSTACLE_SEARCH_EXPANSION = BASE_SAFETY_CLEARANCE  # 障碍物区域搜索范围扩大距离（米）
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
-FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
-FRONTIER_UPDATE_INTERVAL = 1            # 前沿刷新间隔（每4轮刷新一次，降低更新频率2->4）
+FRONTIER_COOLDOWN_STEPS = 0               # 冷却期间暂停A*与前沿刷新（0 表示禁用冷却）
+FRONTIER_UPDATE_INTERVAL = 1            # 前沿刷新间隔（1 表示每轮都刷新）
 FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
 
 # 冷却提前解除条件：基于路径进度提前允许刷新
@@ -450,6 +451,39 @@ def main():
     explorer = FrontierExplorer(safety_distance=float(frontier_safety_cells))  # 设置与障碍物的安全距离
     explorer.set_safety_distance(float(frontier_safety_cells))
     viz = Visualizer(maze, robot=robot, slam=slam)
+    
+    # 立即显示初始空白地图，让用户知道程序已启动
+    initial_pose = robot.get_pose()
+    empty_scan = [LIDAR_DISPLAY_MAX_RANGE] * 360  # 空扫描
+    initial_occupancy = slam.get_occupancy()
+    viz.update(
+        initial_pose,
+        empty_scan,
+        frontiers=None,
+        target=None,
+        path=None,
+        occupancy=initial_occupancy,
+        predicted_traj=None,
+        robot_radius=ROBOT_VISUAL_RADIUS,
+        actual_traj=None,
+        scan_angles=None,
+        unsafe_mask=None,
+    )
+    plt.pause(0.1)  # 给matplotlib时间渲染窗口
+    
+    # 打印键盘控制提示
+    print("\n" + "="*60)
+    print("🎮 键盘控制说明：")
+    print("  [s] - 启动自动控制（开始发送电机命令）")
+    print("  [p] - 强制停止小车（立即发送 CMD-SET 0 0）")
+    print("  [m] - 保存地图和路径到文件")
+    print("  [空格] - 暂停/继续可视化更新")
+    print("="*60 + "\n")
+    if USE_REAL_BLE_DATA and ENABLE_CONTROL_LOOP:
+        print("⚠️  当前模式：真实小车 + 控制循环已启用")
+        print("   程序启动后将进入【仅建图模式】")
+        print("   请在matplotlib窗口中按 's' 键启动自动控制\n")
+    
     explore_traj_style = {
         "color": "orange",
         "linewidth": 1.2,
@@ -597,6 +631,12 @@ def main():
             "invert_left": BLE_INVERT_LEFT,
             "invert_right": BLE_INVERT_RIGHT,
         }
+        # 电机控制参数（单独传递）
+        motor_control_params = {
+            "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
+            "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "0.1")),  # 速度缩放到10%
+            "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
+        }
         print("[BLE] 启动实时数据监听线程...")
         ble_bridge = BleRobotBridge(
             BLE_DEVICE_ADDRESS,
@@ -609,6 +649,8 @@ def main():
             reconnect_delay=BLE_RECONNECT_DELAY,
             laser_params=laser_params,
             motion_params=motion_params,
+            motor_control_params=motor_control_params,
+            write_char=BLE_WRITE_CHAR,
         )
         if ble_bridge.wait_ready(BLE_READY_TIMEOUT):
             print("[BLE] 后台监听已就绪，使用真实小车数据驱动系统。")
@@ -727,15 +769,31 @@ def main():
             time.sleep(BLE_SCAN_POLL_INTERVAL)
 
     def apply_motion_update(v_cmd: float, w_cmd: float, dt: float):
+        """应用运动更新：仿真模式直接执行，真实小车模式发送控制命令并读取传感器反馈"""
         if ble_bridge is None:
+            # 仿真模式：直接执行速度命令
             return robot.velocity_step(float(v_cmd), float(w_cmd), float(dt))
+        
+        # 真实小车模式：
+        # 1. 检查强制停止请求
+        if viz.check_and_clear_force_stop():
+            print("[CONTROL] 🛑 检测到强制停止请求，发送 CMD-SET 0 0")
+            ble_bridge.send_motor_command(0.0, 0.0, dt)
+        # 2. 发送电机控制命令（仅当ENABLE_CONTROL_LOOP且可视化器允许时）
+        elif ENABLE_CONTROL_LOOP and viz.is_auto_control_enabled():
+            ble_bridge.send_motor_command(float(v_cmd), float(w_cmd), float(dt))
+        
+        # 3. 读取编码器反馈获取实际运动
         d_trans, d_rot, velocities = ble_bridge.motion.poll_motion()
+        
+        # 4. 更新机器人状态
         apply_motion_fn = getattr(robot, "apply_motion", None)
         if callable(apply_motion_fn):
             if velocities is not None:
                 apply_motion_fn(d_trans, d_rot, linear_vel=velocities[0], angular_vel=velocities[1])
             else:
                 apply_motion_fn(d_trans, d_rot)
+        
         return d_trans, d_rot
 
     def integrate_recorded_motion(distance: float, rotation: float) -> None:
@@ -903,11 +961,11 @@ def main():
         return
     noisy, clean = initial_scan
     scan = noisy
-    # 打印一次雷达束数用于验证分辨率变更
-    try:
-        print(f"[LIDAR] beams={len(scan)}  resolution={LIDAR_ANGLE_RESOLUTION}°  (expect≈{int(360/LIDAR_ANGLE_RESOLUTION)})")
-    except Exception:
-        pass
+    # 打印一次雷达束数用于验证分辨率变更（已注释）
+    # try:
+    #     print(f"[LIDAR] beams={len(scan)}  resolution={LIDAR_ANGLE_RESOLUTION}°  (expect≈{int(360/LIDAR_ANGLE_RESOLUTION)})")
+    # except Exception:
+    #     pass
     est_pose = slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))  # 使用SLAM返回的估计位姿
     current_angles = last_angles_cache.get("value")
     # 初始可视化
@@ -956,7 +1014,6 @@ def main():
     same_target_counter = 0  # 重用统计：连续获得相同目标的次数
     step_counter = 0
     current_path = None  # 本步BFS得到的路径（含起点与目标自由格）
-    frontier_update_tick = 0
     # 前沿节流控制
     frontier_cooldown_steps = 0
     frontier_cooldown_elapsed = 0
@@ -1182,6 +1239,10 @@ def main():
     recovery_target_cell = None   # 用于可视化
 
     # 4. 前沿探索主循环
+    # 初始化运动历史变量（用于SLAM更新）
+    main._last_d_trans = 0.0
+    main._last_d_rot = 0.0
+    
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
     base_lookahead_steps = 14   # 默认前瞻栅格数（调近）
@@ -1542,17 +1603,26 @@ def main():
         t_section = loop_start
         if frontier_cooldown_reenter_grace > 0:
             frontier_cooldown_reenter_grace -= 1
-        # 2. 采样扫描并更新探索距离条件
+        
+        # 2. 采样扫描并更新SLAM（在DWA规划之前，确保使用最新地图）
         noisy, clean = acquire_scan()
         scan = noisy
         has_sufficient_exploration = (total_distance_traveled >= min_exploration_distance)
         section_times.append(("scan", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
+        
+        # 使用上一帧的运动数据更新SLAM
+        if step_counter > 0:
+            est_pose = slam.update((main._last_d_trans, main._last_d_rot), scan, last_angles_cache.get("value"))
+        else:
+            est_pose = slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))
+        section_times.append(("slam_update", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
+        
         # 3. 出口检测
         exit_triggered = False
         if has_sufficient_exploration and check_exit_condition(scan, max_range=lidar.max_range, min_no_obstacle_count=MIN_NO_OBSTACLE_COUNT):
             print(f"检测到超过180度的连续无障碍区域 - 已探索距离: {total_distance_traveled:.1f}m")
-            est_pose = slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))
             current_angles = last_angles_cache.get("value")
             occupancy = slam.get_occupancy()
             wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
@@ -1561,12 +1631,13 @@ def main():
                        unsafe_mask=wall_safety_mask)
             should_return_to_start = True
             exit_triggered = True
-        section_times.append(("exit_check_pre", (time.perf_counter() - t_section) * 1000.0))
+        section_times.append(("exit_check", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
         if exit_triggered:
             section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
             log_section_times(loop_step_label, section_times)
             break
+        
         # 4. 前沿与路径更新（增加节流逻辑）
         # 使用SLAM估计位姿计算所在栅格
         rx_idx = int((est_pose[0] - maze.bounds[0]) / maze.resolution)
@@ -1586,13 +1657,7 @@ def main():
         occupancy = slam.get_occupancy()
         if frontier_cooldown_steps == 0:
             frontier_cooldown_elapsed = 0
-            should_refresh_frontier = False
-            if global_path is None or frontier_hint_cell is None:
-                should_refresh_frontier = True
-            else:
-                if (frontier_update_tick % FRONTIER_UPDATE_INTERVAL) == 0:
-                    should_refresh_frontier = True
-            frontier_update_tick += 1
+            should_refresh_frontier = True
             # 刷新最近前沿与未知邻居（仅在非冷却期）
             if should_refresh_frontier:
                 provided_path = None
@@ -1680,7 +1745,6 @@ def main():
             # 冷却中：不刷新前沿、不运行A*，仅递减计数器并沿旧提示/路径前进
             frontier_cooldown_elapsed += 1
             frontier_cooldown_steps = max(0, frontier_cooldown_steps - 1)
-            frontier_update_tick = 0
             release_reason = None
             release_hint_cell = None
             if current_path and len(current_path) >= 2:
@@ -1781,6 +1845,7 @@ def main():
             gx = maze.bounds[0] + (follow_cell[0] + 0.5) * maze.resolution
             gy = maze.bounds[1] + (follow_cell[1] + 0.5) * maze.resolution
 
+        # 使用最新的占据栅格数据生成障碍物（SLAM已在循环开始时更新）
         obstacles = occupancy_to_obstacles(
             slam.get_occupancy(),
             maze.bounds,
@@ -1881,7 +1946,7 @@ def main():
         if hasattr(dwa_planner, 'last_timing') and isinstance(dwa_planner.last_timing, dict):
             section_times.append(("dwa_planner_detail", dwa_planner.last_timing.copy()))
         
-        # 再执行控制并更新SLAM
+        # 执行控制并保存运动数据（供下一帧SLAM更新使用）
         d_trans, d_rot = apply_motion_update(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
         if (step_counter % 20 == 0) or (v_cmd < -1e-3):
             print(f"[CTRL] step={step_counter} v={float(v_cmd):.2f} w={float(w_cmd):.2f} d_trans={d_trans:.3f} d_rot={d_rot:.3f}")
@@ -1889,14 +1954,9 @@ def main():
         section_times.append(("motion_update", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
         
-        noisy, clean = acquire_scan()
-        scan = noisy
-        section_times.append(("scan", (time.perf_counter() - t_section) * 1000.0))
-        t_section = time.perf_counter()
-        
-        est_pose = slam.update((d_trans, d_rot), scan, last_angles_cache.get("value"))
-        section_times.append(("slam_update", (time.perf_counter() - t_section) * 1000.0))
-        t_section = time.perf_counter()
+        # 保存本帧运动数据供下一帧使用
+        main._last_d_trans = d_trans
+        main._last_d_rot = d_rot
 
         step_counter += 1
         if dwa_cfg.debug and step_counter % 15 == 0:

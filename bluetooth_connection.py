@@ -141,6 +141,7 @@ class BleBackgroundListener:
         decode_errors: str = "replace",
         show_raw: bool = False,
         reconnect_delay: float = 3.0,
+        write_char: Optional[str] = None,
     ) -> None:
         if not address:
             raise ValueError("BLE address must be provided for background listener")
@@ -152,8 +153,8 @@ class BleBackgroundListener:
             connect_timeout=connect_timeout,
             list_services=False,
             notify_char=notify_char,
-            write_char=None,
-            write_without_response=False,
+            write_char=write_char,
+            write_without_response=True,  # 使用无响应写入，速度更快
             read_char=None,
             message="",
             binary=False,
@@ -169,6 +170,10 @@ class BleBackgroundListener:
         self._stop_event = threading.Event()
         self._ready_event = threading.Event()
         self._last_error: Optional[BaseException] = None
+        self._client: Optional['BleakClient'] = None  # 保存client引用
+        self._client_lock = threading.Lock()
+        self._write_queue: Deque[bytes] = deque()  # 写入队列
+        self._write_lock = threading.Lock()
 
     @property
     def ready_event(self) -> threading.Event:
@@ -196,6 +201,31 @@ class BleBackgroundListener:
     def wait_ready(self, timeout: Optional[float] = None) -> bool:
         """Block until the listener is ready or timeout expires."""
         return self._ready_event.wait(timeout)
+    
+    def write_command(self, command: str) -> bool:
+        """
+        将命令加入写入队列（非阻塞）
+        
+        Args:
+            command: 要发送的命令字符串（会自动添加换行符）
+        
+        Returns:
+            True if 命令已加入队列
+        """
+        if not self._ready_event.is_set():
+            print("[WARN] BLE not ready, command queued:", command)
+        
+        command_bytes = (command + "\n").encode('utf-8')
+        with self._write_lock:
+            self._write_queue.append(command_bytes)
+        return True
+    
+    def _get_pending_writes(self) -> List[bytes]:
+        """获取所有待写入的数据"""
+        with self._write_lock:
+            pending = list(self._write_queue)
+            self._write_queue.clear()
+        return pending
 
     def _run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -222,6 +252,7 @@ class BleBackgroundListener:
                         delimiter,
                         stop_event=self._stop_event,
                         on_connected=mark_ready,
+                        write_queue_getter=self._get_pending_writes,
                     )
                 )
             except SystemExit as exc:
@@ -256,6 +287,7 @@ def start_background_listener(
     decode_errors: str = "replace",
     show_raw: bool = False,
     reconnect_delay: float = 3.0,
+    write_char: Optional[str] = None,
 ) -> BleBackgroundListener:
     DATA_WRITER.reset()
     listener = BleBackgroundListener(
@@ -267,6 +299,7 @@ def start_background_listener(
         decode_errors=decode_errors,
         show_raw=show_raw,
         reconnect_delay=reconnect_delay,
+        write_char=write_char,
     )
     listener.start()
     return listener
@@ -376,7 +409,10 @@ class FrameParser:
         self._pool.add_laser_sample(sample)
         self._laser_count += 1
         self._writer.write_laser_point(sample, bytes(frame))
-        print(f"[LASER] idx={group_idx} angle={angle_deg:.2f} distance_mm={distance_mm:.1f}")
+        
+        # 每完成一组扫描（250个点）打印一次
+        if group_idx == self.LASER_PAIR_COUNT - 1:
+            print(f"[LASER] ✓ 已接收完整扫描 (第{self._laser_count // self.LASER_PAIR_COUNT}组，共{self.LASER_PAIR_COUNT}点)")
 
     def _handle_mpu_frame(self, frame: bytes) -> None:
         degree_x = int.from_bytes(frame[1:3], byteorder="big", signed=True)
@@ -384,7 +420,8 @@ class FrameParser:
         count_run2 = int.from_bytes(frame[7:11], byteorder="big", signed=False)
         status = MpuStatus(degree_x=degree_x, count_run1=count_run1, count_run2=count_run2)
         self._pool.set_mpu_status(status)
-        print(f"[MPU] degree_x={degree_x} count1={count_run1} count2={count_run2}")
+        # MPU数据更新频繁，保持静默（需要时可以取消注释）
+        # print(f"[MPU] degree_x={degree_x} count1={count_run1} count2={count_run2}")
         self._writer.write_mpu(status, bytes(frame))
 
 
@@ -412,6 +449,7 @@ async def connect_and_probe(
     *,
     stop_event: Optional[threading.Event] = None,
     on_connected: Optional[Callable[[], None]] = None,
+    write_queue_getter: Optional[Callable[[], List[bytes]]] = None,
 ) -> None:
     print(f"[INFO] Connecting to {args.address} (timeout={args.connect_timeout:.1f}s)...")
     try:
@@ -473,13 +511,41 @@ async def connect_and_probe(
                         while True:
                             if stop_event is not None and stop_event.is_set():
                                 break
-                            await asyncio.sleep(1.0)
+                            
+                            # 处理写入队列中的命令
+                            if write_queue_getter and args.write_char:
+                                pending_writes = write_queue_getter()
+                                for data in pending_writes:
+                                    try:
+                                        await client.write_gatt_char(
+                                            args.write_char,
+                                            data,
+                                            response=not args.write_without_response,
+                                        )
+                                    except Exception as e:
+                                        print(f"[ERROR] Failed to write command: {e}")
+                            
+                            await asyncio.sleep(0.05)  # 更短的睡眠时间以便及时发送命令
                     else:
                         total = 0.0
                         step = min(1.0, args.duration)
                         while total < args.duration:
                             if stop_event is not None and stop_event.is_set():
                                 break
+                            
+                            # 处理写入队列中的命令
+                            if write_queue_getter and args.write_char:
+                                pending_writes = write_queue_getter()
+                                for data in pending_writes:
+                                    try:
+                                        await client.write_gatt_char(
+                                            args.write_char,
+                                            data,
+                                            response=not args.write_without_response,
+                                        )
+                                    except Exception as e:
+                                        print(f"[ERROR] Failed to write command: {e}")
+                            
                             await asyncio.sleep(min(step, args.duration - total))
                             total += step
                 except KeyboardInterrupt:

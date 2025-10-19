@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -195,6 +196,110 @@ class MotionDataAdapter:
         return delta
 
 
+class MotorController:
+    """控制器：将速度命令转换为编码器速度并发送到小车"""
+
+    def __init__(
+        self,
+        wheel_track: float,
+        ticks_per_meter: float,
+        min_encoder_speed: int = 20,
+        speed_scale: float = 1.0,
+        deadband_threshold: float = 0.01,
+    ) -> None:
+        """
+        Args:
+            wheel_track: 两轮中心距(m)
+            ticks_per_meter: 编码器脉冲数/米
+            min_encoder_speed: 最小编码器速度(防止电压不足)
+            speed_scale: 速度缩放因子（用于调整整体速度）
+            deadband_threshold: 速度死区阈值(m/s)，低于此值视为停止
+        """
+        self._wheel_track = wheel_track
+        self._ticks_per_meter = ticks_per_meter
+        self._min_encoder_speed = min_encoder_speed
+        self._speed_scale = speed_scale
+        self._deadband_threshold = deadband_threshold
+        self._command_queue: List[str] = []
+        self._lock = threading.Lock()
+
+    def velocity_to_encoder_speeds(
+        self, v: float, w: float, dt: float
+    ) -> Tuple[int, int]:
+        """
+        将线速度v(m/s)和角速度w(rad/s)转换为左右轮编码器速度
+        改进：转弯时保持速度差的比例，避免最小速度保护破坏差速效果
+        
+        Args:
+            v: 线速度 (m/s)
+            w: 角速度 (rad/s)
+            dt: 时间步长 (s)
+            
+        Returns:
+            (left_speed, right_speed): 左右轮编码器速度
+        """
+        # 计算左右轮线速度
+        v_left = v - (w * self._wheel_track / 2.0)
+        v_right = v + (w * self._wheel_track / 2.0)
+        
+        # 死区处理：速度太小时直接归零
+        if abs(v_left) < self._deadband_threshold:
+            v_left = 0.0
+        if abs(v_right) < self._deadband_threshold:
+            v_right = 0.0
+        
+        # 转换为编码器速度 (ticks/s) 并应用缩放因子
+        encoder_left = v_left * self._ticks_per_meter * self._speed_scale
+        encoder_right = v_right * self._ticks_per_meter * self._speed_scale
+        
+        # 改进的最小速度保护逻辑：
+        # 1. 如果两个轮子速度都非常小，直接停止
+        if abs(encoder_left) < 1.0 and abs(encoder_right) < 1.0:
+            encoder_left = 0
+            encoder_right = 0
+        # 2. 如果是转弯（左右轮速度差异明显），使用比例缩放而非固定最小值
+        elif abs(encoder_left - encoder_right) > 5.0:
+            # 这是转弯指令，保持速度差的比例
+            max_wheel = max(abs(encoder_left), abs(encoder_right))
+            if max_wheel < self._min_encoder_speed:
+                # 两个轮子都低于最小速度，按比例放大
+                scale_factor = self._min_encoder_speed / max_wheel
+                encoder_left *= scale_factor
+                encoder_right *= scale_factor
+            # 如果只有一个轮子低于最小速度，不强制提升（保持差速）
+        # 3. 直行或速度差很小时，应用标准最小速度保护
+        else:
+            if 0 < abs(encoder_left) < self._min_encoder_speed:
+                encoder_left = self._min_encoder_speed if encoder_left > 0 else -self._min_encoder_speed
+            if 0 < abs(encoder_right) < self._min_encoder_speed:
+                encoder_right = self._min_encoder_speed if encoder_right > 0 else -self._min_encoder_speed
+        
+        return int(round(encoder_left)), int(round(encoder_right))
+
+    def send_command(self, left_speed: int, right_speed: int) -> str:
+        """
+        生成控制命令字符串
+        
+        Args:
+            left_speed: 左轮编码器速度
+            right_speed: 右轮编码器速度
+            
+        Returns:
+            命令字符串，格式: "CMD-SET a b"
+        """
+        command = f"CMD-SET {left_speed} {right_speed}"
+        with self._lock:
+            self._command_queue.append(command)
+        return command
+
+    def get_pending_commands(self) -> List[str]:
+        """获取待发送的命令列表"""
+        with self._lock:
+            commands = list(self._command_queue)
+            self._command_queue.clear()
+        return commands
+
+
 class BleRobotBridge:
     """Convenience wrapper bundling BLE listener, laser, and motion adapters."""
 
@@ -211,6 +316,8 @@ class BleRobotBridge:
         reconnect_delay: float = 3.0,
         laser_params: Optional[dict] = None,
         motion_params: Optional[dict] = None,
+        motor_control_params: Optional[dict] = None,
+        write_char: Optional[str] = None,
     ) -> None:
         self.listener: BleBackgroundListener = start_background_listener(
             address,
@@ -221,14 +328,69 @@ class BleRobotBridge:
             decode_errors=decode_errors,
             show_raw=show_raw,
             reconnect_delay=reconnect_delay,
+            write_char=write_char,
         )
         self.laser = LaserDataAdapter(**(laser_params or {}))
         if motion_params is None:
             raise ValueError("motion_params must be provided to configure wheel geometry")
         self.motion = MotionDataAdapter(**motion_params)
+        
+        # 电机控制器 - 从 motion_params 获取几何参数，从 motor_control_params 获取控制参数
+        wheel_track = motion_params.get("wheel_track", 0.168)
+        ticks_per_meter = motion_params.get("ticks_per_meter", 2000.0)
+        
+        motor_ctrl_params = motor_control_params or {}
+        min_encoder_speed = motor_ctrl_params.get("min_encoder_speed", 20)
+        speed_scale = motor_ctrl_params.get("speed_scale", 0.1)  # 默认缩放到10%，降低速度
+        deadband_threshold = motor_ctrl_params.get("deadband_threshold", 0.01)
+        
+        self.motor_controller = MotorController(
+            wheel_track=wheel_track,
+            ticks_per_meter=ticks_per_meter,
+            min_encoder_speed=min_encoder_speed,
+            speed_scale=speed_scale,
+            deadband_threshold=deadband_threshold,
+        )
+        
+        # 写入特征UUID（用于发送控制命令）
+        self._write_char = write_char
+        self._client = None  # BLE客户端引用（需要从listener获取）
 
     def wait_ready(self, timeout: float = 5.0) -> bool:
         return self.listener.ready_event.wait(timeout)
 
+    def send_motor_command(self, v: float, w: float, dt: float = 0.1) -> bool:
+        """
+        发送电机控制命令
+        
+        Args:
+            v: 线速度 (m/s)
+            w: 角速度 (rad/s)
+            dt: 时间步长 (s)
+            
+        Returns:
+            是否成功发送命令
+        """
+        try:
+            left_speed, right_speed = self.motor_controller.velocity_to_encoder_speeds(v, w, dt)
+            command = self.motor_controller.send_command(left_speed, right_speed)
+            
+            # 通过蓝牙发送命令
+            if self._write_char:
+                self.listener.write_command(command)
+                print(f"[MOTOR] {command} (v={v:.3f} w={w:.3f})")
+            else:
+                print(f"[WARN] No write_char configured, command not sent: {command}")
+            
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to send motor command: {e}")
+            return False
+
     def stop(self) -> None:
+        # 停止前发送停止命令
+        try:
+            self.motor_controller.send_command(0, 0)
+        except Exception:
+            pass
         self.listener.stop()

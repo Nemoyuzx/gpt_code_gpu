@@ -24,16 +24,25 @@ class Visualizer:
         # 主SLAM窗口
         self.fig, self.ax = plt.subplots(figsize=(8,8))
         plt.ion()
-        plt.show()
         # 边界和刻度
         min_x, min_y, max_x, max_y = maze.bounds
         self.ax.set_xlim(min_x, max_x)
         self.ax.set_ylim(min_y, max_y)
         self.ax.set_aspect('equal', adjustable='box')
-        self.ax.set_title("SLAM Exploration")
+        self.ax.set_title("SLAM Exploration - 初始化中...")
+        self.ax.grid(True, alpha=0.3)
+        # 立即显示窗口
+        plt.show(block=False)
+        plt.pause(0.01)
         self.paused = False
+        # 自动控制开关（按's'启动，按'p'停止）
+        self.auto_control_enabled = False
+        self.force_stop_requested = False
         # 按键事件绑定
         self.fig.canvas.mpl_connect('key_press_event', self._on_key_press)
+        # 禁用matplotlib默认的快捷键（特别是's'键保存功能）
+        plt.rcParams['keymap.save'] = []  # 禁用's'键的默认保存功能
+        plt.rcParams['keymap.quit'] = []  # 禁用'q'键的默认退出功能
         # 存储紧急路径（红色显示）
         self.emergency_path = None
         self.obstacle_search_region = None
@@ -41,17 +50,52 @@ class Visualizer:
         self.bfs_debug_color = 'cyan'
 
     def _on_key_press(self, event):
-        """键盘事件回调。'p'暂停/继续， 's'保存地图和路径。"""
-        if event.key == 'p':
-            self.paused = not self.paused
-            print("[Visualizer] Pause toggled:", "Paused" if self.paused else "Running")
-        elif event.key == 's':
-            # 保存当前地图和路径
+        """
+        键盘事件回调：
+        's' - 启动自动控制（开始发送电机命令，不保存地图）
+        'p' - 强制停止小车（发送 CMD-SET 0 0）
+        'm' - 保存地图和路径
+        '空格' - 暂停/继续可视化更新
+        """
+        if event.key == 's':
+            if not self.auto_control_enabled:
+                self.auto_control_enabled = True
+                print("[Visualizer] ✅ 自动控制已启动！现在将开始发送电机命令。")
+                print("[Visualizer] 💡 提示：按 'm' 键可随时保存地图和路径")
+            else:
+                print("[Visualizer] ⚠️  自动控制已经启用，无需重复按键。按 'p' 可停止。")
+        elif event.key == 'p':
+            self.force_stop_requested = True
+            if self.auto_control_enabled:
+                self.auto_control_enabled = False
+                print("[Visualizer] 🛑 强制停止！小车将立即停止并关闭自动控制。")
+            else:
+                print("[Visualizer] 🛑 强制停止！小车将立即停止。")
+        elif event.key == 'm':
+            # 保存地图和路径
             map_file = "map.png"
             path_file = "path.csv"
             self.save_map(map_file)
             self.save_path(path_file)
-            print(f"[Visualizer] 当前地图已保存至 {map_file}, 路径已保存至 {path_file}")
+            print(f"[Visualizer] 💾 地图已保存至 {map_file}, 路径已保存至 {path_file}")
+        elif event.key == ' ':
+            # 空格键：暂停/继续可视化
+            self.paused = not self.paused
+            if self.paused:
+                print("[Visualizer] ⏸️  可视化已暂停（控制循环继续运行）")
+            else:
+                print("[Visualizer] ▶️  可视化已继续")
+    
+    def is_auto_control_enabled(self):
+        """返回是否启用自动控制"""
+        return self.auto_control_enabled
+    
+    def check_and_clear_force_stop(self):
+        """检查并清除强制停止请求，返回是否有停止请求"""
+        if self.force_stop_requested:
+            self.force_stop_requested = False
+            return True
+        return False
 
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
                predicted_traj=None, robot_radius=None, safety_radius=None,
@@ -286,7 +330,8 @@ class Visualizer:
             except Exception:
                 pass
         # 图例和标题
-        self.ax.set_title("SLAM Exploration")
+        control_status = "🚗 自动控制中" if self.auto_control_enabled else "📍 仅建图模式 (按's'启动)"
+        self.ax.set_title(f"SLAM Exploration - {control_status}")
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.set_xlim(view_min_x, view_max_x)
         self.ax.set_ylim(view_min_y, view_max_y)

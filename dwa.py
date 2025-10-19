@@ -29,40 +29,40 @@ class LegacyDWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 0.7  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
+    max_speed: float = 0.5  # 降低最大线速度，配合低角速度提升SLAM稳定性
     min_speed: float = -0.7  # 默认禁倒车（如需倒车可设为负）。
-    max_yaw_rate: float = 160.0 * math.pi / 180.0  # 最大角速度上限，进一步放宽w窗口支持急转。
-    max_accel: float = 0.8  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
-    max_delta_yaw_rate: float = 360.0 * math.pi / 180.0  # 角速度变化率上限，加大w窗口对急转更友好。
+    max_yaw_rate: float = 110.0 * math.pi / 180.0  # 提升最大角速度以增强转弯响应
+    max_accel: float = 0.6  # 降低加速度，让运动更平滑(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_delta_yaw_rate: float = 220.0 * math.pi / 180.0  # 角速度变化率上限，加大w窗口对急转更友好。
     v_resolution: float = 0.1  # 速度采样步长。越小越细但更慢；调整0.05->0.06降低采样数。
-    yaw_rate_resolution: float = 8.0 * math.pi / 180.0  # 角速度采样步长。调整0.5°->8°降低采样数。
+    yaw_rate_resolution: float = 5.0 * math.pi / 180.0  # 角速度采样步长。调整0.5°->8°降低采样数。
     dt: float = 0.1  # 控制周期(s)。与 SLAM/仿真一致；越小越灵敏也越耗时。
     predict_time: float = 1.4  # 预测时域(s)。短：更激进近视；长：更保守远视。1.0~2.0 常见。
-    to_goal_cost_gain: float = 0.6  # 目标朝向代价权重。大→更快对准目标方向。
-    to_goal_dist_cost_gain: float = 0.2  # 目标距离代价权重。大→更偏好缩短终点距离。
+    to_goal_cost_gain: float = 0.8  # 目标朝向代价权重。大→更快对准目标方向。
+    to_goal_dist_cost_gain: float = 0.6  # 目标距离代价权重。大→更偏好缩短终点距离。
     speed_cost_gain: float = 0.40  # 降低速度奖励，避免“速度至上”。
     obstacle_cost_gain: float = 0.8  # 障碍代价权重。配合 obstacle_cost_divisor/cap 共同决定力度。
-    rotation_cost_gain: float = 0.35  # 更鼓励转向（配合小半径转弯）。
+    rotation_cost_gain: float = 0.18  # 降低旋转代价，允许更积极的转向。
     progress_cost_gain: float = 1.0  # 更注重向目标推进。
-    change_yaw_cost_gain: float = 0.4  # 角速度变化代价。大→更平滑，不易“抖动”。
+    change_yaw_cost_gain: float = 0.5  # 角速度变化代价。大→更平滑，不易“抖动”。
     smoothing_alpha: float = 0.6  # 输出平滑系数(EMA)。小→更跟随历史，响应慢；大→更跟随当前，响应快。
     small_angle: float = 10.0 * math.pi / 180.0  # 认为“已较好对齐”的角度阈值，用于若干条件。
-    small_angle_rot_scale: float = 3.0  # 小角度时增加旋转代价的比例，鼓励直行。
+    small_angle_rot_scale: float = 1.8  # 小角度时增加旋转代价的比例，鼓励直行。
     robot_radius: float = 0.25  # 机器人半径(m)。与地图分辨率/真实底盘匹配。
     stuck_vel: float = 0.01  # 判定“卡住”的速度阈值。
     safety_clearance: float = 0  # 额外安全间隙(m)。膨胀半径 = robot_radius + safety_clearance。
     clearance_cost_gain: float = 1.0  # 接近膨胀半径时的代价权重。大→更远离墙。
-    spin_penalty_gain: float = 0.3  # 适度降低自旋惩罚，结合转向更灵活。
-    min_forward_ratio: float = 0.15  # 小角度时最低前进速度占比。
+    spin_penalty_gain: float = 0.22  # 进一步降低自旋惩罚，提升原地旋转意愿。
+    min_forward_ratio: float = 0.08  # 小角度时最低前进速度占比。
     near_wall_threshold: float = 0.1  # 判定“靠墙”的gap阈值(m)。
     near_wall_rot_boost: float = 0.3  # 靠墙时加大旋转代价比例，避免贴墙小幅摆动。
     near_wall_forward_bias_gain: float = 0.3  # 靠墙且前进速度不足时的附加惩罚增益。
-    align_deadband: float = 3.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
+    align_deadband: float = 8.0 * math.pi/180.0  # 对齐死区(rad)。小角度下过滤无意义大角速。
     forward_bias_min_disp: float = 0.01  # 预测末端位移阈值。位移很小却大旋转→惩罚。
     forward_bias_cost_gain: float = 1.2  # 上述惩罚权重。
-    debug: bool = False  # 打印内部组件代价与状态。
+    debug: bool = True  # 打印内部组件代价与状态。
     # 动态窗口打印
-    dw_debug: bool = False           # 是否定期打印动态窗口范围
+    dw_debug: bool = True           # 是否定期打印动态窗口范围
     dw_log_interval: int = 10         # 打印间隔步数
     dwell_penalty_gain: float = 0.3  # 长时间低速/停滞惩罚增益。
     dwell_speed_threshold: float = 0.05  # 低于该速度计入“滞留”。
@@ -77,8 +77,8 @@ class LegacyDWAConfig:
     accel_boost_speed: float = 0.3  # 低速阶段触发临时放宽线速度上界的门限。
     accel_boost_factor: float = 3.0  # 触发时上界放宽倍数。
     # 角度偏转减速：当朝向与目标方向存在较大偏差时降低允许前进最大速度
-    turn_slow_angle: float = 12.0 * math.pi / 180.0  # 降低触发门槛，使较小偏角也会减速转弯。
-    turn_min_speed_scale: float = 0.05  # 在最大朝向偏差(≈pi)时进一步降低可用前进速度。
+    turn_slow_angle: float = 32.0 * math.pi / 180.0  # 略提前减速触发点，配合降低最小速度实现更紧凑转向。
+    turn_min_speed_scale: float = 0.18  # 在最大朝向偏差(≈pi)时进一步降低可用前进速度。
     turn_debug: bool = False  # 打印转向减速信息。
     # ---- 反复前后抖动抑制相关配置 ----
     allow_reverse: bool = True  # 是否允许倒车（全局开关）。
@@ -157,7 +157,7 @@ class LegacyDWAConfig:
     reverse_sample_eps: float = 0.01     # 采样/判定倒车使用的速度阈值(|v|>eps 才视作倒车)
     reverse_plan_eps: float = 0.05       # 用于奖励/惩罚倒车的最小幅度(|v|>eps)
     # 小角度下大角速过滤阈值
-    align_yaw_rate_mult: float = 1.5     # 与 yaw_rate_resolution 的倍乘系数
+    align_yaw_rate_mult: float = 5.0     # 与 yaw_rate_resolution 的倍乘系数
     align_small_speed_frac: float = 0.05 # 小角度场景下认为“速度很小”的比例阈值(×max_speed)
     # 前进偏置/转弯奖励阈值
     forward_bias_w_thresh: float = 0.1   # 位移很小却大旋转的角速度阈值(rad/s)
@@ -583,7 +583,9 @@ class LegacyDWAPlanner:
 
         # --- 5. stuck补偿与平滑 ---
         smooth_start = time.perf_counter()
-        if abs(best_u[0]) < self.cfg.stuck_vel and abs(state[3]) < self.cfg.stuck_vel:
+        # 卡住检测：只有在运行了至少10步后才启用（避免起步误触发）
+        if (abs(best_u[0]) < self.cfg.stuck_vel and abs(state[3]) < self.cfg.stuck_vel and 
+            getattr(self, '_global_step', 0) > 10):
             best_u = (0.0, self.cfg.max_delta_yaw_rate * 0.5)
         # 全局倒车死区：若选择了微幅倒车且不在直接倒车区域，改为不倒车（消除微幅来回）
         final_heading_err = float('inf')
@@ -786,6 +788,11 @@ class LegacyDWAPlanner:
         cfg = self.cfg
         # 基本速度/角速度边界
         max_yaw = cfg.max_yaw_rate
+        step = getattr(self, '_global_step', 0)
+        if step < 3:
+            max_yaw = min(max_yaw, math.radians(30.0))
+        elif step < 10:
+            max_yaw = min(max_yaw, math.radians(45.0))
 
         Vs = [cfg.min_speed, cfg.max_speed, -max_yaw, max_yaw]
         # 倒车速度对称化
@@ -1019,11 +1026,11 @@ class DWAConfig:
     yaw_rate_resolution: float = 1.0 * math.pi / 180.0  # 角速度采样步长
     dt: float = 0.1  # 控制周期
     predict_time: float = 1.6  # 预测时间窗口（缩短以避免远期误差导致停摆）
-    to_goal_cost_gain: float = 0.2  # 朝向目标的角度代价权重
-    to_goal_dist_cost_gain: float = 0.2  # 终点距离代价权重
+    to_goal_cost_gain: float = 1.5  # 朝向目标的角度代价权重（提高以增强转向意愿）
+    to_goal_dist_cost_gain: float = 1.2  # 终点距离代价权重（提高以更积极接近目标）
     speed_cost_gain: float = 0.4  # 速度偏差代价权重
-    obstacle_cost_gain: float = 0.3  # 障碍物代价权重（调低→更敢靠障碍）
-    clearance_cost_gain: float = 0.1  # 安全间隙代价权重
+    obstacle_cost_gain: float = 0.15  # 障碍物代价权重（降低以避免过度避障）
+    clearance_cost_gain: float = 0.08  # 安全间隙代价权重（降低以配合降低的obstacle_cost_gain）
     path_align_gain: float = 0.05  # 与参考路径切向对齐权重
     path_deviation_gain: float = 0.15  # 路径横向偏差权重
     smoothing_alpha: float = 0.4  # 输出平滑系数
