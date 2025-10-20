@@ -730,7 +730,7 @@ def main():
             "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
             "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
-            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.5")),  # 只影响下发指令（默认0.5），控制比例
+            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.1")),  # 只影响下发指令（默认0.5），控制比例
         }
         print("[BLE] 启动实时数据监听线程...")
         ble_bridge = BleRobotBridge(
