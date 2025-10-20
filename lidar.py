@@ -14,7 +14,6 @@ class Lidar:
         self.max_range = max_range
         self.angle_resolution = angle_resolution
         self.noise = noise
-        self.last_start_offset_deg = 0.0
         
         # 降噪滤波器引用（由外部设置）
         self.noise_filter = None
@@ -28,14 +27,12 @@ class Lidar:
         x, y, theta = pose
         num_beams = int(360 / self.angle_resolution)
         angle_step = math.radians(self.angle_resolution)
-        start_offset = float(np.random.uniform(0.0, math.radians(1.0)))
-        self.last_start_offset_deg = math.degrees(start_offset)
 
         clean = []
         noisy = []
 
         for i in range(num_beams):
-            angle = theta + start_offset + i * angle_step
+            angle = theta + i * angle_step
             angle = math.atan2(math.sin(angle), math.cos(angle))
             dx, dy = math.cos(angle), math.sin(angle)
 

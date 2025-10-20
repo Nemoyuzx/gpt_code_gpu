@@ -94,7 +94,7 @@ BLE_DECODE_ERRORS = os.getenv("BLE_DECODE_ERRORS", "replace")
 BLE_SHOW_RAW = os.getenv("BLE_SHOW_RAW", "0") == "1"
 BLE_SCAN_TIMEOUT = float(os.getenv("BLE_SCAN_TIMEOUT", "0.6"))
 BLE_SCAN_MIN_FILL = float(os.getenv("BLE_SCAN_MIN_FILL", "0.75"))
-BLE_SCAN_POLL_INTERVAL = float(os.getenv("BLE_SCAN_POLL_INTERVAL", "0.02"))
+BLE_SCAN_POLL_INTERVAL = float(os.getenv("BLE_SCAN_POLL_INTERVAL", "0.1"))
 BLE_DISTANCE_SCALE = float(os.getenv("BLE_DISTANCE_SCALE", "0.001"))
 BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "1910.0"))
 RECORDED_TICKS_PER_METER = float(
@@ -123,7 +123,7 @@ CMD_SET_SCALE = (
 )
 
 # PID 控制开关与默认增益（可通过环境变量覆盖）
-ENABLE_PID_CONTROL = os.getenv("ENABLE_PID_CONTROL", "1") == "1"
+ENABLE_PID_CONTROL = os.getenv("ENABLE_PID_CONTROL", "0") == "1"
 PID_DEFAULT_KP = float(os.getenv("PID_DEFAULT_KP", "0.15"))
 PID_DEFAULT_KI = float(os.getenv("PID_DEFAULT_KI", "0.01"))
 PID_DEFAULT_KD = float(os.getenv("PID_DEFAULT_KD", "0.0"))
@@ -417,10 +417,10 @@ VISUALIZATION_SKIP_FRAMES = 1  # 可视化跳帧：每N帧更新一次（降低�
 # 未探索区域搜索参数
 OBSTACLE_SEARCH_EXPANSION = BASE_SAFETY_CLEARANCE  # 障碍物区域搜索范围扩大距离（米）
 # 前沿探索节流参数
-FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
-FRONTIER_COOLDOWN_STEPS = 0               # 冷却期间暂停A*与前沿刷新（0 表示禁用冷却）
+FRONTIER_LONG_PATH_THRESHOLD_CELLS = 80   # A*规划路径超过该栅格数，则触发短期冷却（从120降至80）
+FRONTIER_COOLDOWN_STEPS = 40               # 冷却期间暂停A*与前沿刷新（8步，约0.5-1秒）
 FRONTIER_UPDATE_INTERVAL = 1            # 前沿刷新间隔（1 表示每轮都刷新）
-FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
+FRONTIER_COOLDOWN_REFERENCE_INDEX = 60    # 冷却期间参考的旧路径索引（截取原路径前缀，从80降至60）
 
 # 冷却提前解除条件：基于路径进度提前允许刷新
 FRONTIER_COOLDOWN_RELEASE_RATIO = 0.20    # 进度达到该比例即可提前结束冷却
@@ -1955,10 +1955,15 @@ def main():
                     unknown_neighbor_new = None
                     current_unknown_neighbor = None
                 else:
+                    t_bfs_start = time.perf_counter()
                     target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
+                    bfs_time_ms = (time.perf_counter() - t_bfs_start) * 1000.0
                     if target_cell_latest is None:
                         # 使用全局前沿检测作为回退策略
+                        t_fallback_start = time.perf_counter()
                         fallback_frontier, fallback_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
+                        fallback_time_ms = (time.perf_counter() - t_fallback_start) * 1000.0
+                        print(f"[前沿搜索] BFS={bfs_time_ms:.2f}ms 未找到 -> 回退全局搜索={fallback_time_ms:.2f}ms")
                         if fallback_frontier is None or not fallback_path:
                             print("没有可达的未知区域，探索结束。")
                             section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
@@ -1969,6 +1974,7 @@ def main():
                         current_unknown_neighbor = None
                         provided_path = list(fallback_path)
                     else:
+                        print(f"[前沿搜索] BFS成功={bfs_time_ms:.2f}ms, 找到目标={target_cell_latest}")
                         current_unknown_neighbor = unknown_neighbor_new
                         if bfs_path:
                             provided_path = list(bfs_path)
@@ -1979,7 +1985,11 @@ def main():
                 else:
                     same_target_counter = 0
                 prev_target_cell = target_cell_latest
+        section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
 
+        # 5. 路径规划（A*）- 移到独立计时段
+        if frontier_cooldown_steps == 0 and should_refresh_frontier:
                 # 运行A*（仅在非冷却期），始终使用指定的前沿安全距离
                 safety_cells = float(frontier_safety_cells)
                 planned_path = None
@@ -2026,10 +2036,14 @@ def main():
                             print(
                                 f"[前沿节流] A*路径过长({original_path_steps}格) 但处于宽限期(剩余 {frontier_cooldown_reenter_grace} 步)，跳过冷却"
                             )
-            else:
-                if step_counter % 20 == 0:
-                    print("[前沿刷新] 按照间隔策略跳过本轮前沿更新，沿用既有路径。")
         else:
+            # 冷却期不做路径规划
+            pass
+        section_times.append(("path_planning", (time.perf_counter() - t_section) * 1000.0))
+        t_section = time.perf_counter()
+
+        # 6. 目标选择与路径准备
+        if frontier_cooldown_steps > 0:
             # 冷却中：不刷新前沿、不运行A*，仅递减计数器并沿旧提示/路径前进
             frontier_cooldown_elapsed += 1
             frontier_cooldown_steps = max(0, frontier_cooldown_steps - 1)
@@ -2086,9 +2100,8 @@ def main():
                 else:
                     msg_len = "无A*路径与前沿提示，使用当前位置作为临时目标"
                 print(f"[前沿节流] 冷却中({frontier_cooldown_steps}步剩余)，暂停A*与前沿刷新，{msg_len}")
-        section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
-        t_section = time.perf_counter()
-
+        
+        # 7. 目标选择与路径准备
         # 选择DWA子目标：若存在A*路径（无论是否冷却中）均基于路径最近点+前瞻；否则用前沿提示
         if current_path and len(current_path) > 1:
             # 找到离当前机器人格子最近的路径索引（始终计算，不管路径长度）

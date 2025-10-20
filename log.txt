@@ -1,508 +1,374 @@
-conda activate SmallSemester_Slim
-(base) nemoyu@Nemos-MacBook-Pro gpt_code_gpu % conda activate SmallSemester_Slim
 (SmallSemester_Slim) nemoyu@Nemos-MacBook-Pro gpt_code_gpu % /opt/anaconda3/envs/SmallSemester_Slim/bin/python /Users/n
 emoyu/Desktop/小学期/gpt_code_gpu/main.py
-[18:59:56.875289] [MODE] replay=OFF | real_ble=ON | control_loop=ON
-[18:59:56.876915] 入口位置: (2.35, 2.35), X范围: [1.35, 3.35], 安全边界Y >= 2.24
+[20:20:42.755905] [MODE] replay=OFF | real_ble=ON | control_loop=ON
+[20:20:42.757444] 入口位置: (2.35, 2.35), X范围: [1.35, 3.35], 安全边界Y >= 2.24
 [ICPSlam] 使用MPS设备进行加速 (Apple Metal)，对不支持的操作将降级到CPU
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 128205 (\N{ROUND PUSHPIN}) missing from font(s) DejaVu Sans.
+/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:325: UserWarning: Glyph 128205 (\N{ROUND PUSHPIN}) missing from font(s) DejaVu Sans.
   plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 20165 (\N{CJK UNIFIED IDEOGRAPH-4EC5}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 24314 (\N{CJK UNIFIED IDEOGRAPH-5EFA}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 27169 (\N{CJK UNIFIED IDEOGRAPH-6A21}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 24335 (\N{CJK UNIFIED IDEOGRAPH-5F0F}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 25353 (\N{CJK UNIFIED IDEOGRAPH-6309}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 21551 (\N{CJK UNIFIED IDEOGRAPH-542F}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 21160 (\N{CJK UNIFIED IDEOGRAPH-52A8}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-[18:59:57.200304] 
+[20:20:43.073453] 
 ============================================================
-[18:59:57.200357] 🎮 键盘控制说明：
-[18:59:57.200369]   [s] - 启动自动控制（开始发送电机命令）
-[18:59:57.200376]   [p] - 强制停止小车（立即发送 CMD-SET 0 0）
-[18:59:57.200381]   [m] - 保存地图和路径到文件
-[18:59:57.200386]   [空格] - 暂停/继续可视化更新
-[18:59:57.200391] ============================================================
+[20:20:43.073502] 🎮 键盘控制说明：
+[20:20:43.073511]   [s] - 启动自动控制（开始发送电机命令）
+[20:20:43.073518]   [p] - 强制停止小车（立即发送 CMD-SET 0 0）
+[20:20:43.073523]   [m] - 保存地图和路径到文件
+[20:20:43.073528]   [空格] - 暂停/继续可视化更新
+[20:20:43.073533] ============================================================
 
-[18:59:57.200395] ⚠️  当前模式：真实小车 + 控制循环已启用
-[18:59:57.200399]    程序启动后将进入【仅建图模式】
-[18:59:57.200402]    请在matplotlib窗口中按 's' 键启动自动控制
+[20:20:43.073538] ⚠️  当前模式：真实小车 + 控制循环已启用
+[20:20:43.073543]    程序启动后将进入【仅建图模式】
+[20:20:43.073546]    请在matplotlib窗口中按 's' 键启动自动控制
 
 [NoiseFilter] 滤波器初始化 - 状态: 禁用
-[18:59:57.200522] [降噪滤波器] 滤波器已禁用
-[18:59:57.200558] [PID] Wheel PID enabled | left=(kp=0.150, ki=0.010, kd=0.000) | right=(kp=0.150, ki=0.010, kd=0.000)
-[18:59:57.200564] [BLE] 启动实时数据监听线程...
-[18:59:57.202761] [INFO] Connecting to 60E2ECE4-761B-6B31-FD1F-6FD559C4FE52 (timeout=8.0s)...
-[18:59:59.380310] [OK] Connected to device.
-[18:59:59.380379] [INFO] Subscribing to notifications on 0000ffe1-0000-1000-8000-00805f9b34fb...
-[18:59:59.380430] [BLE] 后台监听已就绪，使用真实小车数据驱动系统。
-[18:59:59.511115] [INFO] Listening for notifications (Ctrl+C to stop)...
-[18:59:59.557515] [LASER] ✓ 已接收完整扫描 (第1组，共250点)
-[18:59:59.588159] [ICPSlam][Mem] RSS(cur/peak): 408.9/418688.0 MB | MPS curr/driver: 0.0/38.5 MB | map_points: 141 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[18:59:59.649977] [LASER] ✓ 已接收完整扫描 (第2组，共250点)
-[18:59:59.652904] [CONTROL] 等待 2.0s 收集传感器数据后再开始控制...
-[18:59:59.738818] [LASER] ✓ 已接收完整扫描 (第3组，共250点)
-[18:59:59.800919] [LASER] ✓ 已接收完整扫描 (第4组，共250点)
-[18:59:59.892467] [LASER] ✓ 已接收完整扫描 (第5组，共250点)
-[19:00:00.043695] [LASER] ✓ 已接收完整扫描 (第6组，共250点)
-[19:00:00.129577] [LASER] ✓ 已接收完整扫描 (第7组，共250点)
-[19:00:00.191065] [LASER] ✓ 已接收完整扫描 (第8组，共250点)
-[19:00:00.313017] [LASER] ✓ 已接收完整扫描 (第9组，共250点)
-[19:00:00.374862] [LASER] ✓ 已接收完整扫描 (第10组，共250点)
-[19:00:00.488988] [LASER] ✓ 已接收完整扫描 (第11组，共250点)
-[19:00:00.613505] [LASER] ✓ 已接收完整扫描 (第12组，共250点)
-[19:00:00.675131] [LASER] ✓ 已接收完整扫描 (第13组，共250点)
-[19:00:00.790988] [LASER] ✓ 已接收完整扫描 (第14组，共250点)
-[19:00:00.869911] [LASER] ✓ 已接收完整扫描 (第15组，共250点)
-[19:00:00.970067] [LASER] ✓ 已接收完整扫描 (第16组，共250点)
-[19:00:01.073869] [LASER] ✓ 已接收完整扫描 (第17组，共250点)
-[19:00:01.163899] [LASER] ✓ 已接收完整扫描 (第18组，共250点)
-[19:00:01.268232] [LASER] ✓ 已接收完整扫描 (第19组，共250点)
-[19:00:01.373698] [LASER] ✓ 已接收完整扫描 (第20组，共250点)
-[19:00:01.476777] [LASER] ✓ 已接收完整扫描 (第21组，共250点)
-[19:00:01.583142] [LASER] ✓ 已接收完整扫描 (第22组，共250点)
-[19:00:01.689322] [LASER] ✓ 已接收完整扫描 (第23组，共250点)
-[19:00:01.699330] [DWA模式=orig] 安全格距离: 8 (半径=0.11m, 格长=0.02m)
-[19:00:01.773486] [ICPSlam][Mem] RSS(cur/peak): 438.9/449472.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 182 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:01.774799] [动态前瞻] 最近点索引=0/8 前瞻步数=8 目标索引=8
-[19:00:01.774815] [目标] 自由格: (119, 125) 邻接未知: (120, 126) (忽略A*:否) 连续相同=0
-[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.33 gap=0.57
-[DWA] v=0.02 w=-0.02 cost=1.344
-[19:00:01.792686] [LASER] ✓ 已接收完整扫描 (第24组，共250点)
-[19:00:01.801599] [CTRL] step=0 v=0.02 w=-0.02 d_trans=0.000 d_rot=0.000
-[19:00:01.801648] [Timing] step=0 scan=0.20ms | slam_update=73.98ms | exit_check=0.00ms | frontier_update=1.23ms | target_selection=0.05ms | path_prepare=0.28ms | visualize=25.92ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=102.27ms
-[19:00:01.829811] [ICPSlam][Mem] RSS(cur/peak): 435.8/454176.0 MB | MPS curr/driver: 0.0/48.2 MB | map_points: 208 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=1.630
-[19:00:01.881312] [LASER] ✓ 已接收完整扫描 (第25组，共250点)
-[19:00:01.935320] [Timing] step=1 scan=0.13ms | slam_update=28.19ms | exit_check=0.00ms | frontier_update=1.08ms | target_selection=0.02ms | path_prepare=0.37ms | visualize=70.03ms | motion_update=33.10ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=133.63ms
-[19:00:01.963094] [ICPSlam][Mem] RSS(cur/peak): 477.5/488992.0 MB | MPS curr/driver: 0.0/48.2 MB | map_points: 212 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=2.004
-[19:00:01.989176] [LASER] ✓ 已接收完整扫描 (第26组，共250点)
-[19:00:02.021803] [Timing] step=2 scan=0.12ms | slam_update=27.77ms | exit_check=0.00ms | frontier_update=1.16ms | target_selection=0.02ms | path_prepare=0.42ms | visualize=23.99ms | motion_update=32.18ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=86.40ms
-[19:00:02.050094] [ICPSlam][Mem] RSS(cur/peak): 487.6/499344.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 217 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=2.315
-[19:00:02.079501] [LASER] ✓ 已接收完整扫描 (第27组，共250点)
-[19:00:02.103894] [Timing] step=3 scan=0.15ms | slam_update=28.16ms | exit_check=0.00ms | frontier_update=1.23ms | target_selection=0.02ms | path_prepare=0.37ms | visualize=18.37ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=82.01ms
-[19:00:02.131389] [ICPSlam][Mem] RSS(cur/peak): 487.9/499600.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 227 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=2.586
-[19:00:02.195611] [LASER] ✓ 已接收完整扫描 (第28组，共250点)
-[19:00:02.232422] [Timing] step=4 scan=0.14ms | slam_update=27.46ms | exit_check=0.00ms | frontier_update=1.11ms | target_selection=0.02ms | path_prepare=0.35ms | visualize=65.58ms | motion_update=33.11ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=128.45ms
-[19:00:02.259241] [ICPSlam][Mem] RSS(cur/peak): 509.7/531840.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 237 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=2.903
-[19:00:02.288254] [LASER] ✓ 已接收完整扫描 (第29组，共250点)
-[19:00:02.357237] [Timing] step=5 scan=0.13ms | slam_update=26.75ms | exit_check=0.00ms | frontier_update=1.08ms | target_selection=0.02ms | path_prepare=0.59ms | visualize=62.41ms | motion_update=33.06ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=124.73ms
-[19:00:02.384785] [ICPSlam][Mem] RSS(cur/peak): 518.6/540976.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 239 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=3.219
-[19:00:02.410101] [LASER] ✓ 已接收完整扫描 (第30组，共250点)
-[19:00:02.484807] [LASER] ✓ 已接收完整扫描 (第31组，共250点)
-[19:00:02.487465] [Timing] step=6 scan=0.13ms | slam_update=27.51ms | exit_check=0.00ms | frontier_update=1.15ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=67.27ms | motion_update=33.10ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=130.15ms
-[19:00:02.514766] [ICPSlam][Mem] RSS(cur/peak): 518.8/541120.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 243 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=3.503
-[19:00:02.586975] [LASER] ✓ 已接收完整扫描 (第32组，共250点)
-[19:00:02.609639] [Timing] step=7 scan=0.13ms | slam_update=27.23ms | exit_check=0.00ms | frontier_update=1.12ms | target_selection=0.02ms | path_prepare=0.28ms | visualize=60.21ms | motion_update=32.67ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=122.11ms
-[19:00:02.637792] [ICPSlam][Mem] RSS(cur/peak): 518.9/541120.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 248 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:02.639772] [目标] 自由格: (120, 129) 邻接未知: (121, 130) (忽略A*:否) 连续相同=0
-[DWA] v=0.03 w=-0.03 cost=3.881
-[19:00:02.690867] [LASER] ✓ 已接收完整扫描 (第33组，共250点)
-[19:00:02.738221] [Timing] step=8 scan=0.14ms | slam_update=28.03ms | exit_check=0.00ms | frontier_update=1.89ms | target_selection=0.04ms | path_prepare=0.35ms | visualize=64.46ms | motion_update=33.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=128.53ms
-[19:00:02.765218] [ICPSlam][Mem] RSS(cur/peak): 519.2/541360.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 250 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:02.768176] [目标] 自由格: (121, 133) 邻接未知: (122, 134) (忽略A*:否) 连续相同=0
-[DWA] v=0.03 w=0.02 cost=4.292
-[19:00:02.797732] [LASER] ✓ 已接收完整扫描 (第34组，共250点)
-[19:00:02.871819] [Timing] step=9 scan=0.12ms | slam_update=27.02ms | exit_check=0.00ms | frontier_update=2.77ms | target_selection=0.04ms | path_prepare=0.59ms | visualize=69.34ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=133.54ms
-[19:00:02.898678] [ICPSlam][Mem] RSS(cur/peak): 519.3/541712.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 254 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:02.901494] [目标] 自由格: (112, 133) 邻接未知: (111, 134) (忽略A*:否) 连续相同=0
-[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.38 gap=0.70
-[DWA] v=0.03 w=-0.01 cost=4.513
-[19:00:02.926023] [LASER] ✓ 已接收完整扫描 (第35组，共250点)
-[19:00:02.991131] [LASER] ✓ 已接收完整扫描 (第36组，共250点)
-[19:00:03.000619] [Timing] step=10 scan=0.15ms | slam_update=26.82ms | exit_check=0.00ms | frontier_update=2.63ms | target_selection=0.04ms | path_prepare=0.34ms | visualize=65.46ms | motion_update=32.59ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=128.72ms
-[19:00:03.028655] [ICPSlam][Mem] RSS(cur/peak): 519.5/541840.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 258 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=4.805
-[19:00:03.098063] [LASER] ✓ 已接收完整扫描 (第37组，共250点)
-[19:00:03.127470] [Timing] step=11 scan=0.16ms | slam_update=27.90ms | exit_check=0.00ms | frontier_update=2.59ms | target_selection=0.02ms | path_prepare=0.28ms | visualize=62.29ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=126.78ms
-[19:00:03.152882] [ICPSlam][Mem] RSS(cur/peak): 519.5/541840.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 258 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.03 cost=5.102
-[19:00:03.191493] [LASER] ✓ 已接收完整扫描 (第38组，共250点)
-[19:00:03.259119] [Timing] step=12 scan=0.18ms | slam_update=25.31ms | exit_check=0.00ms | frontier_update=2.82ms | target_selection=0.02ms | path_prepare=0.58ms | visualize=69.21ms | motion_update=32.62ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=131.58ms
-[19:00:03.287261] [ICPSlam][Mem] RSS(cur/peak): 519.6/542000.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 262 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:03.292619] [目标] 自由格: (109, 149) 邻接未知: (108, 150) (忽略A*:否) 连续相同=0
-[DWA] v=0.03 w=-0.09 cost=5.736
-[19:00:03.319889] [LASER] ✓ 已接收完整扫描 (第39组，共250点)
-[19:00:03.396765] [LASER] ✓ 已接收完整扫描 (第40组，共250点)
-[19:00:03.398103] [Timing] step=13 scan=0.14ms | slam_update=28.03ms | exit_check=0.00ms | frontier_update=5.27ms | target_selection=0.06ms | path_prepare=0.72ms | visualize=70.97ms | motion_update=33.04ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=138.95ms
-[19:00:03.423732] [ICPSlam][Mem] RSS(cur/peak): 519.6/542112.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 262 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.11 cost=6.020
-[19:00:03.496257] [LASER] ✓ 已接收完整扫描 (第41组，共250点)
-[19:00:03.530913] [DWA] step=15 v=0.03 w=-0.11
-[19:00:03.530958] [Timing] step=14 scan=0.13ms | slam_update=25.54ms | exit_check=0.00ms | frontier_update=5.15ms | target_selection=0.03ms | path_prepare=0.29ms | visualize=68.89ms | motion_update=32.29ms | stuck_recovery=0.04ms | exit_check_post=0.00ms | loop_total=132.83ms
-[19:00:03.558841] [ICPSlam][Mem] RSS(cur/peak): 519.7/542112.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 266 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=6.313
-[19:00:03.606707] [LASER] ✓ 已接收完整扫描 (第42组，共250点)
-[19:00:03.661614] [Timing] step=15 scan=0.14ms | slam_update=27.94ms | exit_check=0.00ms | frontier_update=5.25ms | target_selection=0.03ms | path_prepare=0.67ms | visualize=63.82ms | motion_update=32.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=130.61ms
-[19:00:03.686445] [ICPSlam][Mem] RSS(cur/peak): 519.7/542112.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 266 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=6.609
-[19:00:03.714697] [LASER] ✓ 已接收完整扫描 (第43组，共250点)
-[19:00:03.795485] [Timing] step=16 scan=0.13ms | slam_update=24.70ms | exit_check=0.00ms | frontier_update=5.18ms | target_selection=0.02ms | path_prepare=0.28ms | visualize=69.92ms | motion_update=33.04ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=133.80ms
-[19:00:03.820413] [ICPSlam][Mem] RSS(cur/peak): 519.7/542176.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 266 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=6.906
-[19:00:03.847564] [LASER] ✓ 已接收完整扫描 (第44组，共250点)
-[19:00:03.906848] [LASER] ✓ 已接收完整扫描 (第45组，共250点)
-[19:00:03.928847] [Timing] step=17 scan=0.16ms | slam_update=24.78ms | exit_check=0.00ms | frontier_update=5.47ms | target_selection=0.02ms | path_prepare=0.36ms | visualize=69.20ms | motion_update=32.60ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=133.29ms
-[19:00:03.954014] [ICPSlam][Mem] RSS(cur/peak): 519.7/542176.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 266 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=7.203
-[19:00:03.999157] [LASER] ✓ 已接收完整扫描 (第46组，共250点)
-[19:00:04.059673] [Timing] step=18 scan=0.15ms | slam_update=25.09ms | exit_check=0.00ms | frontier_update=5.27ms | target_selection=0.02ms | path_prepare=0.42ms | visualize=66.41ms | motion_update=32.75ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=130.77ms
-[19:00:04.083484] [ICPSlam][Mem] RSS(cur/peak): 519.8/542256.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 266 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=7.501
-[19:00:04.114808] [LASER] ✓ 已接收完整扫描 (第47组，共250点)
-[19:00:04.186602] [Timing] step=19 scan=0.12ms | slam_update=23.73ms | exit_check=0.00ms | frontier_update=5.18ms | target_selection=0.02ms | path_prepare=0.56ms | visualize=63.64ms | motion_update=32.88ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=126.87ms
-[19:00:04.215589] [ICPSlam][Mem] RSS(cur/peak): 524.3/542256.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 267 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:04.220941] [目标] 自由格: (109, 149) 邻接未知: (108, 150) (忽略A*:否) 连续相同=7
-[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.37 gap=0.68
-[DWA] v=0.03 w=-0.12 cost=7.799
-[19:00:04.241781] [LASER] ✓ 已接收完整扫描 (第48组，共250点)
-[19:00:04.297897] [LASER] ✓ 已接收完整扫描 (第49组，共250点)
-[19:00:04.321163] [CTRL] step=20 v=0.03 w=-0.12 d_trans=0.000 d_rot=0.000
-[19:00:04.321249] [Timing] step=20 scan=0.13ms | slam_update=28.95ms | exit_check=0.00ms | frontier_update=5.18ms | target_selection=0.04ms | path_prepare=0.34ms | visualize=66.65ms | motion_update=32.48ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=134.58ms
-[19:00:04.348710] [ICPSlam][Mem] RSS(cur/peak): 524.4/546848.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 268 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=8.108
-[19:00:04.403737] [LASER] ✓ 已接收完整扫描 (第50组，共250点)
-[19:00:04.455935] [Timing] step=21 scan=0.15ms | slam_update=27.35ms | exit_check=0.00ms | frontier_update=5.11ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=67.95ms | motion_update=32.98ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=134.65ms
-[19:00:04.480520] [ICPSlam][Mem] RSS(cur/peak): 524.4/546992.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 268 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=8.406
-[19:00:04.515143] [LASER] ✓ 已接收完整扫描 (第51组，共250点)
-[19:00:04.583613] [Timing] step=22 scan=0.13ms | slam_update=24.55ms | exit_check=0.00ms | frontier_update=5.06ms | target_selection=0.02ms | path_prepare=0.63ms | visualize=63.45ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=127.60ms
-[19:00:04.610715] [ICPSlam][Mem] RSS(cur/peak): 524.5/547024.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 269 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=8.709
-[19:00:04.640539] [LASER] ✓ 已接收完整扫描 (第52组，共250点)
-[19:00:04.714286] [Timing] step=23 scan=0.12ms | slam_update=27.03ms | exit_check=0.00ms | frontier_update=5.17ms | target_selection=0.02ms | path_prepare=0.39ms | visualize=64.48ms | motion_update=32.71ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=130.60ms
-[19:00:04.718492] [LASER] ✓ 已接收完整扫描 (第53组，共250点)
-[19:00:04.740805] [ICPSlam][Mem] RSS(cur/peak): 524.6/547024.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 270 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=8.990
-[19:00:04.814690] [LASER] ✓ 已接收完整扫描 (第54组，共250点)
-[19:00:04.846721] [Timing] step=24 scan=0.13ms | slam_update=26.38ms | exit_check=0.00ms | frontier_update=5.17ms | target_selection=0.02ms | path_prepare=0.51ms | visualize=66.44ms | motion_update=32.96ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=132.34ms
-[19:00:04.874021] [ICPSlam][Mem] RSS(cur/peak): 524.6/547232.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 271 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=9.302
-[19:00:04.913719] [LASER] ✓ 已接收完整扫描 (第55组，共250点)
-[19:00:04.982980] [Timing] step=25 scan=0.16ms | slam_update=27.19ms | exit_check=0.00ms | frontier_update=5.51ms | target_selection=0.02ms | path_prepare=0.58ms | visualize=69.22ms | motion_update=32.76ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=136.18ms
-[19:00:05.010225] [ICPSlam][Mem] RSS(cur/peak): 524.7/547280.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 272 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=9.602
-[19:00:05.040248] [LASER] ✓ 已接收完整扫描 (第56组，共250点)
-[19:00:05.109836] [LASER] ✓ 已接收完整扫描 (第57组，共250点)
-[19:00:05.117499] [Timing] step=26 scan=0.13ms | slam_update=27.12ms | exit_check=0.00ms | frontier_update=4.82ms | target_selection=0.02ms | path_prepare=0.32ms | visualize=69.01ms | motion_update=32.41ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=134.46ms
-[19:00:05.145028] [ICPSlam][Mem] RSS(cur/peak): 524.8/547328.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 274 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=9.902
-[19:00:05.216736] [LASER] ✓ 已接收完整扫描 (第58组，共250点)
-[19:00:05.248135] [Timing] step=27 scan=0.14ms | slam_update=27.45ms | exit_check=0.00ms | frontier_update=4.98ms | target_selection=0.02ms | path_prepare=0.39ms | visualize=64.51ms | motion_update=32.35ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=130.59ms
-[19:00:05.279416] [ICPSlam][Mem] RSS(cur/peak): 524.8/547328.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 276 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=10.207
-[19:00:05.323497] [LASER] ✓ 已接收完整扫描 (第59组，共250点)
-[Visualizer] ✅ 自动控制已启动！现在将开始发送电机命令。
-[Visualizer] 💡 提示：按 'm' 键可随时保存地图和路径
-[19:00:05.367225] [MOTOR] CMD-SET 15 8 (requested v=0.030 w=-0.122 | scale=0.200 | PID=ON)
-[19:00:05.399746] [Timing] step=28 scan=0.16ms | slam_update=31.23ms | exit_check=0.00ms | frontier_update=5.13ms | target_selection=0.03ms | path_prepare=0.36ms | visualize=81.36ms | motion_update=32.52ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=151.56ms
-[19:00:05.424351] [ICPSlam][Mem] RSS(cur/peak): 528.7/547344.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 276 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[DWA] v=0.03 w=-0.12 cost=10.507
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 128663 (\N{AUTOMOBILE}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 33258 (\N{CJK UNIFIED IDEOGRAPH-81EA}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 25511 (\N{CJK UNIFIED IDEOGRAPH-63A7}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 21046 (\N{CJK UNIFIED IDEOGRAPH-5236}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:340: UserWarning: Glyph 20013 (\N{CJK UNIFIED IDEOGRAPH-4E2D}) missing from font(s) DejaVu Sans.
-  plt.pause(VISUALIZATION_UPDATE_TIME)
-[19:00:05.456677] [LASER] ✓ 已接收完整扫描 (第60组，共250点)
-[19:00:05.503343] [MOTOR] CMD-SET 15 8 (requested v=0.030 w=-0.122 | scale=0.200 | PID=ON)
-[19:00:05.529646] [LASER] ✓ 已接收完整扫描 (第61组，共250点)
-[19:00:05.536331] [DWA] step=30 v=0.03 w=-0.12
-[19:00:05.536385] [Timing] step=29 scan=0.13ms | slam_update=24.57ms | exit_check=0.00ms | frontier_update=4.82ms | target_selection=0.02ms | path_prepare=0.37ms | visualize=72.87ms | motion_update=33.00ms | stuck_recovery=0.05ms | exit_check_post=0.00ms | loop_total=136.60ms
-[19:00:05.564546] [ICPSlam][Mem] RSS(cur/peak): 528.8/551376.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 312 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
-[19:00:05.649620] [动态前瞻] 最近点索引=0/63 前瞻步数=14 目标索引=14
-[19:00:05.649643] [目标] 自由格: (131, 176) 邻接未知: (132, 176) (忽略A*:否) 连续相同=0
-[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.32 gap=0.54
-[DWA] v=0.03 w=-0.12 cost=10.838
-[19:00:05.687639] [LASER] ✓ 已接收完整扫描 (第62组，共250点)
-[19:00:05.721180] [MOTOR] CMD-SET 17 9 (requested v=0.030 w=-0.122 | scale=0.200 | PID=ON)
-[19:00:05.721241] [Timing] step=30 scan=0.14ms | slam_update=28.07ms | exit_check=0.00ms | frontier_update=85.00ms | target_selection=0.04ms | path_prepare=0.31ms | visualize=70.50ms | motion_update=0.07ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=184.84ms
-[19:00:05.724934] [LASER] ✓ 已接收完整扫描 (第63组，共250点)
-[19:00:05.828882] [LASER] ✓ 已接收完整扫描 (第64组，共250点)
-[19:00:05.910994] [ICPSlam][Mem] RSS(cur/peak): 565.5/579072.0 MB | MPS curr/driver: 0.3/68.3 MB | map_points: 319 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 14
-[DWA] v=0.03 w=-0.12 cost=11.180
-[19:00:06.025976] [LASER] ✓ 已接收完整扫描 (第65组，共250点)
-[19:00:06.039387] [LASER] ✓ 已接收完整扫描 (第66组，共250点)
-[19:00:06.063352] [MOTOR] Adjusted negative CMD-SET values by +2 to satisfy non-negative requirement
-[19:00:06.063381] [MOTOR] CMD-SET 0 11 (requested v=0.030 w=-0.122 | scale=0.200 | PID=ON)
-[19:00:06.063412] [Timing] step=31 scan=0.14ms | slam_update=189.70ms | exit_check=0.00ms | frontier_update=84.79ms | target_selection=0.01ms | path_prepare=0.36ms | visualize=66.40ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=342.15ms
-[19:00:06.127978] [LASER] ✓ 已接收完整扫描 (第67组，共250点)
-[19:00:06.192336] [ICPSlam][Mem] RSS(cur/peak): 592.5/606768.0 MB | MPS curr/driver: 0.3/68.3 MB | map_points: 342 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 16
-[DWA] v=0.03 w=-0.12 cost=11.398
-[19:00:06.313014] [LASER] ✓ 已接收完整扫描 (第68组，共250点)
-[19:00:06.326149] [LASER] ✓ 已接收完整扫描 (第69组，共250点)
-[19:00:06.347042] [MOTOR] Adjusted negative CMD-SET values by +32 to satisfy non-negative requirement
-[19:00:06.347072] [MOTOR] CMD-SET 0 39 (requested v=0.030 w=-0.122 | scale=0.200 | PID=ON)
-[19:00:06.347104] [Timing] step=32 scan=0.12ms | slam_update=129.05ms | exit_check=0.00ms | frontier_update=82.29ms | target_selection=0.01ms | path_prepare=0.38ms | visualize=70.97ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=283.68ms
-[19:00:06.428289] [LASER] ✓ 已接收完整扫描 (第70组，共250点)
-[19:00:06.474307] [ICPSlam][Mem] RSS(cur/peak): 627.6/642624.0 MB | MPS curr/driver: 0.3/68.3 MB | map_points: 358 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 18
-[DWA] v=0.03 w=-0.02 cost=11.918
-[19:00:06.583913] [LASER] ✓ 已接收完整扫描 (第71组，共250点)
-[19:00:06.618264] [MOTOR] Adjusted negative CMD-SET values by +30 to satisfy non-negative requirement
-[19:00:06.618289] [MOTOR] CMD-SET 0 36 (requested v=0.030 w=-0.017 | scale=0.200 | PID=ON)
-[19:00:06.618315] [Timing] step=33 scan=0.12ms | slam_update=127.39ms | exit_check=0.00ms | frontier_update=71.59ms | target_selection=0.01ms | path_prepare=0.31ms | visualize=70.97ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=271.20ms
-[19:00:06.639813] [LASER] ✓ 已接收完整扫描 (第72组，共250点)
-[19:00:06.717297] [ICPSlam][Mem] RSS(cur/peak): 641.8/657200.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 360 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 8
-[DWA] v=0.03 w=0.02 cost=12.174
-[19:00:06.819182] [LASER] ✓ 已接收完整扫描 (第73组，共250点)
-[19:00:06.833621] [LASER] ✓ 已接收完整扫描 (第74组，共250点)
-[19:00:06.859280] [MOTOR] CMD-SET 11 5 (requested v=0.030 w=0.024 | scale=0.200 | PID=ON)
-[19:00:06.859327] [Timing] step=34 scan=0.12ms | slam_update=99.08ms | exit_check=0.00ms | frontier_update=69.49ms | target_selection=0.01ms | path_prepare=0.40ms | visualize=71.10ms | motion_update=0.05ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=241.00ms
-[19:00:06.935805] [LASER] ✓ 已接收完整扫描 (第75组，共250点)
-[19:00:06.973694] [ICPSlam][Mem] RSS(cur/peak): 663.6/679504.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 403 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 24
-[DWA] v=0.03 w=0.04 cost=12.342
-[19:00:07.083397] [LASER] ✓ 已接收完整扫描 (第76组，共250点)
-[19:00:07.116410] [MOTOR] Adjusted negative CMD-SET values by +92 to satisfy non-negative requirement
-[19:00:07.116437] [MOTOR] CMD-SET 103 0 (requested v=0.030 w=0.041 | scale=0.200 | PID=ON)
-[19:00:07.116466] [Timing] step=35 scan=0.13ms | slam_update=114.30ms | exit_check=0.00ms | frontier_update=69.15ms | target_selection=0.01ms | path_prepare=0.31ms | visualize=72.40ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=257.12ms
-[19:00:07.131633] [LASER] ✓ 已接收完整扫描 (第77组，共250点)
-[19:00:07.235652] [LASER] ✓ 已接收完整扫描 (第78组，共250点)
-[19:00:07.290016] [ICPSlam][Mem] RSS(cur/peak): 681.4/697776.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 442 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 35
-[DWA] v=0.03 w=-0.00 cost=12.523
-[19:00:07.389331] [LASER] ✓ 已接收完整扫描 (第79组，共250点)
-[19:00:07.424783] [MOTOR] Adjusted negative CMD-SET values by +75 to satisfy non-negative requirement
-[19:00:07.424811] [MOTOR] CMD-SET 82 0 (requested v=0.030 w=-0.004 | scale=0.200 | PID=ON)
-[19:00:07.424842] [Timing] step=36 scan=0.12ms | slam_update=173.61ms | exit_check=0.00ms | frontier_update=56.83ms | target_selection=0.01ms | path_prepare=0.68ms | visualize=76.32ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=308.36ms
-[19:00:07.432867] [LASER] ✓ 已接收完整扫描 (第80组，共250点)
-[19:00:07.537908] [LASER] ✓ 已接收完整扫描 (第81组，共250点)
-[19:00:07.565659] [ICPSlam][Mem] RSS(cur/peak): 695.0/711728.0 MB | MPS curr/driver: 0.4/68.4 MB | map_points: 484 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 22
-[DWA] v=0.03 w=-0.02 cost=13.285
-[19:00:07.707672] [MOTOR] Adjusted negative CMD-SET values by +72 to satisfy non-negative requirement
-[19:00:07.707701] [MOTOR] CMD-SET 0 45 (requested v=0.030 w=-0.023 | scale=0.200 | PID=ON)
-[19:00:07.707727] [Timing] step=37 scan=0.11ms | slam_update=140.80ms | exit_check=0.00ms | frontier_update=69.95ms | target_selection=0.01ms | path_prepare=0.59ms | visualize=70.79ms | motion_update=0.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=282.87ms
-[19:00:07.805834] [ICPSlam][Mem] RSS(cur/peak): 703.8/721792.0 MB | MPS curr/driver: 0.5/68.4 MB | map_points: 577 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 18
-[19:00:07.877134] [目标] 自由格: (132, 176) 邻接未知: (133, 176) (忽略A*:否) 连续相同=0
-[DWA] v=0.03 w=-0.08 cost=13.241
-[19:00:07.952593] [MOTOR] Adjusted negative CMD-SET values by +169 to satisfy non-negative requirement
-[19:00:07.952621] [MOTOR] CMD-SET 0 176 (requested v=0.030 w=-0.082 | scale=0.200 | PID=ON)
-[19:00:07.985694] [Timing] step=38 scan=0.12ms | slam_update=98.06ms | exit_check=0.00ms | frontier_update=71.20ms | target_selection=0.05ms | path_prepare=0.28ms | visualize=74.57ms | motion_update=33.10ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=277.95ms
-[19:00:08.114960] [ICPSlam][Mem] RSS(cur/peak): 712.3/730672.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.11 cost=13.510
-[19:00:08.263663] [MOTOR] Adjusted negative CMD-SET values by +170 to satisfy non-negative requirement
-[19:00:08.263695] [MOTOR] CMD-SET 0 177 (requested v=0.030 w=-0.106 | scale=0.200 | PID=ON)
-[19:00:08.296676] [Timing] step=39 scan=0.14ms | slam_update=129.26ms | exit_check=0.00ms | frontier_update=70.26ms | target_selection=0.01ms | path_prepare=0.27ms | visualize=77.44ms | motion_update=32.98ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=310.92ms
-[19:00:08.421046] [ICPSlam][Mem] RSS(cur/peak): 729.3/752672.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[19:00:08.491623] [目标] 自由格: (132, 176) 邻接未知: (133, 176) (忽略A*:否) 连续相同=2
-[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.27 gap=0.38
-[DWA] v=0.03 w=-0.12 cost=13.804
-[19:00:08.564140] [MOTOR] Adjusted negative CMD-SET values by +170 to satisfy non-negative requirement
-[19:00:08.564169] [MOTOR] CMD-SET 0 176 (requested v=0.030 w=-0.116 | scale=0.200 | PID=ON)
-[19:00:08.597301] [CTRL] step=40 v=0.03 w=-0.12 d_trans=0.091 d_rot=-1.069
-[19:00:08.597382] [Timing] step=40 scan=0.16ms | slam_update=124.25ms | exit_check=0.00ms | frontier_update=70.47ms | target_selection=0.05ms | path_prepare=0.29ms | visualize=71.61ms | motion_update=33.24ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=300.65ms
-[19:00:08.708189] [ICPSlam][Mem] RSS(cur/peak): 729.6/752672.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=14.102
-[Visualizer] 🛑 强制停止！小车将立即停止并关闭自动控制。
-[19:00:08.856887] [CONTROL] 🛑 检测到强制停止请求，发送 CMD-SET 0 0
-[19:00:08.856928] [MOTOR] Adjusted negative CMD-SET values by +189 to satisfy non-negative requirement
-[19:00:08.856941] [MOTOR] CMD-SET 0 186 (requested v=0.000 w=0.000 | scale=0.200 | PID=ON)
-[19:00:08.889269] [Timing] step=41 scan=0.16ms | slam_update=110.71ms | exit_check=0.00ms | frontier_update=70.23ms | target_selection=0.01ms | path_prepare=0.25ms | visualize=77.57ms | motion_update=32.35ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=291.85ms
-[19:00:09.000779] [ICPSlam][Mem] RSS(cur/peak): 730.0/757312.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=14.401
-[19:00:09.177503] [Timing] step=42 scan=0.16ms | slam_update=111.42ms | exit_check=0.00ms | frontier_update=70.45ms | target_selection=0.01ms | path_prepare=0.51ms | visualize=71.95ms | motion_update=33.11ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=288.17ms
-[19:00:09.289603] [ICPSlam][Mem] RSS(cur/peak): 734.4/757312.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=14.701
-[19:00:09.472415] [Timing] step=43 scan=0.14ms | slam_update=111.99ms | exit_check=0.00ms | frontier_update=71.67ms | target_selection=0.02ms | path_prepare=0.27ms | visualize=77.14ms | motion_update=33.07ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=294.85ms
-[19:00:09.587290] [ICPSlam][Mem] RSS(cur/peak): 734.8/762176.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=15.000
-[19:00:09.686005] [WARN] Dropping unknown header byte 0x53
-[19:00:09.686028] [WARN] Dropping unknown header byte 0x79
-[19:00:09.686035] [WARN] Dropping unknown header byte 0x73
-[19:00:09.686040] [WARN] Dropping unknown header byte 0x74
-[19:00:09.686045] [WARN] Dropping unknown header byte 0x65
-[19:00:09.686050] [WARN] Dropping unknown header byte 0x6D
-[19:00:09.686054] [WARN] Dropping unknown header byte 0x20
-[19:00:09.686058] [WARN] Dropping unknown header byte 0x52
-[19:00:09.686062] [WARN] Dropping unknown header byte 0x65
-[19:00:09.686067] [WARN] Dropping unknown header byte 0x61
-[19:00:09.686070] [WARN] Dropping unknown header byte 0x64
-[19:00:09.686074] [WARN] Dropping unknown header byte 0x79
-[19:00:09.686077] [WARN] Dropping unknown header byte 0x20
-[19:00:09.686086] [WARN] Dropping unknown header byte 0x2D
-[19:00:09.686090] [WARN] Dropping unknown header byte 0x20
-[19:00:09.686094] [WARN] Dropping unknown header byte 0x55
-[19:00:09.686098] [WARN] Dropping unknown header byte 0x53
-[19:00:09.686102] [WARN] Dropping unknown header byte 0x41
-[19:00:09.686106] [WARN] Dropping unknown header byte 0x52
-[19:00:09.686110] [WARN] Dropping unknown header byte 0x54
-[19:00:09.686119] [WARN] Dropping unknown header byte 0x33
-[19:00:09.686123] [WARN] Dropping unknown header byte 0x20
-[19:00:09.686126] [WARN] Dropping unknown header byte 0x54
-[19:00:09.686131] [WARN] Dropping unknown header byte 0x65
-[19:00:09.686150] [WARN] Dropping unknown header byte 0x73
-[19:00:09.686167] [WARN] Dropping unknown header byte 0x74
-[19:00:09.686175] [WARN] Dropping unknown header byte 0x0A
-[19:00:09.764464] [DWA] step=45 v=0.03 w=-0.12
-[19:00:09.764547] [Timing] step=44 scan=0.13ms | slam_update=114.79ms | exit_check=0.00ms | frontier_update=70.66ms | target_selection=0.01ms | path_prepare=0.29ms | visualize=72.45ms | motion_update=33.09ms | stuck_recovery=0.09ms | exit_check_post=0.00ms | loop_total=292.10ms
-[19:00:09.874784] [ICPSlam][Mem] RSS(cur/peak): 735.0/762176.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=15.300
-[19:00:10.059099] [Timing] step=45 scan=0.15ms | slam_update=110.19ms | exit_check=0.00ms | frontier_update=71.60ms | target_selection=0.01ms | path_prepare=0.58ms | visualize=78.37ms | motion_update=33.07ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=294.52ms
-[19:00:10.181834] [ICPSlam][Mem] RSS(cur/peak): 735.3/762624.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=15.600
-[19:00:10.363181] [Timing] step=46 scan=0.14ms | slam_update=122.64ms | exit_check=0.00ms | frontier_update=71.38ms | target_selection=0.02ms | path_prepare=0.27ms | visualize=75.89ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=304.01ms
-[19:00:10.500153] [ICPSlam][Mem] RSS(cur/peak): 735.6/763136.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=15.900
-[19:00:10.683107] [Timing] step=47 scan=0.15ms | slam_update=136.85ms | exit_check=0.00ms | frontier_update=70.55ms | target_selection=0.01ms | path_prepare=0.62ms | visualize=77.96ms | motion_update=33.10ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=319.83ms
-[19:00:10.801900] [ICPSlam][Mem] RSS(cur/peak): 735.9/763296.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=16.200
-[19:00:10.940420] [Timing] step=48 scan=0.15ms | slam_update=118.67ms | exit_check=0.00ms | frontier_update=71.85ms | target_selection=0.01ms | path_prepare=0.30ms | visualize=32.53ms | motion_update=33.13ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=257.23ms
-[19:00:11.053402] [ICPSlam][Mem] RSS(cur/peak): 736.1/763296.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=16.500
-[19:00:11.232294] [Timing] step=49 scan=0.16ms | slam_update=112.85ms | exit_check=0.00ms | frontier_update=70.20ms | target_selection=0.01ms | path_prepare=0.26ms | visualize=75.14ms | motion_update=32.63ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=291.80ms
-[19:00:11.361354] [ICPSlam][Mem] RSS(cur/peak): 736.4/763824.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.27 gap=0.38
-[DWA] v=0.03 w=-0.12 cost=16.800
-[19:00:11.540658] [Timing] step=50 scan=0.15ms | slam_update=129.03ms | exit_check=0.00ms | frontier_update=70.42ms | target_selection=0.01ms | path_prepare=0.53ms | visualize=74.69ms | motion_update=32.81ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=308.29ms
-[19:00:11.658770] [ICPSlam][Mem] RSS(cur/peak): 736.6/764160.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=17.100
-[19:00:11.834589] [Timing] step=51 scan=0.15ms | slam_update=117.99ms | exit_check=0.00ms | frontier_update=69.76ms | target_selection=0.01ms | path_prepare=0.27ms | visualize=71.99ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=293.84ms
-[19:00:11.945642] [ICPSlam][Mem] RSS(cur/peak): 740.9/764160.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=17.400
-[19:00:12.127563] [Timing] step=52 scan=0.15ms | slam_update=110.93ms | exit_check=0.00ms | frontier_update=70.43ms | target_selection=0.01ms | path_prepare=0.26ms | visualize=77.94ms | motion_update=32.59ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=292.89ms
-[19:00:12.252469] [ICPSlam][Mem] RSS(cur/peak): 741.0/768720.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=17.700
-[19:00:12.435434] [Timing] step=53 scan=0.16ms | slam_update=124.80ms | exit_check=0.00ms | frontier_update=71.22ms | target_selection=0.01ms | path_prepare=0.27ms | visualize=77.62ms | motion_update=33.13ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=307.81ms
-[19:00:12.560881] [ICPSlam][Mem] RSS(cur/peak): 745.5/773280.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=18.000
-[19:00:12.739822] [Timing] step=54 scan=0.14ms | slam_update=125.36ms | exit_check=0.00ms | frontier_update=70.69ms | target_selection=0.02ms | path_prepare=0.27ms | visualize=74.12ms | motion_update=33.12ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=304.31ms
-[19:00:12.857812] [ICPSlam][Mem] RSS(cur/peak): 745.7/773280.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=18.300
-[19:00:13.038566] [Timing] step=55 scan=0.17ms | slam_update=117.87ms | exit_check=0.00ms | frontier_update=70.38ms | target_selection=0.01ms | path_prepare=0.26ms | visualize=77.75ms | motion_update=31.64ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=298.65ms
-[19:00:13.153435] [ICPSlam][Mem] RSS(cur/peak): 745.8/773552.0 MB | MPS curr/driver: 0.6/68.4 MB | map_points: 582 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 27
-[DWA] v=0.03 w=-0.12 cost=18.600
-[19:00:13.261068] [LASER] ✓ 已接收完整扫描 (第82组，共250点)
-[19:00:13.273178] [LASER] ✓ 已接收完整扫描 (第83组，共250点)
-[19:00:13.304543] [Timing] step=56 scan=0.16ms | slam_update=114.73ms | exit_check=0.00ms | frontier_update=69.29ms | target_selection=0.01ms | path_prepare=0.64ms | visualize=80.10ms | motion_update=0.02ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=265.92ms
-[19:00:13.358758] [LASER] ✓ 已接收完整扫描 (第84组，共250点)
-[19:00:13.460979] [LASER] ✓ 已接收完整扫描 (第85组，共250点)
-[19:00:13.540997] [ICPSlam][Mem] RSS(cur/peak): 757.3/775504.0 MB | MPS curr/driver: 0.5/68.5 MB | map_points: 692 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 58
-[19:00:21.631426] [LASER] ✓ 已接收完整扫描 (第86组，共250点)
-[19:00:21.809206] 没有可达的未知区域，探索结束。
-[19:00:21.809282] [Timing] step=57 scan=0.15ms | slam_update=236.52ms | exit_check=0.00ms | frontier_update=8268.09ms | loop_total=8504.76ms
-[19:00:21.809319] 探索完成：迷宫内部区域已完全探索。
-[19:00:21.809327] 探索总结 - 总移动距离: 2.3m, 总共探索了 0 个前沿点
-[19:00:21.809333] 规划返回起点路径...
-[19:00:21.809586] 使用探索阶段的安全距离 5.0 栅格规划返程路线
-[19:00:21.809604] 无安全距离最短路径长度: 0.00 米 (0 栅格步数)
-[19:00:21.809620] 返程DWA未能在限定步数内抵达起点。
-[19:00:21.809637] 仿真结束：迷宫探索完成，机器人已返回起点。
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 128205 (\N{ROUND PUSHPIN}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 20165 (\N{CJK UNIFIED IDEOGRAPH-4EC5}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 24314 (\N{CJK UNIFIED IDEOGRAPH-5EFA}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 27169 (\N{CJK UNIFIED IDEOGRAPH-6A21}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 24335 (\N{CJK UNIFIED IDEOGRAPH-5F0F}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 25353 (\N{CJK UNIFIED IDEOGRAPH-6309}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 21551 (\N{CJK UNIFIED IDEOGRAPH-542F}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py:373: UserWarning: Glyph 21160 (\N{CJK UNIFIED IDEOGRAPH-52A8}) missing from font(s) DejaVu Sans.
-  self.fig.savefig(filename)
-[19:00:21.826506] [LASER] ✓ 已接收完整扫描 (第87组，共250点)
-[19:00:21.859483] [LASER] ✓ 已接收完整扫描 (第88组，共250点)
-[19:00:21.872430] [LASER] ✓ 已接收完整扫描 (第89组，共250点)
-[19:00:21.885018] [LASER] ✓ 已接收完整扫描 (第90组，共250点)
-[19:00:21.898243] [LASER] ✓ 已接收完整扫描 (第91组，共250点)
-[19:00:21.909977] [LASER] ✓ 已接收完整扫描 (第92组，共250点)
-[19:00:21.921483] [LASER] ✓ 已接收完整扫描 (第93组，共250点)
-[19:00:21.932760] [LASER] ✓ 已接收完整扫描 (第94组，共250点)
-[19:00:21.944066] [LASER] ✓ 已接收完整扫描 (第95组，共250点)
-[19:00:21.957288] [LASER] ✓ 已接收完整扫描 (第96组，共250点)
-[19:00:21.969089] [LASER] ✓ 已接收完整扫描 (第97组，共250点)
-[19:00:21.981073] [LASER] ✓ 已接收完整扫描 (第98组，共250点)
-[19:00:21.992805] [LASER] ✓ 已接收完整扫描 (第99组，共250点)
-[19:00:22.004579] [LASER] ✓ 已接收完整扫描 (第100组，共250点)
-[19:00:22.015236] [LASER] ✓ 已接收完整扫描 (第101组，共250点)
-[19:00:22.027111] [LASER] ✓ 已接收完整扫描 (第102组，共250点)
-[19:00:22.039118] [LASER] ✓ 已接收完整扫描 (第103组，共250点)
-[19:00:22.050837] [LASER] ✓ 已接收完整扫描 (第104组，共250点)
-[19:00:22.063468] [LASER] ✓ 已接收完整扫描 (第105组，共250点)
-[19:00:22.075086] [LASER] ✓ 已接收完整扫描 (第106组，共250点)
-[19:00:22.085360] [LASER] ✓ 已接收完整扫描 (第107组，共250点)
-[19:00:22.097121] [LASER] ✓ 已接收完整扫描 (第108组，共250点)
-[19:00:22.108237] [LASER] ✓ 已接收完整扫描 (第109组，共250点)
-[19:00:22.119332] [LASER] ✓ 已接收完整扫描 (第110组，共250点)
-[19:00:22.129619] [LASER] ✓ 已接收完整扫描 (第111组，共250点)
-[19:00:22.139975] [LASER] ✓ 已接收完整扫描 (第112组，共250点)
-[19:00:22.151672] [LASER] ✓ 已接收完整扫描 (第113组，共250点)
-[19:00:22.164251] [LASER] ✓ 已接收完整扫描 (第114组，共250点)
-[19:00:22.175616] [LASER] ✓ 已接收完整扫描 (第115组，共250点)
-[19:00:22.186089] [LASER] ✓ 已接收完整扫描 (第116组，共250点)
-[19:00:22.197493] [LASER] ✓ 已接收完整扫描 (第117组，共250点)
-[19:00:22.209018] [LASER] ✓ 已接收完整扫描 (第118组，共250点)
-[19:00:22.220291] [LASER] ✓ 已接收完整扫描 (第119组，共250点)
-[19:00:22.232097] [LASER] ✓ 已接收完整扫描 (第120组，共250点)
-[19:00:22.243954] [LASER] ✓ 已接收完整扫描 (第121组，共250点)
-[19:00:22.255320] [LASER] ✓ 已接收完整扫描 (第122组，共250点)
-[19:00:22.266487] [LASER] ✓ 已接收完整扫描 (第123组，共250点)
-[19:00:22.277766] [LASER] ✓ 已接收完整扫描 (第124组，共250点)
-[19:00:22.288739] [LASER] ✓ 已接收完整扫描 (第125组，共250点)
-[19:00:22.300280] [LASER] ✓ 已接收完整扫描 (第126组，共250点)
-[19:00:22.311889] [LASER] ✓ 已接收完整扫描 (第127组，共250点)
-[19:00:22.323908] [LASER] ✓ 已接收完整扫描 (第128组，共250点)
-[19:00:22.335159] [LASER] ✓ 已接收完整扫描 (第129组，共250点)
-[19:00:22.347288] [LASER] ✓ 已接收完整扫描 (第130组，共250点)
-[19:00:22.358272] [LASER] ✓ 已接收完整扫描 (第131组，共250点)
-[19:00:22.369942] [LASER] ✓ 已接收完整扫描 (第132组，共250点)
-[19:00:22.380860] [LASER] ✓ 已接收完整扫描 (第133组，共250点)
-[19:00:22.391975] [LASER] ✓ 已接收完整扫描 (第134组，共250点)
-[19:00:22.403999] [LASER] ✓ 已接收完整扫描 (第135组，共250点)
-[19:00:22.415606] [LASER] ✓ 已接收完整扫描 (第136组，共250点)
-[19:00:22.426914] [LASER] ✓ 已接收完整扫描 (第137组，共250点)
-[19:00:22.438271] [LASER] ✓ 已接收完整扫描 (第138组，共250点)
-[19:00:22.450016] [LASER] ✓ 已接收完整扫描 (第139组，共250点)
-[19:00:22.461493] [LASER] ✓ 已接收完整扫描 (第140组，共250点)
-[19:00:22.473066] [LASER] ✓ 已接收完整扫描 (第141组，共250点)
-[19:00:22.485000] [LASER] ✓ 已接收完整扫描 (第142组，共250点)
-[19:00:22.496200] [LASER] ✓ 已接收完整扫描 (第143组，共250点)
-[19:00:22.507048] [LASER] ✓ 已接收完整扫描 (第144组，共250点)
-[19:00:22.517801] [LASER] ✓ 已接收完整扫描 (第145组，共250点)
-[19:00:22.529172] [LASER] ✓ 已接收完整扫描 (第146组，共250点)
-[19:00:22.540695] [LASER] ✓ 已接收完整扫描 (第147组，共250点)
-[19:00:22.553450] [LASER] ✓ 已接收完整扫描 (第148组，共250点)
-[19:00:22.564610] [LASER] ✓ 已接收完整扫描 (第149组，共250点)
-[19:00:22.576786] [LASER] ✓ 已接收完整扫描 (第150组，共250点)
-[19:00:22.588362] [LASER] ✓ 已接收完整扫描 (第151组，共250点)
-[19:00:22.600530] [LASER] ✓ 已接收完整扫描 (第152组，共250点)
-[19:00:22.612042] [LASER] ✓ 已接收完整扫描 (第153组，共250点)
-[19:00:22.622764] [LASER] ✓ 已接收完整扫描 (第154组，共250点)
-[19:00:22.633467] [LASER] ✓ 已接收完整扫描 (第155组，共250点)
-[19:00:22.645263] [LASER] ✓ 已接收完整扫描 (第156组，共250点)
-[19:00:22.657641] [LASER] ✓ 已接收完整扫描 (第157组，共250点)
-[19:00:22.670286] [LASER] ✓ 已接收完整扫描 (第158组，共250点)
-[19:00:22.681554] [LASER] ✓ 已接收完整扫描 (第159组，共250点)
-[19:00:22.693199] [LASER] ✓ 已接收完整扫描 (第160组，共250点)
-[19:00:22.704812] [LASER] ✓ 已接收完整扫描 (第161组，共250点)
-[19:00:22.715606] [LASER] ✓ 已接收完整扫描 (第162组，共250点)
-[19:00:22.726937] [LASER] ✓ 已接收完整扫描 (第163组，共250点)
-[19:00:22.738813] [LASER] ✓ 已接收完整扫描 (第164组，共250点)
-[19:00:22.750921] [LASER] ✓ 已接收完整扫描 (第165组，共250点)
-[19:00:22.762005] [LASER] ✓ 已接收完整扫描 (第166组，共250点)
-[19:00:22.774304] [LASER] ✓ 已接收完整扫描 (第167组，共250点)
-[19:00:22.786833] [LASER] ✓ 已接收完整扫描 (第168组，共250点)
-[19:00:22.798654] [LASER] ✓ 已接收完整扫描 (第169组，共250点)
-[19:00:22.810655] [LASER] ✓ 已接收完整扫描 (第170组，共250点)
-(SmallSemester_Slim) nemoyu@Nemos-MacBook-Pro gpt_code_gpu % 
+[20:20:43.073677] [降噪滤波器] 滤波器已禁用
+[20:20:43.073718] [BLE] 启动实时数据监听线程...
+[20:20:43.075971] [INFO] Connecting to 60E2ECE4-761B-6B31-FD1F-6FD559C4FE52 (timeout=8.0s)...
+[20:20:44.567904] [OK] Connected to device.
+[20:20:44.567956] [INFO] Subscribing to notifications on 0000ffe1-0000-1000-8000-00805f9b34fb...
+[20:20:44.568068] [BLE] 后台监听已就绪，使用真实小车数据驱动系统。
+[20:20:44.593109] [WARN] Dropping unknown header byte 0x74
+[20:20:44.593208] [WARN] Dropping unknown header byte 0x01
+[20:20:44.593224] [WARN] Dropping unknown header byte 0x96
+[20:20:44.685628] [INFO] Listening for notifications (Ctrl+C to stop)...
+[20:20:44.745495] [LASER] ✓ 已接收完整扫描 (第1组，共250点)
+[20:20:44.811032] [ICPSlam][Mem] RSS(cur/peak): 403.5/413216.0 MB | MPS curr/driver: 0.0/38.5 MB | map_points: 153 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:44.838320] [LASER] ✓ 已接收完整扫描 (第2组，共250点)
+[20:20:44.864916] [CONTROL] 等待 2.0s 收集传感器数据后再开始控制...
+[20:20:44.924510] [LASER] ✓ 已接收完整扫描 (第3组，共250点)
+[20:20:45.015256] [LASER] ✓ 已接收完整扫描 (第4组，共250点)
+[20:20:45.078290] [LASER] ✓ 已接收完整扫描 (第5组，共250点)
+[20:20:45.194707] [LASER] ✓ 已接收完整扫描 (第6组，共250点)
+[20:20:45.302232] [LASER] ✓ 已接收完整扫描 (第7组，共250点)
+[20:20:45.352042] [LASER] ✓ 已接收完整扫描 (第8组，共250点)
+[20:20:45.466370] [LASER] ✓ 已接收完整扫描 (第9组，共250点)
+[20:20:45.530372] [LASER] ✓ 已接收完整扫描 (第10组，共250点)
+[20:20:45.649168] [LASER] ✓ 已接收完整扫描 (第11组，共250点)
+[20:20:45.772038] [LASER] ✓ 已接收完整扫描 (第12组，共250点)
+[20:20:45.859068] [LASER] ✓ 已接收完整扫描 (第13组，共250点)
+[20:20:45.948799] [LASER] ✓ 已接收完整扫描 (第14组，共250点)
+[20:20:46.066828] [LASER] ✓ 已接收完整扫描 (第15组，共250点)
+[20:20:46.131351] [LASER] ✓ 已接收完整扫描 (第16组，共250点)
+[20:20:46.241119] [LASER] ✓ 已接收完整扫描 (第17组，共250点)
+[20:20:46.355432] [LASER] ✓ 已接收完整扫描 (第18组，共250点)
+[20:20:46.431478] [LASER] ✓ 已接收完整扫描 (第19组，共250点)
+[20:20:46.536931] [LASER] ✓ 已接收完整扫描 (第20组，共250点)
+[20:20:46.652875] [LASER] ✓ 已接收完整扫描 (第21组，共250点)
+[20:20:46.745301] [LASER] ✓ 已接收完整扫描 (第22组，共250点)
+[20:20:46.836152] [LASER] ✓ 已接收完整扫描 (第23组，共250点)
+[20:20:46.910281] [DWA模式=orig] 安全格距离: 8 (半径=0.11m, 格长=0.02m)
+[20:20:46.949441] [LASER] ✓ 已接收完整扫描 (第24组，共250点)
+[20:20:46.987547] [ICPSlam][Mem] RSS(cur/peak): 436.4/446832.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 186 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:46.988081] [前沿搜索] BFS成功=0.38ms, 找到目标=(116, 122)
+[20:20:46.988495] [动态前瞻] 最近点索引=0/5 前瞻步数=5 目标索引=5
+[20:20:46.988505] [目标] 自由格: (116, 122) 邻接未知: (115, 123) (忽略A*:否) 连续相同=0
+[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.36 gap=0.65
+[DWA] v=0.02 w=0.03 cost=1.306
+[20:20:47.040119] [LASER] ✓ 已接收完整扫描 (第25组，共250点)
+[20:20:47.046659] [CTRL] step=0 v=0.02 w=0.03 d_trans=0.000 d_rot=0.000
+[20:20:47.046703] [Timing] step=0 scan=0.24ms | slam_update=77.12ms | exit_check=0.00ms | frontier_update=0.40ms | path_planning=0.37ms | target_selection=0.04ms | path_prepare=0.32ms | visualize=56.87ms | motion_update=0.05ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=136.36ms
+[20:20:47.073127] [ICPSlam][Mem] RSS(cur/peak): 464.4/475600.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 205 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.073824] [前沿搜索] BFS成功=0.65ms, 找到目标=(115, 125)
+[20:20:47.074316] [目标] 自由格: (115, 125) 邻接未知: (114, 126) (忽略A*:否) 连续相同=0
+[DWA] v=0.03 w=0.04 cost=1.643
+[20:20:47.131709] [LASER] ✓ 已接收完整扫描 (第26组，共250点)
+[20:20:47.155216] [Timing] step=1 scan=0.12ms | slam_update=26.34ms | exit_check=0.00ms | frontier_update=0.66ms | path_planning=0.46ms | target_selection=0.03ms | path_prepare=0.57ms | visualize=46.63ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=108.49ms
+[20:20:47.181933] [ICPSlam][Mem] RSS(cur/peak): 465.9/477040.0 MB | MPS curr/driver: 0.0/58.0 MB | map_points: 216 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.182647] [前沿搜索] BFS成功=0.66ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=2.001
+[20:20:47.265032] [LASER] ✓ 已接收完整扫描 (第27组，共250点)
+[20:20:47.267415] [Timing] step=2 scan=0.14ms | slam_update=26.61ms | exit_check=0.00ms | frontier_update=0.68ms | path_planning=0.45ms | target_selection=0.02ms | path_prepare=0.39ms | visualize=50.24ms | motion_update=33.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=112.17ms
+[20:20:47.294387] [ICPSlam][Mem] RSS(cur/peak): 487.2/508800.0 MB | MPS curr/driver: 0.0/58.2 MB | map_points: 218 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.295183] [前沿搜索] BFS成功=0.64ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=2.309
+[20:20:47.328731] [LASER] ✓ 已接收完整扫描 (第28组，共250点)
+[20:20:47.393099] [Timing] step=3 scan=0.12ms | slam_update=26.99ms | exit_check=0.00ms | frontier_update=0.65ms | path_planning=0.48ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=63.36ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=125.64ms
+[20:20:47.421125] [ICPSlam][Mem] RSS(cur/peak): 495.2/508800.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 219 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.421918] [前沿搜索] BFS成功=0.70ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=2.609
+[20:20:47.444028] [LASER] ✓ 已接收完整扫描 (第29组，共250点)
+[20:20:47.478199] [Timing] step=4 scan=0.13ms | slam_update=27.94ms | exit_check=0.00ms | frontier_update=0.72ms | path_planning=0.48ms | target_selection=0.02ms | path_prepare=0.27ms | visualize=21.94ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=85.02ms
+[20:20:47.501878] [ICPSlam][Mem] RSS(cur/peak): 495.3/517120.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 219 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.502669] [前沿搜索] BFS成功=0.66ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=2.909
+[20:20:47.565210] [LASER] ✓ 已接收完整扫描 (第30组，共250点)
+[20:20:47.585609] [Timing] step=5 scan=0.14ms | slam_update=23.62ms | exit_check=0.00ms | frontier_update=0.68ms | path_planning=0.52ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=48.36ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=107.35ms
+[20:20:47.611723] [ICPSlam][Mem] RSS(cur/peak): 495.5/517120.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 222 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.612427] [前沿搜索] BFS成功=0.65ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=3.214
+[20:20:47.643390] [LASER] ✓ 已接收完整扫描 (第31组，共250点)
+[20:20:47.698973] [Timing] step=6 scan=0.15ms | slam_update=25.99ms | exit_check=0.00ms | frontier_update=0.66ms | path_planning=0.46ms | target_selection=0.02ms | path_prepare=0.24ms | visualize=52.24ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=113.31ms
+[20:20:47.726090] [ICPSlam][Mem] RSS(cur/peak): 495.5/517408.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 224 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.726839] [前沿搜索] BFS成功=0.64ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=3.514
+[20:20:47.754098] [LASER] ✓ 已接收完整扫描 (第32组，共250点)
+[20:20:47.814535] [Timing] step=7 scan=0.13ms | slam_update=27.03ms | exit_check=0.00ms | frontier_update=0.67ms | path_planning=0.45ms | target_selection=0.02ms | path_prepare=0.62ms | visualize=52.74ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=115.46ms
+[20:20:47.839088] [ICPSlam][Mem] RSS(cur/peak): 495.6/517424.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 224 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.839929] [前沿搜索] BFS成功=0.71ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=3.814
+[20:20:47.866542] [LASER] ✓ 已接收完整扫描 (第33组，共250点)
+[20:20:47.924451] [Timing] step=8 scan=0.13ms | slam_update=24.50ms | exit_check=0.00ms | frontier_update=0.73ms | path_planning=0.48ms | target_selection=0.02ms | path_prepare=0.53ms | visualize=49.91ms | motion_update=32.85ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=109.83ms
+[20:20:47.948927] [ICPSlam][Mem] RSS(cur/peak): 495.6/517424.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 224 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:47.949714] [前沿搜索] BFS成功=0.70ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=4.114
+[20:20:47.975980] [LASER] ✓ 已接收完整扫描 (第34组，共250点)
+[20:20:48.031330] [LASER] ✓ 已接收完整扫描 (第35组，共250点)
+[20:20:48.036717] [Timing] step=9 scan=0.13ms | slam_update=24.37ms | exit_check=0.00ms | frontier_update=0.72ms | path_planning=0.47ms | target_selection=0.02ms | path_prepare=0.57ms | visualize=52.10ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.18ms
+[20:20:48.062520] [ICPSlam][Mem] RSS(cur/peak): 500.5/522544.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 225 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.063316] [前沿搜索] BFS成功=0.64ms, 找到目标=(115, 125)
+[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.36 gap=0.65
+[DWA] v=0.03 w=0.05 cost=4.414
+[20:20:48.145792] [Timing] step=10 scan=0.13ms | slam_update=25.78ms | exit_check=0.00ms | frontier_update=0.66ms | path_planning=0.47ms | target_selection=0.02ms | path_prepare=0.60ms | visualize=48.07ms | motion_update=32.61ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=109.02ms
+[20:20:48.170488] [ICPSlam][Mem] RSS(cur/peak): 505.7/527792.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 225 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.171268] [前沿搜索] BFS成功=0.70ms, 找到目标=(115, 125)
+[DWA] v=0.03 w=0.05 cost=4.714
+[20:20:48.196285] [LASER] ✓ 已接收完整扫描 (第36组，共250点)
+[20:20:48.241167] [LASER] ✓ 已接收完整扫描 (第37组，共250点)
+[20:20:48.252662] [Timing] step=11 scan=0.13ms | slam_update=24.61ms | exit_check=0.00ms | frontier_update=0.72ms | path_planning=0.52ms | target_selection=0.02ms | path_prepare=0.38ms | visualize=47.19ms | motion_update=32.62ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=106.82ms
+[20:20:48.280007] [ICPSlam][Mem] RSS(cur/peak): 505.7/527792.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 228 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.280854] [前沿搜索] BFS成功=0.76ms, 找到目标=(115, 126)
+[20:20:48.281427] [目标] 自由格: (115, 126) 邻接未知: (114, 127) (忽略A*:否) 连续相同=0
+[DWA] v=0.03 w=0.05 cost=4.990
+[20:20:48.349212] [LASER] ✓ 已接收完整扫描 (第38组，共250点)
+[20:20:48.364462] [Timing] step=12 scan=0.13ms | slam_update=27.28ms | exit_check=0.00ms | frontier_update=0.78ms | path_planning=0.54ms | target_selection=0.03ms | path_prepare=0.58ms | visualize=48.75ms | motion_update=33.06ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=111.77ms
+[20:20:48.390967] [ICPSlam][Mem] RSS(cur/peak): 505.8/527872.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 229 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.391884] [前沿搜索] BFS成功=0.76ms, 找到目标=(115, 126)
+[DWA] v=0.03 w=0.05 cost=5.288
+[20:20:48.466256] [LASER] ✓ 已接收完整扫描 (第39组，共250点)
+[20:20:48.480347] [Timing] step=13 scan=0.14ms | slam_update=26.50ms | exit_check=0.00ms | frontier_update=0.77ms | path_planning=0.53ms | target_selection=0.02ms | path_prepare=0.53ms | visualize=54.05ms | motion_update=32.72ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=115.85ms
+[20:20:48.504746] [ICPSlam][Mem] RSS(cur/peak): 505.9/528000.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 229 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.505640] [前沿搜索] BFS成功=0.80ms, 找到目标=(115, 126)
+[DWA] v=0.03 w=0.05 cost=5.586
+[20:20:48.555299] [LASER] ✓ 已接收完整扫描 (第40组，共250点)
+[20:20:48.590595] [DWA] step=15 v=0.03 w=0.05
+[20:20:48.590645] [Timing] step=14 scan=0.13ms | slam_update=24.29ms | exit_check=0.00ms | frontier_update=0.82ms | path_planning=0.54ms | target_selection=0.02ms | path_prepare=0.34ms | visualize=50.34ms | motion_update=33.06ms | stuck_recovery=0.05ms | exit_check_post=0.00ms | loop_total=110.21ms
+[20:20:48.617645] [ICPSlam][Mem] RSS(cur/peak): 506.0/528032.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 230 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.618568] [前沿搜索] BFS成功=0.81ms, 找到目标=(115, 126)
+[DWA] v=0.03 w=0.05 cost=5.884
+[20:20:48.646573] [LASER] ✓ 已接收完整扫描 (第41组，共250点)
+[20:20:48.705036] [Timing] step=15 scan=0.14ms | slam_update=26.96ms | exit_check=0.00ms | frontier_update=0.83ms | path_planning=0.58ms | target_selection=0.02ms | path_prepare=0.37ms | visualize=52.32ms | motion_update=32.52ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=114.37ms
+[20:20:48.732013] [ICPSlam][Mem] RSS(cur/peak): 506.1/528192.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 234 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.733628] [前沿搜索] BFS成功=1.55ms, 找到目标=(113, 131)
+[20:20:48.734508] [目标] 自由格: (113, 131) 邻接未知: (112, 132) (忽略A*:否) 连续相同=0
+[DWA] v=0.03 w=0.05 cost=6.270
+[20:20:48.766237] [LASER] ✓ 已接收完整扫描 (第42组，共250点)
+[20:20:48.817905] [Timing] step=16 scan=0.13ms | slam_update=26.86ms | exit_check=0.00ms | frontier_update=1.57ms | path_planning=0.84ms | target_selection=0.03ms | path_prepare=0.29ms | visualize=49.53ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.80ms
+[20:20:48.845810] [ICPSlam][Mem] RSS(cur/peak): 506.1/528192.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 236 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.847581] [前沿搜索] BFS成功=1.61ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=6.577
+[20:20:48.875441] [LASER] ✓ 已接收完整扫描 (第43组，共250点)
+[20:20:48.934904] [Timing] step=17 scan=0.13ms | slam_update=27.88ms | exit_check=0.00ms | frontier_update=1.63ms | path_planning=0.88ms | target_selection=0.02ms | path_prepare=0.30ms | visualize=52.31ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=116.92ms
+[20:20:48.962639] [ICPSlam][Mem] RSS(cur/peak): 506.2/528272.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 237 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:48.964413] [前沿搜索] BFS成功=1.60ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=6.880
+[20:20:48.992195] [LASER] ✓ 已接收完整扫描 (第44组，共250点)
+[20:20:49.052177] [Timing] step=18 scan=0.14ms | slam_update=27.71ms | exit_check=0.00ms | frontier_update=1.62ms | path_planning=0.85ms | target_selection=0.02ms | path_prepare=0.58ms | visualize=53.34ms | motion_update=32.32ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=117.20ms
+[20:20:49.079447] [ICPSlam][Mem] RSS(cur/peak): 506.2/528336.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 240 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.081166] [前沿搜索] BFS成功=1.54ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=7.178
+[20:20:49.107165] [LASER] ✓ 已接收完整扫描 (第45组，共250点)
+[20:20:49.156618] [LASER] ✓ 已接收完整扫描 (第46组，共250点)
+[20:20:49.166728] [Timing] step=19 scan=0.13ms | slam_update=27.27ms | exit_check=0.00ms | frontier_update=1.56ms | path_planning=0.78ms | target_selection=0.02ms | path_prepare=0.35ms | visualize=51.19ms | motion_update=32.57ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=114.47ms
+[20:20:49.191599] [ICPSlam][Mem] RSS(cur/peak): 537.7/560608.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 240 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.193272] [前沿搜索] BFS成功=1.52ms, 找到目标=(113, 131)
+[20:20:49.194097] [目标] 自由格: (113, 131) 邻接未知: (112, 132) (忽略A*:否) 连续相同=4
+[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.35 gap=0.62
+[DWA] v=0.03 w=0.05 cost=7.476
+[20:20:49.261151] [LASER] ✓ 已接收完整扫描 (第47组，共250点)
+[20:20:49.276679] [CTRL] step=20 v=0.03 w=0.05 d_trans=0.000 d_rot=0.000
+[20:20:49.276723] [Timing] step=20 scan=0.14ms | slam_update=24.85ms | exit_check=0.00ms | frontier_update=1.54ms | path_planning=0.79ms | target_selection=0.03ms | path_prepare=0.34ms | visualize=48.48ms | motion_update=33.07ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=109.96ms
+[20:20:49.303027] [ICPSlam][Mem] RSS(cur/peak): 548.0/570960.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 241 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.304574] [前沿搜索] BFS成功=1.49ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=7.774
+[20:20:49.365369] [LASER] ✓ 已接收完整扫描 (第48组，共250点)
+[20:20:49.385493] [Timing] step=21 scan=0.12ms | slam_update=26.22ms | exit_check=0.00ms | frontier_update=1.51ms | path_planning=0.85ms | target_selection=0.02ms | path_prepare=0.25ms | visualize=46.24ms | motion_update=33.06ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=108.72ms
+[20:20:49.408986] [ICPSlam][Mem] RSS(cur/peak): 553.0/570960.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 241 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.410635] [前沿搜索] BFS成功=1.55ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=8.072
+[20:20:49.468820] [LASER] ✓ 已接收完整扫描 (第49组，共250点)
+[20:20:49.500561] [Timing] step=22 scan=0.13ms | slam_update=23.42ms | exit_check=0.00ms | frontier_update=1.57ms | path_planning=0.78ms | target_selection=0.02ms | path_prepare=0.37ms | visualize=55.00ms | motion_update=33.13ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=115.00ms
+[20:20:49.524858] [ICPSlam][Mem] RSS(cur/peak): 574.6/598368.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 241 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.526459] [前沿搜索] BFS成功=1.47ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=8.370
+[20:20:49.554884] [LASER] ✓ 已接收完整扫描 (第50组，共250点)
+[20:20:49.613272] [Timing] step=23 scan=0.14ms | slam_update=24.24ms | exit_check=0.00ms | frontier_update=1.49ms | path_planning=0.79ms | target_selection=0.02ms | path_prepare=0.35ms | visualize=51.87ms | motion_update=33.12ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=112.66ms
+[20:20:49.640487] [ICPSlam][Mem] RSS(cur/peak): 589.8/613824.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 242 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.642159] [前沿搜索] BFS成功=1.62ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=8.668
+[20:20:49.669379] [LASER] ✓ 已接收完整扫描 (第51组，共250点)
+[20:20:49.731871] [Timing] step=24 scan=0.13ms | slam_update=27.10ms | exit_check=0.00ms | frontier_update=1.63ms | path_planning=0.85ms | target_selection=0.02ms | path_prepare=0.27ms | visualize=55.02ms | motion_update=33.05ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=118.56ms
+[20:20:49.758363] [ICPSlam][Mem] RSS(cur/peak): 590.2/614064.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 243 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.760162] [前沿搜索] BFS成功=1.63ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=8.968
+[20:20:49.788117] [LASER] ✓ 已接收完整扫描 (第52组，共250点)
+[20:20:49.846710] [Timing] step=25 scan=0.15ms | slam_update=26.48ms | exit_check=0.00ms | frontier_update=1.65ms | path_planning=0.89ms | target_selection=0.02ms | path_prepare=0.61ms | visualize=51.27ms | motion_update=33.07ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=114.80ms
+[20:20:49.874690] [ICPSlam][Mem] RSS(cur/peak): 590.3/614336.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 244 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.876389] [前沿搜索] BFS成功=1.59ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=9.268
+[20:20:49.904473] [LASER] ✓ 已接收完整扫描 (第53组，共250点)
+[20:20:49.960078] [Timing] step=26 scan=0.14ms | slam_update=27.92ms | exit_check=0.00ms | frontier_update=1.61ms | path_planning=0.86ms | target_selection=0.02ms | path_prepare=0.65ms | visualize=48.36ms | motion_update=33.05ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=113.33ms
+[20:20:49.984333] [ICPSlam][Mem] RSS(cur/peak): 591.6/614336.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 244 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:49.986111] [前沿搜索] BFS成功=1.64ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=9.568
+[20:20:50.007913] [LASER] ✓ 已接收完整扫描 (第54组，共250点)
+[20:20:50.056130] [LASER] ✓ 已接收完整扫描 (第55组，共250点)
+[20:20:50.073907] [Timing] step=27 scan=0.14ms | slam_update=24.23ms | exit_check=0.00ms | frontier_update=1.66ms | path_planning=0.88ms | target_selection=0.02ms | path_prepare=0.34ms | visualize=53.68ms | motion_update=32.16ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=113.78ms
+[20:20:50.101134] [ICPSlam][Mem] RSS(cur/peak): 591.7/615776.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 245 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.102666] [前沿搜索] BFS成功=1.47ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=9.868
+[20:20:50.162356] [LASER] ✓ 已接收完整扫描 (第56组，共250点)
+[20:20:50.185396] [Timing] step=28 scan=0.15ms | slam_update=27.10ms | exit_check=0.00ms | frontier_update=1.49ms | path_planning=0.82ms | target_selection=0.02ms | path_prepare=0.26ms | visualize=48.08ms | motion_update=33.06ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=111.42ms
+[20:20:50.209816] [ICPSlam][Mem] RSS(cur/peak): 606.5/631040.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 245 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.211367] [前沿搜索] BFS成功=1.50ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=10.168
+[20:20:50.281757] [LASER] ✓ 已接收完整扫描 (第57组，共250点)
+[20:20:50.294642] [DWA] step=30 v=0.03 w=0.05
+[20:20:50.294711] [Timing] step=29 scan=0.14ms | slam_update=24.29ms | exit_check=0.00ms | frontier_update=1.51ms | path_planning=0.82ms | target_selection=0.02ms | path_prepare=0.55ms | visualize=48.42ms | motion_update=32.83ms | stuck_recovery=0.06ms | exit_check_post=0.00ms | loop_total=109.27ms
+[20:20:50.319350] [ICPSlam][Mem] RSS(cur/peak): 623.8/648816.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 245 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.320972] [前沿搜索] BFS成功=1.54ms, 找到目标=(113, 131)
+[20:20:50.321858] [动态前瞻] 最近点索引=0/14 前瞻步数=14 目标索引=14
+[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.35 gap=0.62
+[DWA] v=0.03 w=0.05 cost=10.468
+[20:20:50.356272] [LASER] ✓ 已接收完整扫描 (第58组，共250点)
+[20:20:50.408276] [Timing] step=30 scan=0.13ms | slam_update=24.56ms | exit_check=0.00ms | frontier_update=1.56ms | path_planning=0.85ms | target_selection=0.03ms | path_prepare=0.63ms | visualize=52.37ms | motion_update=32.75ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=113.51ms
+[20:20:50.433318] [ICPSlam][Mem] RSS(cur/peak): 623.9/648848.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 245 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.435050] [前沿搜索] BFS成功=1.60ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=10.768
+[20:20:50.464096] [LASER] ✓ 已接收完整扫描 (第59组，共250点)
+[20:20:50.520788] [Timing] step=31 scan=0.15ms | slam_update=24.97ms | exit_check=0.00ms | frontier_update=1.62ms | path_planning=0.84ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=50.78ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.43ms
+[20:20:50.544854] [ICPSlam][Mem] RSS(cur/peak): 623.9/648848.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 245 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.546480] [前沿搜索] BFS成功=1.57ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=11.068
+[20:20:50.579523] [LASER] ✓ 已接收完整扫描 (第60组，共250点)
+[20:20:50.634060] [Timing] step=32 scan=0.12ms | slam_update=23.94ms | exit_check=0.00ms | frontier_update=1.59ms | path_planning=0.82ms | target_selection=0.02ms | path_prepare=0.25ms | visualize=52.94ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=113.19ms
+[20:20:50.661409] [ICPSlam][Mem] RSS(cur/peak): 624.0/648864.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 246 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.663063] [前沿搜索] BFS成功=1.60ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=11.368
+[20:20:50.691871] [LASER] ✓ 已接收完整扫描 (第61组，共250点)
+[20:20:50.753239] [Timing] step=33 scan=0.14ms | slam_update=27.21ms | exit_check=0.00ms | frontier_update=1.61ms | path_planning=0.91ms | target_selection=0.02ms | path_prepare=0.53ms | visualize=55.09ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=119.09ms
+[20:20:50.780765] [ICPSlam][Mem] RSS(cur/peak): 624.0/648944.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 247 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.782511] [前沿搜索] BFS成功=1.64ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=11.668
+[20:20:50.808654] [LASER] ✓ 已接收完整扫描 (第62组，共250点)
+[20:20:50.865984] [LASER] ✓ 已接收完整扫描 (第63组，共250点)
+[20:20:50.867799] [Timing] step=34 scan=0.15ms | slam_update=27.42ms | exit_check=0.00ms | frontier_update=1.66ms | path_planning=0.84ms | target_selection=0.02ms | path_prepare=0.37ms | visualize=50.88ms | motion_update=32.41ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=114.49ms
+[20:20:50.892187] [ICPSlam][Mem] RSS(cur/peak): 624.0/648992.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 247 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:50.893790] [前沿搜索] BFS成功=1.45ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=11.968
+[20:20:50.980053] [Timing] step=35 scan=0.15ms | slam_update=24.36ms | exit_check=0.00ms | frontier_update=1.47ms | path_planning=0.79ms | target_selection=0.02ms | path_prepare=0.61ms | visualize=52.09ms | motion_update=32.06ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.21ms
+[20:20:51.004613] [ICPSlam][Mem] RSS(cur/peak): 624.0/648992.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 247 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.006317] [前沿搜索] BFS成功=1.62ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=12.268
+[20:20:51.032949] [LASER] ✓ 已接收完整扫描 (第64组，共250点)
+[20:20:51.076637] [LASER] ✓ 已接收完整扫描 (第65组，共250点)
+[20:20:51.089122] [Timing] step=36 scan=0.15ms | slam_update=24.45ms | exit_check=0.00ms | frontier_update=1.64ms | path_planning=0.87ms | target_selection=0.02ms | path_prepare=0.42ms | visualize=48.73ms | motion_update=32.09ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=109.02ms
+[20:20:51.115801] [ICPSlam][Mem] RSS(cur/peak): 624.1/648992.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 248 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.117385] [前沿搜索] BFS成功=1.50ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=12.568
+[20:20:51.196312] [LASER] ✓ 已接收完整扫描 (第66组，共250点)
+[20:20:51.202510] [Timing] step=37 scan=0.12ms | slam_update=26.61ms | exit_check=0.00ms | frontier_update=1.52ms | path_planning=0.83ms | target_selection=0.02ms | path_prepare=0.40ms | visualize=51.25ms | motion_update=32.01ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=113.34ms
+[20:20:51.226188] [ICPSlam][Mem] RSS(cur/peak): 624.1/649040.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 248 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.227816] [前沿搜索] BFS成功=1.46ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=12.868
+[20:20:51.283139] [LASER] ✓ 已接收完整扫描 (第67组，共250点)
+[20:20:51.315087] [Timing] step=38 scan=0.14ms | slam_update=23.67ms | exit_check=0.00ms | frontier_update=1.48ms | path_planning=0.74ms | target_selection=0.02ms | path_prepare=0.34ms | visualize=52.70ms | motion_update=32.89ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=112.54ms
+[20:20:51.345064] [ICPSlam][Mem] RSS(cur/peak): 629.2/654176.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.346758] [前沿搜索] BFS成功=1.64ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=13.168
+[20:20:51.377913] [LASER] ✓ 已接收完整扫描 (第68组，共250点)
+[20:20:51.436172] [Timing] step=39 scan=0.13ms | slam_update=29.87ms | exit_check=0.00ms | frontier_update=1.66ms | path_planning=0.86ms | target_selection=0.02ms | path_prepare=0.25ms | visualize=54.74ms | motion_update=33.03ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=121.05ms
+[20:20:51.459968] [ICPSlam][Mem] RSS(cur/peak): 629.3/654368.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.461472] [前沿搜索] BFS成功=1.45ms, 找到目标=(113, 131)
+[20:20:51.462296] [目标] 自由格: (113, 131) 邻接未知: (112, 132) (忽略A*:否) 连续相同=24
+[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.36 gap=0.65
+[DWA] v=0.03 w=0.05 cost=13.468
+[20:20:51.495472] [LASER] ✓ 已接收完整扫描 (第69组，共250点)
+[20:20:51.551181] [CTRL] step=40 v=0.03 w=0.05 d_trans=0.000 d_rot=0.000
+[20:20:51.551242] [Timing] step=40 scan=0.13ms | slam_update=23.69ms | exit_check=0.00ms | frontier_update=1.47ms | path_planning=0.79ms | target_selection=0.03ms | path_prepare=0.75ms | visualize=54.34ms | motion_update=33.11ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=115.03ms
+[20:20:51.576510] [ICPSlam][Mem] RSS(cur/peak): 634.2/659456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.578064] [前沿搜索] BFS成功=1.46ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=13.768
+[20:20:51.606940] [LASER] ✓ 已接收完整扫描 (第70组，共250点)
+[20:20:51.663250] [Timing] step=41 scan=0.14ms | slam_update=25.21ms | exit_check=0.00ms | frontier_update=1.48ms | path_planning=0.81ms | target_selection=0.02ms | path_prepare=0.69ms | visualize=50.43ms | motion_update=32.59ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=111.97ms
+[20:20:51.688065] [ICPSlam][Mem] RSS(cur/peak): 634.2/659456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.689886] [前沿搜索] BFS成功=1.67ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=14.068
+[20:20:51.718227] [LASER] ✓ 已接收完整扫描 (第71组，共250点)
+[20:20:51.780091] [Timing] step=42 scan=0.15ms | slam_update=24.77ms | exit_check=0.00ms | frontier_update=1.69ms | path_planning=0.84ms | target_selection=0.02ms | path_prepare=0.58ms | visualize=55.74ms | motion_update=32.33ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=116.77ms
+[20:20:51.804661] [ICPSlam][Mem] RSS(cur/peak): 634.2/659456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.806598] [前沿搜索] BFS成功=1.61ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=14.368
+[20:20:51.833311] [LASER] ✓ 已接收完整扫描 (第72组，共250点)
+[20:20:51.872074] [LASER] ✓ 已接收完整扫描 (第73组，共250点)
+[20:20:51.894877] [Timing] step=43 scan=0.14ms | slam_update=24.73ms | exit_check=0.00ms | frontier_update=1.64ms | path_planning=0.83ms | target_selection=0.02ms | path_prepare=0.32ms | visualize=53.18ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=114.73ms
+[20:20:51.918705] [ICPSlam][Mem] RSS(cur/peak): 634.2/659456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:51.920247] [前沿搜索] BFS成功=1.49ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=14.668
+[20:20:51.990084] [LASER] ✓ 已接收完整扫描 (第74组，共250点)
+[20:20:52.003997] [DWA] step=45 v=0.03 w=0.05
+[20:20:52.004079] [Timing] step=44 scan=0.15ms | slam_update=23.67ms | exit_check=0.00ms | frontier_update=1.51ms | path_planning=0.83ms | target_selection=0.02ms | path_prepare=0.25ms | visualize=49.08ms | motion_update=33.08ms | stuck_recovery=0.08ms | exit_check_post=0.00ms | loop_total=109.15ms
+[20:20:52.028978] [ICPSlam][Mem] RSS(cur/peak): 634.2/659456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.030675] [前沿搜索] BFS成功=1.54ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=14.968
+[20:20:52.085268] [LASER] ✓ 已接收完整扫描 (第75组，共250点)
+[20:20:52.116993] [Timing] step=45 scan=0.15ms | slam_update=24.90ms | exit_check=0.00ms | frontier_update=1.56ms | path_planning=0.77ms | target_selection=0.02ms | path_prepare=0.31ms | visualize=51.52ms | motion_update=33.07ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.89ms
+[20:20:52.143554] [ICPSlam][Mem] RSS(cur/peak): 634.2/659456.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.145262] [前沿搜索] BFS成功=1.55ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=15.268
+[20:20:52.201464] [LASER] ✓ 已接收完整扫描 (第76组，共250点)
+[20:20:52.237364] [Timing] step=46 scan=0.16ms | slam_update=26.50ms | exit_check=0.00ms | frontier_update=1.58ms | path_planning=0.82ms | target_selection=0.02ms | path_prepare=0.59ms | visualize=56.79ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=120.28ms
+[20:20:52.261983] [ICPSlam][Mem] RSS(cur/peak): 634.3/659536.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 249 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.263563] [前沿搜索] BFS成功=1.52ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=15.568
+[20:20:52.291628] [LASER] ✓ 已接收完整扫描 (第77组，共250点)
+[20:20:52.349918] [Timing] step=47 scan=0.15ms | slam_update=24.48ms | exit_check=0.00ms | frontier_update=1.54ms | path_planning=0.81ms | target_selection=0.02ms | path_prepare=0.26ms | visualize=52.26ms | motion_update=32.54ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.49ms
+[20:20:52.376866] [ICPSlam][Mem] RSS(cur/peak): 634.3/659536.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 250 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.378426] [前沿搜索] BFS成功=1.50ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=15.868
+[20:20:52.406687] [LASER] ✓ 已接收完整扫描 (第78组，共250点)
+[20:20:52.465890] [Timing] step=48 scan=0.16ms | slam_update=26.81ms | exit_check=0.00ms | frontier_update=1.51ms | path_planning=0.83ms | target_selection=0.02ms | path_prepare=0.25ms | visualize=52.75ms | motion_update=33.10ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=115.90ms
+[20:20:52.490811] [ICPSlam][Mem] RSS(cur/peak): 634.4/659568.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 250 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.492539] [前沿搜索] BFS成功=1.59ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=16.168
+[20:20:52.520617] [LASER] ✓ 已接收完整扫描 (第79组，共250点)
+[20:20:52.576469] [Timing] step=49 scan=0.15ms | slam_update=24.85ms | exit_check=0.00ms | frontier_update=1.61ms | path_planning=0.85ms | target_selection=0.02ms | path_prepare=0.59ms | visualize=49.43ms | motion_update=32.30ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=110.52ms
+[20:20:52.580862] [LASER] ✓ 已接收完整扫描 (第80组，共250点)
+[20:20:52.603553] [ICPSlam][Mem] RSS(cur/peak): 634.5/659568.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 251 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.605221] [前沿搜索] BFS成功=1.51ms, 找到目标=(113, 131)
+[DW] v:[0.03,0.04] w:[-0.38,0.38] cap=0.36 gap=0.65
+[DWA] v=0.03 w=0.05 cost=16.468
+[20:20:52.692702] [Timing] step=50 scan=0.13ms | slam_update=27.07ms | exit_check=0.00ms | frontier_update=1.57ms | path_planning=0.76ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=52.49ms | motion_update=33.08ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=116.16ms
+[20:20:52.717374] [ICPSlam][Mem] RSS(cur/peak): 634.5/659728.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 251 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.719112] [前沿搜索] BFS成功=1.58ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=16.768
+[20:20:52.747295] [LASER] ✓ 已接收完整扫描 (第81组，共250点)
+[20:20:52.786123] [LASER] ✓ 已接收完整扫描 (第82组，共250点)
+[20:20:52.802585] [Timing] step=51 scan=0.16ms | slam_update=24.63ms | exit_check=0.00ms | frontier_update=1.59ms | path_planning=0.83ms | target_selection=0.02ms | path_prepare=0.33ms | visualize=48.90ms | motion_update=32.63ms | stuck_recovery=0.00ms | exit_check_post=0.00ms | loop_total=109.83ms
+[20:20:52.826279] [ICPSlam][Mem] RSS(cur/peak): 634.5/659728.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 251 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.827864] [前沿搜索] BFS成功=1.50ms, 找到目标=(113, 131)
+[DWA] v=0.03 w=0.05 cost=17.068
+[20:20:52.891916] [LASER] ✓ 已接收完整扫描 (第83组，共250点)
+[20:20:52.914971] [Timing] step=52 scan=0.12ms | slam_update=23.63ms | exit_check=0.00ms | frontier_update=1.52ms | path_planning=0.81ms | target_selection=0.02ms | path_prepare=0.53ms | visualize=52.16ms | motion_update=33.09ms | stuck_recovery=0.01ms | exit_check_post=0.00ms | loop_total=112.33ms
+[20:20:52.941187] [ICPSlam][Mem] RSS(cur/peak): 634.6/659728.0 MB | MPS curr/driver: 0.0/66.2 MB | map_points: 252 (~0.0 MB) | occupancy: ~0.9 MB | ICP iters: 0
+[20:20:52.943358] [前沿搜索] BFS成功=2.09ms, 找到目标=(112, 135)
+[20:20:52.944426] [目标] 自由格: (112, 135) 邻接未知: (111, 136) (忽略A*:否) 连续相同=0
+[DWA] v=0.03 w=0.00 cost=17.336
+^CTraceback (most recent call last):
+  File "/Users/nemoyu/Desktop/小学期/gpt_code_gpu/main.py", line 2944, in <module>
+    main()
+  File "/Users/nemoyu/Desktop/小学期/gpt_code_gpu/main.py", line 2233, in main
+    viz.update(
+  File "/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py", line 104, in update
+    self._render_update(
+  File "/Users/nemoyu/Desktop/小学期/gpt_code_gpu/visualizer.py", line 325, in _render_update
+    plt.pause(VISUALIZATION_UPDATE_TIME)  
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/SmallSemester_Slim/lib/python3.12/site-packages/matplotlib/pyplot.py", line 757, in pause
+    canvas.start_event_loop(interval)
+  File "/opt/anaconda3/envs/SmallSemester_Slim/lib/python3.12/site-packages/matplotlib/backends/backend_macosx.py", line 112, in start_event_loop
+    with _allow_interrupt_macos():
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/SmallSemester_Slim/lib/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/opt/anaconda3/envs/SmallSemester_Slim/lib/python3.12/site-packages/matplotlib/backend_bases.py", line 1660, in _allow_interrupt
+    old_sigint_handler(*handler_args)
+KeyboardInterrupt
+[20:20:53.009124] [LASER] ✓ 已接收完整扫描 (第84组，共250点)

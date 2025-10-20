@@ -29,7 +29,7 @@ class Visualizer:
         self.ax.set_xlim(min_x, max_x)
         self.ax.set_ylim(min_y, max_y)
         self.ax.set_aspect('equal', adjustable='box')
-        self.ax.set_title("SLAM Exploration - 初始化中...")
+        self.ax.set_title("SLAM Exploration - Initializing...")
         self.ax.grid(True, alpha=0.3)
         # 立即显示窗口
         plt.show(block=False)
@@ -151,16 +151,8 @@ class Visualizer:
             extent = (min_x, max_x, min_y, max_y)
             self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
             if unsafe_mask is not None:
-                try:
-                    overlay = np.zeros((h, w), dtype=float)
-                    overlay[np.logical_and(unsafe_mask, occupancy != 1)] = 1.0
-                    if np.any(overlay > 0):
-                        self.ax.imshow(overlay, origin='lower', cmap='Reds', extent=extent,
-                                        vmin=0.0, vmax=1.0, alpha=0.22)
-                        self.ax.add_patch(Patch(facecolor=(1.0, 0.4, 0.4, 0.22), edgecolor='none',
-                                                label='安全缓冲区'))
-                except Exception:
-                    pass
+                # 保留遮挡逻辑入口，但实际绘制关闭以避免红色安全区覆盖视图
+                pass
             known_mask = occupancy != -1
             if np.any(known_mask):
                 ys, xs = np.nonzero(known_mask)
@@ -321,16 +313,9 @@ class Visualizer:
                 self.ax.plot([x, hx], [y, hy], color='c', linewidth=1.2)
             except Exception:
                 pass
-        # 安全半径圈显示
-        if safety_radius is not None and safety_radius > 0:
-            try:
-                safe_circle = Circle((x, y), safety_radius, edgecolor='m', facecolor='none',
-                                      linewidth=1.0, alpha=0.6, linestyle='--', label='Safety Envelope')
-                self.ax.add_artist(safe_circle)
-            except Exception:
-                pass
+        # 安全半径圈显示已停用（避免靠墙时额外圈层遮挡）
         # 图例和标题
-        control_status = "🚗 自动控制中" if self.auto_control_enabled else "📍 仅建图模式 (按's'启动)"
+        control_status = "🚗 Auto Control Active" if self.auto_control_enabled else "📍 Mapping Only (press 's' to start)"
         self.ax.set_title(f"SLAM Exploration - {control_status}")
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.set_xlim(view_min_x, view_max_x)
