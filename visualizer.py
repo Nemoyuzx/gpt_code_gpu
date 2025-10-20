@@ -48,6 +48,9 @@ class Visualizer:
         self.obstacle_search_region = None
         self.bfs_debug_points = None
         self.bfs_debug_color = 'cyan'
+        # 网格系统
+        self.grid_system = None
+        self.target_cell_id = None
 
     def _on_key_press(self, event):
         """
@@ -96,6 +99,11 @@ class Visualizer:
             self.force_stop_requested = False
             return True
         return False
+    
+    def set_grid_system(self, grid_system, target_cell_id):
+        """设置网格系统用于可视化"""
+        self.grid_system = grid_system
+        self.target_cell_id = target_cell_id
 
     def update(self, robot_pose, scan, frontiers=None, target=None, path=None, occupancy=None,
                predicted_traj=None, robot_radius=None, safety_radius=None,
@@ -289,6 +297,60 @@ class Visualizer:
                     self.ax.plot(pts_arr[:, 0], pts_arr[:, 1], **style)
                 except Exception:
                     continue
+        
+        # 绘制网格系统
+        if self.grid_system is not None:
+            for cell in self.grid_system.cells:
+                min_x, min_y, max_x, max_y = cell.get_bounds()
+                # 根据单元格类型选择颜色和样式
+                if cell.id == self.target_cell_id:
+                    # 目标单元格：绿色粗边框，实线
+                    edgecolor = 'lime'
+                    linewidth = 2.5
+                    alpha = 0.9
+                    linestyle = '-'  # 实线
+                elif cell.id == self.grid_system.get_center_cell().id:
+                    # 起始单元格（中心）：青色边框，实线
+                    edgecolor = 'cyan'
+                    linewidth = 2.0
+                    alpha = 0.8
+                    linestyle = '-'  # 实线
+                else:
+                    # 普通单元格：灰色细边框，虚线
+                    edgecolor = 'gray'
+                    linewidth = 0.8
+                    alpha = 0.5
+                    linestyle = '--'  # 虚线
+                
+                rect = Rectangle(
+                    (min_x, min_y),
+                    max_x - min_x,
+                    max_y - min_y,
+                    linewidth=linewidth,
+                    edgecolor=edgecolor,
+                    facecolor='none',
+                    alpha=alpha,
+                    linestyle=linestyle
+                )
+                self.ax.add_patch(rect)
+                
+                # 在单元格中心显示序号
+                text_color = 'lime' if cell.id == self.target_cell_id else 'cyan' if cell.id == self.grid_system.get_center_cell().id else 'lightgray'
+                text_alpha = 1.0 if cell.id == self.target_cell_id or cell.id == self.grid_system.get_center_cell().id else 0.7
+                text_size = 9 if cell.id == self.target_cell_id or cell.id == self.grid_system.get_center_cell().id else 7
+                self.ax.text(
+                    cell.center_x,
+                    cell.center_y,
+                    str(cell.id),
+                    fontsize=text_size,
+                    ha='center',
+                    va='center',
+                    color=text_color,
+                    alpha=text_alpha,
+                    weight='bold' if cell.id == self.target_cell_id or cell.id == self.grid_system.get_center_cell().id else 'normal',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.3, edgecolor='none') if cell.id == self.target_cell_id or cell.id == self.grid_system.get_center_cell().id else None
+                )
+        
         # 绘制机器人当前位置和朝向 (箭头表示朝向)
         arrow_length = 0.3
         self.ax.arrow(

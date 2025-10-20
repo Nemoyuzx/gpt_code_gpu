@@ -98,6 +98,9 @@ class ICPSlam:
         self.icp_consecutive_failures = 0
         self.icp_skip_frames = 0
         self.icp_last_status = "init"
+        
+        # 定位专用模式：探索完成后，只进行ICP定位，不更新地图
+        self.localize_only = False
             
     def _print_memory_usage(self, icp_iterations=None):
         """打印当前进程与设备的内存占用信息，可选附带本轮ICP迭代次数。"""
@@ -570,115 +573,117 @@ class ICPSlam:
             self._handle_icp_success()
 
         # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
-        rx = int((self.x - self.min_x) / self.resolution)
-        ry = int((self.y - self.min_y) / self.resolution)
-        offset_body_x, offset_body_y = self.lidar_mount_offset
-        cos_theta = math.cos(self.theta)
-        sin_theta = math.sin(self.theta)
-        sensor_x = self.x + offset_body_x * cos_theta - offset_body_y * sin_theta
-        sensor_y = self.y + offset_body_x * sin_theta + offset_body_y * cos_theta
-        sx_idx = int((sensor_x - self.min_x) / self.resolution)
-        sy_idx = int((sensor_y - self.min_y) / self.resolution)
-        far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
-        adjacent_diff_threshold = 2.0  # 与ICP部分一致或更宽松的阈值
-        new_points = []  # 本次扫描新增的障碍点（全局坐标）
-        max_range = self.get_max_range()
-        for i, dist in enumerate(scan):
-            should_skip_map_update = False
-            if dist < self.get_max_range() and dist <= far_threshold:
-                # 与相邻点差异的过滤（与上面类似逻辑）
-                if i > 0 and scan[i-1] < self.get_max_range() and scan[i-1] <= far_threshold:
-                    if abs(dist - scan[i-1]) > adjacent_diff_threshold:
-                        should_skip_map_update = True
-                if i < len(scan) - 1 and scan[i+1] < self.get_max_range() and scan[i+1] <= far_threshold:
-                    if abs(dist - scan[i+1]) > adjacent_diff_threshold:
-                        should_skip_map_update = True
-                if i == 0 and len(scan) > 1:
-                    last_dist = scan[-1]
-                    if last_dist < self.get_max_range() and last_dist <= far_threshold:
-                        if abs(dist - last_dist) > adjacent_diff_threshold:
+        # 如果设置了localize_only模式，则跳过地图更新，仅进行定位
+        if not self.localize_only:
+            rx = int((self.x - self.min_x) / self.resolution)
+            ry = int((self.y - self.min_y) / self.resolution)
+            offset_body_x, offset_body_y = self.lidar_mount_offset
+            cos_theta = math.cos(self.theta)
+            sin_theta = math.sin(self.theta)
+            sensor_x = self.x + offset_body_x * cos_theta - offset_body_y * sin_theta
+            sensor_y = self.y + offset_body_x * sin_theta + offset_body_y * cos_theta
+            sx_idx = int((sensor_x - self.min_x) / self.resolution)
+            sy_idx = int((sensor_y - self.min_y) / self.resolution)
+            far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
+            adjacent_diff_threshold = 2.0  # 与ICP部分一致或更宽松的阈值
+            new_points = []  # 本次扫描新增的障碍点（全局坐标）
+            max_range = self.get_max_range()
+            for i, dist in enumerate(scan):
+                should_skip_map_update = False
+                if dist < self.get_max_range() and dist <= far_threshold:
+                    # 与相邻点差异的过滤（与上面类似逻辑）
+                    if i > 0 and scan[i-1] < self.get_max_range() and scan[i-1] <= far_threshold:
+                        if abs(dist - scan[i-1]) > adjacent_diff_threshold:
                             should_skip_map_update = True
-                elif i == len(scan) - 1 and len(scan) > 1:
-                    first_dist = scan[0]
-                    if first_dist < self.get_max_range() and first_dist <= far_threshold:
-                        if abs(dist - first_dist) > adjacent_diff_threshold:
+                    if i < len(scan) - 1 and scan[i+1] < self.get_max_range() and scan[i+1] <= far_threshold:
+                        if abs(dist - scan[i+1]) > adjacent_diff_threshold:
                             should_skip_map_update = True
+                    if i == 0 and len(scan) > 1:
+                        last_dist = scan[-1]
+                        if last_dist < self.get_max_range() and last_dist <= far_threshold:
+                            if abs(dist - last_dist) > adjacent_diff_threshold:
+                                should_skip_map_update = True
+                    elif i == len(scan) - 1 and len(scan) > 1:
+                        first_dist = scan[0]
+                        if first_dist < self.get_max_range() and first_dist <= far_threshold:
+                            if abs(dist - first_dist) > adjacent_diff_threshold:
+                                should_skip_map_update = True
 
-            if should_skip_map_update:
-                # 跳过不可靠的测距，避免误清理遮挡后区域
-                continue
+                if should_skip_map_update:
+                    # 跳过不可靠的测距，避免误清理遮挡后区域
+                    continue
 
 
-            # 计算该激光束末端的全局坐标 (end_x, end_y)
-            if 'angles_np' in locals() and i < len(angles_np):
-                beam_angle = self.theta + angle_offset + angles_np[i]
-            else:
-                beam_angle = self.theta + angle_offset + math.radians(i)
-            beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))  # 归一化角度
-            hit_obstacle = dist < max_range and dist <= far_threshold and not math.isinf(dist)
-            effective_dist = dist if hit_obstacle else min(far_threshold, dist if dist < float('inf') else far_threshold)
-            end_x = sensor_x + effective_dist * math.cos(beam_angle)
-            end_y = sensor_y + effective_dist * math.sin(beam_angle)
-            # 将末端点转换为栅格地图索引
-            tx = int((end_x - self.min_x) / self.resolution);  ty = int((end_y - self.min_y) / self.resolution)
-            max_x_idx = self.occupancy.shape[1] - 1;          max_y_idx = self.occupancy.shape[0] - 1
-            if tx < 0: tx = 0
-            if tx > max_x_idx: tx = max_x_idx
-            if ty < 0: ty = 0
-            if ty > max_y_idx: ty = max_y_idx
-            # 确保机器人自身所在格也在范围内
-            if rx < 0: rx = 0
-            if rx > max_x_idx: rx = max_x_idx
-            if ry < 0: ry = 0
-            if ry > max_y_idx: ry = max_y_idx
-            if sx_idx < 0: sx_idx = 0
-            if sx_idx > max_x_idx: sx_idx = max_x_idx
-            if sy_idx < 0: sy_idx = 0
-            if sy_idx > max_y_idx: sy_idx = max_y_idx
-            # 获取射线经过的栅格路径
-            line = self._bresenham(sx_idx, sy_idx, tx, ty)
-            if hit_obstacle:
-                # 射线击中了障碍物（在范围内且未被过滤）
-                # 将路径上除最后一点外的格子标记为空闲
-                for cx, cy in line[:-1]:
-                    if self.occupancy[cy, cx] == 1:
-                        # 遇到已知障碍，停止向前清空，避免噪声导致墙体被抹除
-                        break
-                    if self.occupancy[cy, cx] == -1:
-                        self.occupancy[cy, cx] = 0
-                # 最后一个格子是障碍物
-                ox, oy = line[-1]
-                # 若该障碍格此前未标记过，则标记占据并记录点
-                if self.occupancy[oy, ox] != 1:
-                    self.occupancy[oy, ox] = 1
-                    new_point = [end_x, end_y]
-                    new_points.append(new_point)
-            else:
-                # 未命中障碍：仅在可靠距离内将未知标记为空闲，遇到已知障碍立即停止
-                for cx, cy in line:
-                    if self.occupancy[cy, cx] == 1:
-                        break
-                    if self.occupancy[cy, cx] == -1:
-                        self.occupancy[cy, cx] = 0
-        # 将本次新增点与内存中的最新地图合并，仅保留一份张量
-        if len(new_points) > 0:
-            new_pts_np = np.array(new_points, dtype=np.float32)
-            new_pts_tensor = self.to_tensor(new_pts_np)
-            if self.map_points_tensor is not None and self.map_points_tensor.numel() > 0:
-                self.map_points_tensor = torch.cat([self.map_points_tensor, new_pts_tensor], dim=0)
-            else:
-                self.map_points_tensor = new_pts_tensor
-            # 释放中间变量
-            del new_pts_np, new_pts_tensor
-            # 控制全局地图点云上限，避免无限增长导致内存持续上升
-            try:
-                if self.map_points_tensor.shape[0] > MAX_MAP_POINTS_GLOBAL:
-                    perm = torch.randperm(self.map_points_tensor.shape[0], device=self.device)[:MAX_MAP_POINTS_GLOBAL]
-                    self.map_points_tensor = self.map_points_tensor.index_select(0, perm)
-            except Exception:
-                pass
-        # 清理临时列表，尽快释放内存
-        new_points.clear()
+                # 计算该激光束末端的全局坐标 (end_x, end_y)
+                if 'angles_np' in locals() and i < len(angles_np):
+                    beam_angle = self.theta + angle_offset + angles_np[i]
+                else:
+                    beam_angle = self.theta + angle_offset + math.radians(i)
+                beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))  # 归一化角度
+                hit_obstacle = dist < max_range and dist <= far_threshold and not math.isinf(dist)
+                effective_dist = dist if hit_obstacle else min(far_threshold, dist if dist < float('inf') else far_threshold)
+                end_x = sensor_x + effective_dist * math.cos(beam_angle)
+                end_y = sensor_y + effective_dist * math.sin(beam_angle)
+                # 将末端点转换为栅格地图索引
+                tx = int((end_x - self.min_x) / self.resolution);  ty = int((end_y - self.min_y) / self.resolution)
+                max_x_idx = self.occupancy.shape[1] - 1;          max_y_idx = self.occupancy.shape[0] - 1
+                if tx < 0: tx = 0
+                if tx > max_x_idx: tx = max_x_idx
+                if ty < 0: ty = 0
+                if ty > max_y_idx: ty = max_y_idx
+                # 确保机器人自身所在格也在范围内
+                if rx < 0: rx = 0
+                if rx > max_x_idx: rx = max_x_idx
+                if ry < 0: ry = 0
+                if ry > max_y_idx: ry = max_y_idx
+                if sx_idx < 0: sx_idx = 0
+                if sx_idx > max_x_idx: sx_idx = max_x_idx
+                if sy_idx < 0: sy_idx = 0
+                if sy_idx > max_y_idx: sy_idx = max_y_idx
+                # 获取射线经过的栅格路径
+                line = self._bresenham(sx_idx, sy_idx, tx, ty)
+                if hit_obstacle:
+                    # 射线击中了障碍物（在范围内且未被过滤）
+                    # 将路径上除最后一点外的格子标记为空闲
+                    for cx, cy in line[:-1]:
+                        if self.occupancy[cy, cx] == 1:
+                            # 遇到已知障碍，停止向前清空，避免噪声导致墙体被抹除
+                            break
+                        if self.occupancy[cy, cx] == -1:
+                            self.occupancy[cy, cx] = 0
+                    # 最后一个格子是障碍物
+                    ox, oy = line[-1]
+                    # 若该障碍格此前未标记过，则标记占据并记录点
+                    if self.occupancy[oy, ox] != 1:
+                        self.occupancy[oy, ox] = 1
+                        new_point = [end_x, end_y]
+                        new_points.append(new_point)
+                else:
+                    # 未命中障碍：仅在可靠距离内将未知标记为空闲，遇到已知障碍立即停止
+                    for cx, cy in line:
+                        if self.occupancy[cy, cx] == 1:
+                            break
+                        if self.occupancy[cy, cx] == -1:
+                            self.occupancy[cy, cx] = 0
+            # 将本次新增点与内存中的最新地图合并，仅保留一份张量
+            if len(new_points) > 0:
+                new_pts_np = np.array(new_points, dtype=np.float32)
+                new_pts_tensor = self.to_tensor(new_pts_np)
+                if self.map_points_tensor is not None and self.map_points_tensor.numel() > 0:
+                    self.map_points_tensor = torch.cat([self.map_points_tensor, new_pts_tensor], dim=0)
+                else:
+                    self.map_points_tensor = new_pts_tensor
+                # 释放中间变量
+                del new_pts_np, new_pts_tensor
+                # 控制全局地图点云上限，避免无限增长导致内存持续上升
+                try:
+                    if self.map_points_tensor.shape[0] > MAX_MAP_POINTS_GLOBAL:
+                        perm = torch.randperm(self.map_points_tensor.shape[0], device=self.device)[:MAX_MAP_POINTS_GLOBAL]
+                        self.map_points_tensor = self.map_points_tensor.index_select(0, perm)
+                except Exception:
+                    pass
+                # 清理临时列表，尽快释放内存
+                new_points.clear()
 
         # 显式调用垃圾回收，释放Python对象占用的内存
         gc.collect()

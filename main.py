@@ -21,6 +21,81 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 
+# ==================== 网格单元系统 ====================
+class GridCell:
+    """表示一个0.7x0.7m的网格单元"""
+    def __init__(self, cell_id: int, grid_row: int, grid_col: int, center_x: float, center_y: float, size: float = 0.7):
+        self.id = cell_id  # 单元格序号（1-81）
+        self.row = grid_row  # 网格行号（0-8）
+        self.col = grid_col  # 网格列号（0-8）
+        self.center_x = center_x  # 单元格中心X坐标（世界坐标）
+        self.center_y = center_y  # 单元格中心Y坐标（世界坐标）
+        self.size = size  # 单元格边长（米）
+    
+    def get_bounds(self) -> Tuple[float, float, float, float]:
+        """返回单元格边界 (min_x, min_y, max_x, max_y)"""
+        half = self.size / 2
+        return (
+            self.center_x - half,
+            self.center_y - half,
+            self.center_x + half,
+            self.center_y + half
+        )
+    
+    def contains_point(self, x: float, y: float) -> bool:
+        """判断点(x,y)是否在此单元格内"""
+        min_x, min_y, max_x, max_y = self.get_bounds()
+        return min_x <= x <= max_x and min_y <= y <= max_y
+    
+    def __repr__(self):
+        return f"Cell#{self.id}[{self.row},{self.col}]@({self.center_x:.2f},{self.center_y:.2f})"
+
+
+class GridSystem:
+    """9x9网格系统，以小车初始位置为中心"""
+    def __init__(self, robot_x: float, robot_y: float, cell_size: float = 0.7):
+        self.cell_size = cell_size
+        self.robot_x = robot_x
+        self.robot_y = robot_y
+        self.cells: List[GridCell] = []
+        self._build_grid()
+    
+    def _build_grid(self):
+        """构建9x9网格，机器人位置为中心(4,4)"""
+        cell_id = 1
+        for row in range(9):
+            for col in range(9):
+                # 计算相对于中心的偏移
+                offset_row = row - 4  # -4 to 4
+                offset_col = col - 4  # -4 to 4
+                
+                # 计算单元格中心坐标
+                center_x = self.robot_x + offset_col * self.cell_size
+                center_y = self.robot_y + offset_row * self.cell_size
+                
+                cell = GridCell(cell_id, row, col, center_x, center_y, self.cell_size)
+                self.cells.append(cell)
+                cell_id += 1
+    
+    def get_cell_by_id(self, cell_id: int) -> Optional[GridCell]:
+        """通过序号获取单元格"""
+        for cell in self.cells:
+            if cell.id == cell_id:
+                return cell
+        return None
+    
+    def get_cell_at_position(self, x: float, y: float) -> Optional[GridCell]:
+        """获取包含指定坐标的单元格"""
+        for cell in self.cells:
+            if cell.contains_point(x, y):
+                return cell
+        return None
+    
+    def get_center_cell(self) -> GridCell:
+        """获取中心单元格（机器人初始位置）"""
+        return self.cells[40]  # 第41个单元格（row=4, col=4）
+
+
 def _timestamped_print(*args, **kwargs) -> None:
     """Prefix console output with a timestamp for easier log correlation."""
     file = kwargs.pop("file", sys.stdout)
@@ -36,7 +111,7 @@ print = _timestamped_print
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -575,6 +650,146 @@ def main():
     )
     plt.pause(0.1)  # 给matplotlib时间渲染窗口
     
+    # ==================== 初始扫描和网格系统设置 ====================
+    print("\n" + "="*60)
+    print("📍 初始化网格系统...")
+    print("="*60)
+    
+    # 执行几次激光扫描以建立初始地图
+    print("🔍 执行初始扫描...")
+    last_scan_data = None
+    if USE_REAL_BLE_DATA or REPLAY_RECORDED_DATA:
+        # 真实/回放模式：先等待数据流稳定
+        # 注意：真实的初始建图会在主循环中自动完成
+        print("   (真实/回放模式：等待数据流稳定...)")
+        print("   提示：初始地图将在主循环开始后自动建立")
+        time.sleep(2.0)  # 等待2秒让数据流稳定
+    else:
+        # 模拟模式：执行实际扫描和SLAM更新
+        for scan_idx in range(5):  # 扫描5次
+            current_pose = robot.get_pose()
+            noisy_scan, clean_scan = lidar.scan(current_pose)
+            slam.update((0.0, 0.0), noisy_scan)  # 原地扫描，无运动，使用noisy扫描
+            last_scan_data = noisy_scan  # 保存最后一次扫描数据用于可视化
+            print(f"   扫描 {scan_idx + 1}/5 完成")
+    
+    # 获取当前机器人位置
+    if USE_REAL_BLE_DATA or REPLAY_RECORDED_DATA:
+        # 真实/回放模式：使用SLAM的初始位姿
+        current_pose = (slam.x, slam.y, slam.theta)
+    else:
+        # 模拟模式：从robot对象获取真实位姿
+        current_pose = robot.get_pose()
+    
+    robot_x, robot_y = current_pose[0], current_pose[1]
+    
+    # 创建9x9网格系统（以当前位置为中心）
+    grid_system = GridSystem(robot_x, robot_y, cell_size=0.7)
+    center_cell = grid_system.get_center_cell()
+    
+    print(f"\n✅ 网格系统初始化完成！")
+    print(f"   机器人位置: ({robot_x:.3f}, {robot_y:.3f})")
+    print(f"   中心单元格: {center_cell}")
+    print(f"   网格范围: 9x9 = 81个单元格")
+    print(f"   单元格大小: 0.7m x 0.7m")
+    
+    # 在可视化中显示初始建图效果和网格系统（无目标）
+    print("\n📍 显示初始地图和网格...")
+    viz.set_grid_system(grid_system, None)  # 先不设置目标
+    occupancy = slam.get_occupancy()
+    if last_scan_data is None:
+        last_scan_data = [LIDAR_DISPLAY_MAX_RANGE] * 360  # 空扫描
+    viz.update(
+        current_pose,
+        last_scan_data,
+        frontiers=None,
+        target=None,
+        path=None,
+        occupancy=occupancy,
+        predicted_traj=None,
+        robot_radius=ROBOT_VISUAL_RADIUS,
+        actual_traj=None,
+        scan_angles=None,
+        unsafe_mask=None,
+    )
+    plt.pause(0.5)  # 给用户时间查看
+    
+    # 显示网格信息
+    print("\n📋 网格单元格布局（序号）：")
+    for row in range(9):
+        row_str = "   "
+        for col in range(9):
+            cell_id = row * 9 + col + 1
+            if cell_id == center_cell.id:
+                row_str += f"[{cell_id:2d}] "  # 中心单元格用方括号标记
+            else:
+                row_str += f" {cell_id:2d}  "
+        print(row_str)
+    
+    # 请求用户输入目标单元格（模拟模式在此处输入，真实数据模式在初始建图后输入）
+    # 初始化目标相关变量
+    target_cell_id = None
+    GRID_TARGET_X = None
+    GRID_TARGET_Y = None
+    GRID_TARGET_REACHED_THRESHOLD = 0.15
+    
+    if not (USE_REAL_BLE_DATA or REPLAY_RECORDED_DATA):
+        # 模拟模式：在此处输入（因为已经建好初始地图）
+        print("\n" + "="*60)
+        print("💡 提示：请查看可视化窗口中的网格布局")
+        print("="*60)
+        target_cell_id = None
+        while target_cell_id is None:
+            try:
+                user_input = input(f"🎯 请输入目标单元格序号 (1-81，当前在{center_cell.id}): ").strip()
+                cell_id = int(user_input)
+                if 1 <= cell_id <= 81:
+                    target_cell = grid_system.get_cell_by_id(cell_id)
+                    if target_cell:
+                        target_cell_id = cell_id
+                        print(f"✅ 目标设定：单元格 #{target_cell_id} @ ({target_cell.center_x:.2f}, {target_cell.center_y:.2f})")
+                    else:
+                        print("❌ 无效的单元格ID")
+                else:
+                    print("❌ 请输入1-81之间的数字")
+            except ValueError:
+                print("❌ 请输入有效的数字")
+            except (EOFError, KeyboardInterrupt):
+                print("\n程序终止")
+                return
+        
+        # 设置目标单元格中心为探索目标
+        target_cell = grid_system.get_cell_by_id(target_cell_id)
+        if target_cell is None:
+            print(f"❌ 错误：无法获取单元格 #{target_cell_id}")
+            return
+        GRID_TARGET_X = target_cell.center_x
+        GRID_TARGET_Y = target_cell.center_y
+        GRID_TARGET_REACHED_THRESHOLD = 0.15  # 到达目标的距离阈值（米）
+        
+        # 更新可视化，显示选定的目标单元格
+        viz.set_grid_system(grid_system, target_cell_id)
+        viz.update(
+            current_pose,
+            last_scan_data,
+            frontiers=None,
+            target=None,
+            path=None,
+            occupancy=occupancy,
+            predicted_traj=None,
+            robot_radius=ROBOT_VISUAL_RADIUS,
+            actual_traj=None,
+            scan_angles=None,
+            unsafe_mask=None,
+        )
+        plt.pause(0.5)
+        print("="*60 + "\n")
+    else:
+        # 真实/回放模式：提示用户将在初始建图后输入
+        print("\n💡 提示：真实数据模式将在启动后执行初始扫描建图")
+        print("   目标单元格将在初始地图建立后输入")
+        print("="*60 + "\n")
+    
     # 打印键盘控制提示
     print("\n" + "="*60)
     print("🎮 键盘控制说明：")
@@ -600,6 +815,12 @@ def main():
         "alpha": 0.85,
         "label": "Return Traj"
     }
+    
+    # 将网格系统传递给可视化器（模拟模式已设置target_cell_id，真实模式为None）
+    if target_cell_id is not None:
+        viz.set_grid_system(grid_system, target_cell_id)
+    else:
+        viz.set_grid_system(grid_system, None)
 
     _safety_offset_cache: Dict[float, List[Tuple[int, int]]] = {}
 
@@ -769,7 +990,7 @@ def main():
             "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
             "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
-            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.2")),  # 只影响下发指令（默认0.5），控制指令缩放比例
+            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.18")),  # 只影响下发指令（默认0.5），控制指令缩放比例
             "pid_left": left_pid,
             "pid_right": right_pid,
             "pid_integral_limit": float(os.getenv("PID_INTEGRAL_LIMIT", "2000.0")),
@@ -1262,6 +1483,98 @@ def main():
                 break
             time.sleep(0.05)
 
+    # 真实数据模式：执行初始扫描建图
+    if USE_REAL_BLE_DATA or REPLAY_RECORDED_DATA:
+        print("\n" + "="*60)
+        print("🔍 真实数据模式：执行初始扫描建图...")
+        print("="*60)
+        initial_scan_count = 5
+        for scan_idx in range(initial_scan_count):
+            try:
+                noisy_scan, clean_scan = acquire_scan()
+                slam.update((0.0, 0.0), noisy_scan, last_angles_cache.get("value"))
+                print(f"   初始扫描 {scan_idx + 1}/{initial_scan_count} 完成 - {len(noisy_scan)} 个数据点")
+                time.sleep(0.3)  # 每次扫描间隔
+            except Exception as e:
+                print(f"   ⚠️  初始扫描 {scan_idx + 1}/{initial_scan_count} 失败: {e}")
+        
+        # 更新可视化显示初始地图
+        try:
+            current_scan = acquire_scan()[0]
+            current_pose = (slam.x, slam.y, slam.theta)
+            occupancy = slam.get_occupancy()
+            viz.update(
+                current_pose,
+                current_scan,
+                frontiers=None,
+                target=None,
+                path=None,
+                occupancy=occupancy,
+                predicted_traj=None,
+                robot_radius=ROBOT_VISUAL_RADIUS,
+                scan_angles=last_angles_cache.get("value"),
+            )
+            print("✅ 初始地图已建立并显示")
+        except Exception as e:
+            print(f"⚠️  初始可视化更新失败: {e}")
+        print("="*60 + "\n")
+        
+        # 请求用户输入目标单元格
+        print("\n" + "="*60)
+        print("💡 提示：请查看可视化窗口中的初始地图和网格布局")
+        print("="*60)
+        target_cell_id = None
+        while target_cell_id is None:
+            try:
+                user_input = input(f"🎯 请输入目标单元格序号 (1-81，当前在{center_cell.id}): ").strip()
+                cell_id = int(user_input)
+                if 1 <= cell_id <= 81:
+                    target_cell = grid_system.get_cell_by_id(cell_id)
+                    if target_cell:
+                        target_cell_id = cell_id
+                        print(f"✅ 目标设定：单元格 #{target_cell_id} @ ({target_cell.center_x:.2f}, {target_cell.center_y:.2f})")
+                    else:
+                        print("❌ 无效的单元格ID")
+                else:
+                    print("❌ 请输入1-81之间的数字")
+            except ValueError:
+                print("❌ 请输入有效的数字")
+            except (EOFError, KeyboardInterrupt):
+                print("\n程序终止")
+                return
+        
+        # 设置目标单元格中心为探索目标
+        target_cell = grid_system.get_cell_by_id(target_cell_id)
+        if target_cell is None:
+            print(f"❌ 错误：无法获取单元格 #{target_cell_id}")
+            return
+        GRID_TARGET_X = target_cell.center_x
+        GRID_TARGET_Y = target_cell.center_y
+        GRID_TARGET_REACHED_THRESHOLD = 0.15  # 到达目标的距离阈值（米）
+        
+        # 更新可视化，显示选定的目标单元格
+        viz.set_grid_system(grid_system, target_cell_id)
+        viz.update(
+            current_pose,
+            current_scan,
+            frontiers=None,
+            target=None,
+            path=None,
+            occupancy=occupancy,
+            predicted_traj=None,
+            robot_radius=ROBOT_VISUAL_RADIUS,
+            actual_traj=None,
+            scan_angles=last_angles_cache.get("value"),
+            unsafe_mask=None,
+        )
+        plt.pause(0.5)
+        print("="*60 + "\n")
+
+    # 确保目标单元格已设置（两种模式都应该设置了）
+    if target_cell_id is None or GRID_TARGET_X is None or GRID_TARGET_Y is None:
+        print("❌ 错误：目标单元格未设置")
+        return
+    
     # 初始化探索状态标志和探索进度跟踪
     exploration_complete = False
     total_distance_traveled = 0.0  # 总移动距离
@@ -1302,7 +1615,13 @@ def main():
     # 最近未知搜索函数（BFS在空闲区域上扩展，一旦邻接未知返回）
     def find_nearest_unexplored(occupancy, start, bounds_idx=None, unknown_limit=0,
                                 visited_out=None, debug_update=None, debug_interval=80,
-                                search_mode="bfs"):
+                                search_mode="bfs", target_bias=None):
+        """
+        BFS/DFS搜索最近的未探索前沿。
+        
+        Args:
+            target_bias: 可选的(x, y)元组，用于偏好朝向该目标的前沿点
+        """
         h, w = occupancy.shape
         sx, sy = int(start[0]), int(start[1])
         if not (0 <= sx < w and 0 <= sy < h):
@@ -1323,6 +1642,9 @@ def main():
         parent_x[sy, sx] = -1
         parent_y[sy, sx] = -1
         directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
+        
+        # 用于存储候选前沿点（如果使用目标偏好）
+        candidate_frontiers = []
 
         def has_unknown_neighbor(x, y):
             for dx, dy in directions:
@@ -1330,6 +1652,17 @@ def main():
                 if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == -1:
                     return True
             return False
+        
+        def score_frontier(x, y):
+            """计算前沿点的得分（如果有目标偏好）"""
+            if target_bias is None:
+                return 0.0
+            tx, ty = target_bias
+            # 距离目标越近得分越高（使用负距离，因为要最大化）
+            dist_to_target = math.hypot(x - tx, y - ty)
+            dist_to_start = math.hypot(x - sx, y - sy)
+            # 综合考虑：朝向目标且不太远
+            return -dist_to_target * 0.7 - dist_to_start * 0.3
 
         if bounds_idx is not None:
             min_bx, max_bx, min_by, max_by = bounds_idx
@@ -1381,6 +1714,11 @@ def main():
             return True
 
         fallback_candidate = None
+        best_frontier = None
+        best_score = float('-inf')
+        max_search_frontiers = 10  # 最多搜索10个前沿候选再选择最优
+        found_frontiers = 0
+        
         while container:
             x, y, used_unknown = pop_item()
             debug_counter += 1
@@ -1410,10 +1748,25 @@ def main():
                 path_cells.reverse()
                 if len(path_cells) == 0 or path_cells[0] != (sx, sy):
                     path_cells.insert(0, (sx, sy))
+                    
                 if is_safe_cell(x, y):
-                    if debug_update is not None and debug_points is not None:
-                        debug_update(debug_points)
-                    return (x, y), (nx, ny), path_cells
+                    # 如果有目标偏好，收集候选并评分
+                    if target_bias is not None:
+                        score = score_frontier(x, y)
+                        found_frontiers += 1
+                        if score > best_score:
+                            best_score = score
+                            best_frontier = ((x, y), (nx, ny), path_cells)
+                        # 找到足够多的候选后返回最佳
+                        if found_frontiers >= max_search_frontiers:
+                            if debug_update is not None and debug_points is not None:
+                                debug_update(debug_points)
+                            return best_frontier
+                    else:
+                        # 没有目标偏好，返回第一个找到的
+                        if debug_update is not None and debug_points is not None:
+                            debug_update(debug_points)
+                        return (x, y), (nx, ny), path_cells
                 elif fallback_candidate is None:
                     fallback_candidate = ((x, y), (nx, ny), path_cells)
 
@@ -1441,6 +1794,12 @@ def main():
                     debug_points.append((nx, ny))
                     if debug_update is not None and (debug_counter % max(1, debug_interval) == 0):
                         debug_update(debug_points)
+
+        # BFS结束，返回找到的最佳前沿（如果有）
+        if best_frontier is not None:
+            if debug_update is not None and debug_points is not None:
+                debug_update(debug_points)
+            return best_frontier
 
         if fallback_candidate is not None:
             safe_target = None
@@ -1515,9 +1874,9 @@ def main():
     
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
-    base_lookahead_steps = 14   # 默认前瞻栅格数（调近）
+    base_lookahead_steps = 12   # 默认前瞻栅格数（调近）
     min_lookahead_steps = 2    # 弯曲段时的最小前瞻（调近）
-    max_lookahead_steps = 25   # 直线段时的最大前瞻（调近）
+    max_lookahead_steps = 20   # 直线段时的最大前瞻（调近）
 
     def compute_dynamic_lookahead(path_cells, current_idx,
                                   base_steps=base_lookahead_steps,
@@ -1926,6 +2285,7 @@ def main():
                 sim_motion_controller.set_command(0.0, 0.0)
             plt.pause(VISUALIZATION_PAUSE_TIME)
             continue
+        
         loop_step_label = f"step={step_counter}"
         loop_start = time.perf_counter()
         section_times = []
@@ -1947,6 +2307,27 @@ def main():
             est_pose = slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))
         section_times.append(("slam_update", (time.perf_counter() - t_section) * 1000.0))
         t_section = time.perf_counter()
+        
+        # 2.5 检查是否到达目标单元格
+        dist_to_target = math.hypot(est_pose[0] - GRID_TARGET_X, est_pose[1] - GRID_TARGET_Y)
+        if dist_to_target < GRID_TARGET_REACHED_THRESHOLD:
+            print("\n" + "="*60)
+            print(f"🎉 目标到达！已到达单元格 #{target_cell_id}")
+            print(f"   当前位置: ({est_pose[0]:.3f}, {est_pose[1]:.3f})")
+            print(f"   目标位置: ({GRID_TARGET_X:.3f}, {GRID_TARGET_Y:.3f})")
+            print(f"   距离: {dist_to_target:.3f}m")
+            print("="*60 + "\n")
+            # 停止小车
+            if sim_motion_controller is not None:
+                sim_motion_controller.set_command(0.0, 0.0)
+            if ble_bridge is not None:
+                ble_bridge.send_motor_command(0.0, 0.0)
+            # 保持可视化运行，让用户查看结果
+            while True:
+                plt.pause(0.1)
+                if not plt.fignum_exists(viz.fig.number):
+                    break
+            break
         
         # 3. 出口检测
         exit_triggered = False
@@ -1984,6 +2365,11 @@ def main():
 
         # 冷却策略：冷却期暂停A*与前沿刷新；冷却结束时刷新前沿并运行A*
         occupancy = slam.get_occupancy()
+        # 计算目标单元格的栅格坐标（用于前沿偏好）
+        target_grid_x = int((GRID_TARGET_X - maze.bounds[0]) / maze.resolution)
+        target_grid_y = int((GRID_TARGET_Y - maze.bounds[1]) / maze.resolution)
+        target_bias = (target_grid_x, target_grid_y)
+        
         if frontier_cooldown_steps == 0:
             frontier_cooldown_elapsed = 0
             should_refresh_frontier = True
@@ -1997,7 +2383,9 @@ def main():
                     current_unknown_neighbor = None
                 else:
                     t_bfs_start = time.perf_counter()
-                    target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(occupancy, (rx_idx, ry_idx))
+                    target_cell_latest, unknown_neighbor_new, bfs_path = find_nearest_unexplored(
+                        occupancy, (rx_idx, ry_idx), target_bias=target_bias
+                    )
                     bfs_time_ms = (time.perf_counter() - t_bfs_start) * 1000.0
                     if target_cell_latest is None:
                         # 使用全局前沿检测作为回退策略
@@ -2007,6 +2395,9 @@ def main():
                         print(f"[前沿搜索] BFS={bfs_time_ms:.2f}ms 未找到 -> 回退全局搜索={fallback_time_ms:.2f}ms")
                         if fallback_frontier is None or not fallback_path:
                             print("没有可达的未知区域，探索结束。")
+                            # 探索完成后，SLAM切换到定位专用模式（只定位不更新地图）
+                            slam.localize_only = True
+                            print("[SLAM] 已切换到定位专用模式，不再更新地图。")
                             section_times.append(("frontier_update", (time.perf_counter() - t_section) * 1000.0))
                             section_times.append(("loop_total", (time.perf_counter() - loop_start) * 1000.0))
                             log_section_times(loop_step_label, section_times)
@@ -2670,8 +3061,88 @@ def main():
         print("探索完成：迷宫内部区域已完全探索。")
         print(f"探索总结 - 总移动距离: {total_distance_traveled:.1f}m, 总共探索了 {frontiers_explored} 个前沿点")
     
+    # 检查是否已到达目标单元格
+    current_pose_final = robot.get_pose() if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA else slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))[:3]
+    dist_to_target_final = math.hypot(current_pose_final[0] - GRID_TARGET_X, current_pose_final[1] - GRID_TARGET_Y)
+    
+    if dist_to_target_final < GRID_TARGET_REACHED_THRESHOLD:
+        print(f"\n✅ 已在目标单元格 #{target_cell_id} 附近 (距离: {dist_to_target_final:.3f}m)")
+    else:
+        print(f"\n🎯 探索完成，现在导航到目标单元格 #{target_cell_id}...")
+        print(f"   当前位置: ({current_pose_final[0]:.3f}, {current_pose_final[1]:.3f})")
+        print(f"   目标位置: ({GRID_TARGET_X:.3f}, {GRID_TARGET_Y:.3f})")
+        print(f"   距离: {dist_to_target_final:.3f}m")
+        
+        # 规划到目标单元格的路径
+        target_grid_x = int((GRID_TARGET_X - maze.bounds[0]) / maze.resolution)
+        target_grid_y = int((GRID_TARGET_Y - maze.bounds[1]) / maze.resolution)
+        current_idx_x = int((current_pose_final[0] - maze.bounds[0]) / maze.resolution)
+        current_idx_y = int((current_pose_final[1] - maze.bounds[1]) / maze.resolution)
+        
+        occupancy_nav = slam.get_occupancy().copy()
+        # 确保当前格与目标格被视为空闲
+        if 0 <= current_idx_y < occupancy_nav.shape[0] and 0 <= current_idx_x < occupancy_nav.shape[1]:
+            occupancy_nav[current_idx_y, current_idx_x] = 0
+        if 0 <= target_grid_y < occupancy_nav.shape[0] and 0 <= target_grid_x < occupancy_nav.shape[1]:
+            occupancy_nav[target_grid_y, target_grid_x] = 0
+        
+        # 规划到目标的路径（带安全距离）
+        safety_cells_nominal = max(1, int(round(get_inflated_radius() / maze.resolution)))
+        target_path = explorer.plan_path(
+            occupancy_nav,
+            (current_idx_x, current_idx_y),
+            (target_grid_x, target_grid_y),
+            safety_distance=float(safety_cells_nominal),
+            max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+        )
+        
+        if not target_path:
+            # 尝试无安全距离的路径
+            print("   使用标准安全距离无法规划路径，尝试降低安全距离...")
+            for shrink in range(safety_cells_nominal - 1, 0, -1):
+                target_path = explorer.plan_path(
+                    occupancy_nav,
+                    (current_idx_x, current_idx_y),
+                    (target_grid_x, target_grid_y),
+                    safety_distance=float(shrink),
+                    max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+                )
+                if target_path:
+                    print(f"   使用安全距离 {shrink} 栅格规划成功")
+                    break
+        
+        if target_path:
+            path_length_meters = explorer.calculate_path_length(target_path, maze.resolution)
+            print(f"   路径长度: {path_length_meters:.2f} 米 ({len(target_path)-1} 栅格步数)")
+            viz.set_emergency_path(target_path)
+            
+            # 使用DWA导航到目标
+            nav_success = drive_path_with_dwa_segment(
+                target_path, 
+                label="导航到目标单元格",
+                arrival_tol=GRID_TARGET_REACHED_THRESHOLD,
+                path_safety_cells=float(safety_cells_nominal) if target_path else None
+            )
+            
+            if nav_success:
+                print(f"\n🎉 成功到达目标单元格 #{target_cell_id}！")
+                # 到达目标后停车
+                print("🛑 到达目标单元格，停车...")
+                if USE_REAL_BLE_DATA and ble_bridge:
+                    ble_bridge.send_motor_command(0.0, 0.0)
+                    time.sleep(0.5)
+                elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
+                    sim_motion_controller.set_command(0.0, 0.0)
+                time.sleep(1.0)  # 停车1秒
+            else:
+                print(f"\n⚠️  导航到目标单元格失败")
+        else:
+            print("   ❌ 无法规划到目标单元格的路径")
+    
     # 最后返回起点
-    print("规划返回起点路径...")
+    print("\n📍 现在规划从目标单元格返回起点的最快路径...")
+    print(f"   当前位置: ({robot.x:.3f}, {robot.y:.3f})")
+    print(f"   起点位置: ({maze.start[0]:.3f}, {maze.start[1]:.3f})")
     start_idx_x = int((maze.start[0] - maze.bounds[0]) / maze.resolution)
     start_idx_y = int((maze.start[1] - maze.bounds[1]) / maze.resolution)
     current_idx_x = int((robot.x - maze.bounds[0]) / maze.resolution)
@@ -2955,24 +3426,61 @@ def main():
     if back_path:
         used_safety_val = float(used_safety) if used_safety is not None else 0.0
         return_traj_split_idx = len(get_actual_traj_points())
+        print(f"\n🚀 开始返回起点...")
         returned = drive_path_with_dwa(back_path, label="安全返回路径")
         if returned:
-            print("Robot returned to start.")
+            print("\n✅ 成功返回起点！")
+            # 返回起点后停车
+            print("🛑 已到达起点，停车...")
+            if USE_REAL_BLE_DATA and ble_bridge:
+                ble_bridge.send_motor_command(0.0, 0.0)
+                time.sleep(0.5)
+            elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
+                sim_motion_controller.set_command(0.0, 0.0)
+            time.sleep(1.0)  # 停车1秒
+            
+            # 显示完成信息
+            final_pose = robot.get_pose() if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA else slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))[:3]
+            dist_to_start = math.hypot(final_pose[0] - maze.start[0], final_pose[1] - maze.start[1])
+            print(f"\n🎊 任务完成！")
+            print(f"   起点位置: ({maze.start[0]:.3f}, {maze.start[1]:.3f})")
+            print(f"   当前位置: ({final_pose[0]:.3f}, {final_pose[1]:.3f})")
+            print(f"   距离起点: {dist_to_start:.3f}m")
+            print(f"   总移动距离: {total_distance_traveled:.1f}m")
+            print(f"   探索前沿数: {frontiers_explored}")
         else:
-            print("返程DWA未能在限定步数内抵达起点。")
+            print("\n⚠️  返程DWA未能在限定步数内抵达起点。")
     else:
-        print("未能规划带安全距离的返程路径，无法执行返程。")
+        print("❌ 未能规划带安全距离的返程路径，无法执行返程。")
     
     # 根据结束条件输出相应信息
     if 'should_return_to_start' in locals() and should_return_to_start:
-        print("仿真结束：检测到超过180度连续无障碍区域，机器人已返回起点！")
+        print("\n仿真结束：检测到超过180度连续无障碍区域，机器人已完成探索并返回起点！")
     else:
-        print("仿真结束：迷宫探索完成，机器人已返回起点。")
+        print("\n仿真结束：迷宫探索完成，机器人已完成所有任务！")
         
     # 导出最终地图（按需求关闭 final_path.csv 导出）
+    print("\n💾 保存最终地图...")
     viz.save_map("final_map.png")
+    print(f"   地图已保存至 final_map.png")
     # 已禁用：不再导出最终路径 CSV
     # viz.save_path("final_path.csv")
+    
+    # 任务完成，保持可视化窗口打开让用户查看
+    print("\n✨ 所有任务已完成！")
+    print("   - 迷宫探索完成")
+    print("   - 已到达目标单元格")
+    print("   - 已返回起点")
+    print("\n按 Ctrl+C 或关闭窗口退出程序...")
+    
+    try:
+        # 保持可视化窗口打开，让用户可以查看最终结果
+        while True:
+            plt.pause(1.0)
+    except KeyboardInterrupt:
+        print("\n用户终止程序")
+    except Exception:
+        pass
     
     robot.stop_threaded()
 
