@@ -121,6 +121,12 @@ CMD_SET_SCALE = (
     if CMD_SET_MAX_SPEED > 0.0
     else 0.0
 )
+
+# PID 控制开关与默认增益（可通过环境变量覆盖）
+ENABLE_PID_CONTROL = os.getenv("ENABLE_PID_CONTROL", "1") == "1"
+PID_DEFAULT_KP = float(os.getenv("PID_DEFAULT_KP", "0.15"))
+PID_DEFAULT_KI = float(os.getenv("PID_DEFAULT_KI", "0.01"))
+PID_DEFAULT_KD = float(os.getenv("PID_DEFAULT_KD", "0.0"))
 SIM_CONTROL_INTERVAL = float(os.getenv("SIM_CONTROL_INTERVAL", "0.01"))
 SIM_MAX_DT = float(os.getenv("SIM_MAX_DT", "0.12"))
 
@@ -187,6 +193,7 @@ class SimMotionController:
             sleep_remaining = self._interval - (time.perf_counter() - now)
             if sleep_remaining > 0.0:
                 time.sleep(sleep_remaining)
+
 
 # ==================== 录制数据回放配置 ====================
 RECORDED_LASER_LOG = Path(os.getenv("RECORDED_LASER_LOG", "ble_parsed.log"))
@@ -724,14 +731,66 @@ def main():
             "encoder_modulus": BLE_ENCODER_MODULUS,
             "invert_left": BLE_INVERT_LEFT,
             "invert_right": BLE_INVERT_RIGHT,
+            "cached_return_timeout": float(os.getenv("BLE_ENCODER_CACHED_RETURN", "0.03")),
         }
         # 电机控制参数（单独传递）
+        left_pid_overrides = {
+            "kp": os.getenv("LEFT_PID_KP"),
+            "ki": os.getenv("LEFT_PID_KI"),
+            "kd": os.getenv("LEFT_PID_KD"),
+        }
+        right_pid_overrides = {
+            "kp": os.getenv("RIGHT_PID_KP"),
+            "ki": os.getenv("RIGHT_PID_KI"),
+            "kd": os.getenv("RIGHT_PID_KD"),
+        }
+
+        def _resolve_pid_value(key, overrides, default_value):
+            value = overrides.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except ValueError:
+                    pass
+            return default_value
+
+        left_pid = {
+            "kp": _resolve_pid_value("kp", left_pid_overrides, PID_DEFAULT_KP if ENABLE_PID_CONTROL else 0.0),
+            "ki": _resolve_pid_value("ki", left_pid_overrides, PID_DEFAULT_KI if ENABLE_PID_CONTROL else 0.0),
+            "kd": _resolve_pid_value("kd", left_pid_overrides, PID_DEFAULT_KD if ENABLE_PID_CONTROL else 0.0),
+        }
+        right_pid = {
+            "kp": _resolve_pid_value("kp", right_pid_overrides, left_pid["kp"] if ENABLE_PID_CONTROL else 0.0),
+            "ki": _resolve_pid_value("ki", right_pid_overrides, left_pid["ki"] if ENABLE_PID_CONTROL else 0.0),
+            "kd": _resolve_pid_value("kd", right_pid_overrides, left_pid["kd"] if ENABLE_PID_CONTROL else 0.0),
+        }
+
         motor_control_params = {
             "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
             "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
-            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.1")),  # 只影响下发指令（默认0.5），控制比例
+            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.2")),  # 只影响下发指令（默认0.5），控制指令缩放比例
+            "pid_left": left_pid,
+            "pid_right": right_pid,
+            "pid_integral_limit": float(os.getenv("PID_INTEGRAL_LIMIT", "2000.0")),
+            "pid_output_limit": float(os.getenv("PID_OUTPUT_LIMIT", "400.0")),
+            "pid_activation_epsilon": float(os.getenv("PID_EPSILON", "0.0")),
+            "cmd_abs_limit": int(round(CMD_SET_MAX_VALUE)) if CMD_SET_MAX_VALUE > 0.0 else None,
         }
+        if any(abs(left_pid.get(k, 0.0)) > 1e-6 for k in ("kp", "ki", "kd")) or any(
+            abs(right_pid.get(k, 0.0)) > 1e-6 for k in ("kp", "ki", "kd")
+        ):
+            print(
+                "[PID] Wheel PID enabled | left=(kp=%.3f, ki=%.3f, kd=%.3f) | right=(kp=%.3f, ki=%.3f, kd=%.3f)"
+                % (
+                    left_pid["kp"],
+                    left_pid["ki"],
+                    left_pid["kd"],
+                    right_pid["kp"],
+                    right_pid["ki"],
+                    right_pid["kd"],
+                )
+            )
         print("[BLE] 启动实时数据监听线程...")
         ble_bridge = BleRobotBridge(
             BLE_DEVICE_ADDRESS,
@@ -963,16 +1022,19 @@ def main():
         d_trans = d_trans_raw
         d_rot = d_rot_raw
         d_trans, d_rot, delta_rot = apply_angle_correction(d_trans, d_rot)
-        if velocities is not None and abs(delta_rot) > 0.0:
+        dt_est: Optional[float] = None
+        if velocities is not None:
             lin_vel, ang_vel = velocities
-            dt_est = None
-            if abs(ang_vel) > 1e-6 and abs(d_rot_raw) > 1e-6:
-                dt_est = d_rot_raw / ang_vel
-            elif abs(lin_vel) > 1e-6 and abs(d_trans_raw) > 1e-6:
-                dt_est = d_trans_raw / lin_vel
-            if dt_est is not None and dt_est > 1e-6:
-                ang_vel = d_rot / dt_est
+            if abs(delta_rot) > 0.0:
+                if abs(ang_vel) > 1e-6 and abs(d_rot_raw) > 1e-6:
+                    dt_est = d_rot_raw / ang_vel
+                elif abs(lin_vel) > 1e-6 and abs(d_trans_raw) > 1e-6:
+                    dt_est = d_trans_raw / lin_vel
+                if dt_est is not None and dt_est > 1e-6:
+                    ang_vel = d_rot / dt_est
             velocities = (lin_vel, ang_vel)
+            feedback_dt = dt_est if dt_est is not None and dt_est > 1e-6 else float(dwa_cfg.dt)
+            ble_bridge.update_feedback(lin_vel, ang_vel, feedback_dt)
         
         # 4. 更新机器人状态
         apply_motion_fn = getattr(robot, "apply_motion", None)
