@@ -527,6 +527,23 @@ class BleRobotBridge:
                     f"{timestamp} [MOTOR] Adjusted negative CMD-SET values by +{shift} to satisfy non-negative requirement"
                 )
 
+            # 限制CMD-SET值在10-70范围内
+            # 如果是停止命令（两个都接近0），保持为0；否则限制在10-70
+            if abs(final_left) < 1 and abs(final_right) < 1:
+                final_left = 0
+                final_right = 0
+            else:
+                # 至少有一个值不为0，则将非零值限制在10-70，零值设为10
+                if abs(final_left) < 1:
+                    final_left = 10
+                else:
+                    final_left = max(10, min(70, final_left))
+                    
+                if abs(final_right) < 1:
+                    final_right = 10
+                else:
+                    final_right = max(10, min(70, final_right))
+
             command = self.motor_controller.send_command(final_left, final_right)
             
             # 通过蓝牙发送命令

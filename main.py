@@ -36,7 +36,7 @@ print = _timestamped_print
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -547,7 +547,7 @@ def main():
         robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose, laser_angle_offset_deg=LIDAR_ANGLE_OFFSET_DEG)
-    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.04
+    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.06
     frontier_safety_cells = max(
         0,
         int(math.ceil(base_frontier_safety / maze.resolution))
@@ -1484,6 +1484,12 @@ def main():
     # 使用 DWA 默认配置，只设置机器人半径
     dwa_cfg = DWAConfig(
         robot_radius=ROBOT_COLLISION_RADIUS,
+        # 提高控制灵敏度配置
+        to_goal_cost_gain=1.2,           # 提高朝向目标代价权重，增强转向响应
+        max_yaw_rate=140.0 * math.pi / 180.0,  # 提高最大角速度至140°/s，支持更快转向
+        max_accel=0.20,                  # 提高线速度加速度，增强加速响应
+        smoothing_alpha=0.75,            # 提高平滑系数，更快响应当前指令
+        rotation_cost_gain=0.12,         # 降低旋转代价，允许更积极转向
     )
     dwa_planner = DWAPlanner(dwa_cfg)
 
@@ -1529,28 +1535,53 @@ def main():
         if not path_cells or len(path_cells) <= 1:
             return 1
 
-        clamped_idx = max(0, min(current_idx, len(path_cells) - 2))
+        clamped_idx = max(0, min(current_idx, len(path_cells) - 1))
 
+        # 计算当前位置周围的路径曲率（以当前点为中心的局部曲率）
+        # 使用当前点前后各6个点的窗口来评估局部曲率
+        window_size = 6
+        
         def _segment_heading(p0, p1):
             return math.atan2(p1[1] - p0[1], p1[0] - p0[0])
 
+        # 计算当前位置周围路径段的方向向量
         headings: List[float] = []
-        start = max(0, clamped_idx - 3)
-        end = min(len(path_cells) - 2, clamped_idx + 3)
+        start = max(0, clamped_idx - window_size)
+        end = min(len(path_cells) - 2, clamped_idx + window_size)
+        
+        # 确保有足够的点来计算曲率
+        if end - start < 2:
+            # 路径太短，使用中等前瞻
+            return base_steps
+        
         for i in range(start, end + 1):
             p0 = path_cells[i]
             p1 = path_cells[i + 1]
             headings.append(_segment_heading(p0, p1))
 
+        # 计算最大角度变化（更敏感地检测急转弯）
         curvature = 0.0
+        max_turn_angle = 0.0
         if len(headings) >= 2:
-            deltas = [abs(math.atan2(math.sin(headings[i + 1] - headings[i]),
-                                      math.cos(headings[i + 1] - headings[i])))
-                      for i in range(len(headings) - 1)]
-            curvature = sum(deltas) / len(deltas)
+            # 计算相邻段之间的角度差
+            deltas = []
+            for i in range(len(headings) - 1):
+                angle_diff = math.atan2(
+                    math.sin(headings[i + 1] - headings[i]),
+                    math.cos(headings[i + 1] - headings[i])
+                )
+                deltas.append(abs(angle_diff))
+                max_turn_angle = max(max_turn_angle, abs(angle_diff))
+            
+            # 使用最大转角和平均转角的加权组合
+            avg_curvature = sum(deltas) / len(deltas)
+            curvature = 0.6 * max_turn_angle + 0.4 * avg_curvature
 
-        low_thresh = math.radians(5.0)
-        high_thresh = math.radians(90.0)
+        # 调整阈值使其更敏感
+        # 低阈值：3度以下认为是直线
+        # 高阈值：45度以上认为是急弯（不需要90度那么极端）
+        low_thresh = math.radians(3.0)
+        high_thresh = math.radians(45.0)
         if curvature <= low_thresh:
             curvature_ratio = 0.0
         elif curvature >= high_thresh:
@@ -1558,16 +1589,26 @@ def main():
         else:
             curvature_ratio = (curvature - low_thresh) / (high_thresh - low_thresh)
 
-        # 使用 base_steps 作为基准，根据曲率在 min_steps 和 max_steps 之间调整
-        base_candidate = base_steps
-        span = max(0, base_candidate - min_steps)
-        adjusted = base_candidate - curvature_ratio * span
+        # 根据曲率在 min_steps 和 max_steps 之间动态调整
+        # curvature_ratio=0 (直线) → max_steps; curvature_ratio=1 (急弯) → min_steps
+        adjusted = max_steps - curvature_ratio * (max_steps - min_steps)
         adjusted = max(min_steps, min(max_steps, int(round(adjusted))))
 
         remaining = len(path_cells) - 1 - clamped_idx
         if remaining <= 0:
             return 1
         adjusted = min(adjusted, remaining)
+        
+        # 调试输出（每隔一段时间打印一次，避免刷屏）
+        if hasattr(compute_dynamic_lookahead, '_debug_counter'):
+            compute_dynamic_lookahead._debug_counter += 1
+        else:
+            compute_dynamic_lookahead._debug_counter = 0
+        
+        if compute_dynamic_lookahead._debug_counter % 30 == 0:
+            print(f"[曲率分析] 曲率={math.degrees(curvature):.1f}° (最大={math.degrees(max_turn_angle):.1f}°, 平均={math.degrees(avg_curvature if 'avg_curvature' in locals() else 0):.1f}°) "
+                  f"曲率比={curvature_ratio:.2f} → 前瞻={adjusted}步 (范围:{min_steps}-{max_steps})")
+        
         return max(1, adjusted)
 
     def plan_path_with_safety(occupancy_grid, start_cell, goal_cell,
