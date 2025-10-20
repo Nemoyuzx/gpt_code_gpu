@@ -3,6 +3,8 @@ import math
 import os
 import re
 import threading
+import sys
+import builtins
 from pathlib import Path
 import matplotlib.pyplot as plt
 from maze_loader import MazeLoader
@@ -15,10 +17,25 @@ from collections import deque
 from visualizer import Visualizer, LIDAR_DISPLAY_MAX_RANGE
 from noise_filter import NoiseFilter
 import numpy as np
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 
-REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "1") == "1"
+def _timestamped_print(*args, **kwargs) -> None:
+    """Prefix console output with a timestamp for easier log correlation."""
+    file = kwargs.pop("file", sys.stdout)
+    sep = kwargs.pop("sep", " ")
+    end = kwargs.pop("end", "\n")
+    flush = kwargs.pop("flush", False)
+    timestamp = datetime.now().strftime("[%H:%M:%S.%f] ")
+    builtins.print(timestamp, end="", file=file, flush=flush)
+    builtins.print(*args, sep=sep, end=end, file=file, flush=flush)
+
+
+print = _timestamped_print
+
+
+REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
 DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
@@ -59,7 +76,7 @@ VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
-LIDAR_ANGLE_RESOLUTION = 1.44  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
+LIDAR_ANGLE_RESOLUTION = 1.44  # 激光雷达角度分辨率（度）：360度/250点=1.44度
 LIDAR_NOISE = 0.003  # 激光雷达噪声
 LIDAR_ANGLE_OFFSET_DEG = float(os.getenv("LIDAR_ANGLE_OFFSET_DEG", "0.0"))
 
@@ -79,7 +96,7 @@ BLE_SCAN_TIMEOUT = float(os.getenv("BLE_SCAN_TIMEOUT", "0.6"))
 BLE_SCAN_MIN_FILL = float(os.getenv("BLE_SCAN_MIN_FILL", "0.75"))
 BLE_SCAN_POLL_INTERVAL = float(os.getenv("BLE_SCAN_POLL_INTERVAL", "0.02"))
 BLE_DISTANCE_SCALE = float(os.getenv("BLE_DISTANCE_SCALE", "0.001"))
-BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "2000.0"))
+BLE_TICKS_PER_METER = float(os.getenv("BLE_TICKS_PER_METER", "1910.0"))
 RECORDED_TICKS_PER_METER = float(
     os.getenv("RECORDED_TICKS_PER_METER", str(BLE_TICKS_PER_METER))
 )
@@ -92,6 +109,9 @@ BLE_ENCODER_MODULUS = (
 # Reduced timeout from 0.25s to 0.08s to prevent motion_update blocking
 BLE_ENCODER_TIMEOUT = float(os.getenv("BLE_ENCODER_TIMEOUT", "0.08"))
 BLE_ENCODER_POLL_INTERVAL = float(os.getenv("BLE_ENCODER_POLL_INTERVAL", "0.01"))
+
+# 角度偏差修正：默认相当于左右轮脉冲差值为 ANGLE_CORRECTION_FACTOR 个 tick
+ANGLE_CORRECTION_FACTOR = float(os.getenv("ANGLE_CORRECTION_FACTOR", "0.0"))
 
 # CMD-SET 输出缩放：999 对应 1.2 m/s（可通过环境变量调整）
 CMD_SET_MAX_VALUE = float(os.getenv("CMD_SET_MAX_VALUE", "999"))
@@ -710,6 +730,7 @@ def main():
             "min_encoder_speed": int(os.getenv("MIN_ENCODER_SPEED", "20")),
             "speed_scale": float(os.getenv("MOTOR_SPEED_SCALE", "1.0")),  # 规划器内控制缩放，默认1:1
             "deadband_threshold": float(os.getenv("MOTOR_DEADBAND", "0.01")),  # 1cm/s死区
+            "overall_speed_scale": float(os.getenv("BLE_MOTOR_SPEED_SCALE", "0.5")),  # 只影响下发指令（默认0.5），控制比例
         }
         print("[BLE] 启动实时数据监听线程...")
         ble_bridge = BleRobotBridge(
@@ -748,6 +769,18 @@ def main():
         import atexit
 
         atexit.register(sim_motion_controller.shutdown)
+
+    angle_corrected_pose: Optional[Tuple[float, float, float]] = None
+    angle_corrected_traj: Optional[List[Tuple[float, float]]] = None
+    if abs(ANGLE_CORRECTION_FACTOR) > 1e-9:
+        px, py, ptheta = robot.get_pose()
+        angle_corrected_pose = (px, py, ptheta)
+        angle_corrected_traj = [(px, py)]
+
+    def get_actual_traj_points() -> List[Tuple[float, float]]:
+        if angle_corrected_traj is not None:
+            return angle_corrected_traj
+        return robot.trajectory
 
     def normalize_scan(
         distances: List[float],
@@ -856,6 +889,39 @@ def main():
 
     def apply_motion_update(v_cmd: float, w_cmd: float, dt: float):
         """应用运动更新：仿真模式直接执行，真实小车模式发送控制命令并读取传感器反馈"""
+        nonlocal angle_corrected_pose, angle_corrected_traj
+
+        def integrate_corrected_path(d_trans_val: float, d_rot_val: float) -> None:
+            nonlocal angle_corrected_pose, angle_corrected_traj
+            if angle_corrected_pose is None or angle_corrected_traj is None:
+                return
+            if abs(d_trans_val) < 1e-6 and abs(d_rot_val) < 1e-6:
+                return
+            cx, cy, ctheta = angle_corrected_pose
+            if abs(d_rot_val) < 1e-8:
+                dx = d_trans_val * math.cos(ctheta)
+                dy = d_trans_val * math.sin(ctheta)
+                theta_new = ctheta
+            else:
+                theta_new = ctheta + d_rot_val
+                radius = d_trans_val / d_rot_val if abs(d_rot_val) > 1e-8 else 0.0
+                dx = radius * (math.sin(theta_new) - math.sin(ctheta))
+                dy = -radius * (math.cos(theta_new) - math.cos(ctheta))
+            cx += dx
+            cy += dy
+            theta_new = math.atan2(math.sin(theta_new), math.cos(theta_new))
+            angle_corrected_pose = (cx, cy, theta_new)
+            angle_corrected_traj.append((cx, cy))
+
+        def apply_angle_correction(d_trans_val: float, d_rot_val: float) -> tuple[float, float, float]:
+            delta_rot_val = 0.0
+            if BLE_TICKS_PER_METER > 0.0 and abs(ANGLE_CORRECTION_FACTOR) > 1e-9:
+                tick_meters = 1.0 / BLE_TICKS_PER_METER
+                delta_rot_val = (ANGLE_CORRECTION_FACTOR * tick_meters) / WHEEL_TRACK
+                d_rot_val += delta_rot_val
+            integrate_corrected_path(d_trans_val, d_rot_val)
+            return d_trans_val, d_rot_val, delta_rot_val
+
         if ble_bridge is None:
             # 仿真模式：后台线程持续推进机器人，导航线程只更新指令
             v_cmd = float(v_cmd)
@@ -866,6 +932,7 @@ def main():
                 sim_motion_controller.set_command(v_cmd, w_cmd)
             else:
                 d_trans, d_rot = robot.velocity_step(v_cmd, w_cmd, dt)
+            d_trans, d_rot, _ = apply_angle_correction(d_trans, d_rot)
             wheel_half = WHEEL_TRACK / 2.0
             v_left = v_cmd - w_cmd * wheel_half
             v_right = v_cmd + w_cmd * wheel_half
@@ -889,10 +956,23 @@ def main():
             ble_bridge.send_motor_command(0.0, 0.0, dt)
         # 2. 发送电机控制命令（仅当ENABLE_CONTROL_LOOP且可视化器允许时）
         elif ENABLE_CONTROL_LOOP and viz.is_auto_control_enabled():
-            ble_bridge.send_motor_command(float(v_cmd), float(w_cmd), float(dt))
+            ble_bridge.send_motor_command(float(v_cmd), float(w_cmd), float(dwa_cfg.dt))
         
         # 3. 读取编码器反馈获取实际运动
-        d_trans, d_rot, velocities = ble_bridge.motion.poll_motion()
+        d_trans_raw, d_rot_raw, velocities = ble_bridge.motion.poll_motion()
+        d_trans = d_trans_raw
+        d_rot = d_rot_raw
+        d_trans, d_rot, delta_rot = apply_angle_correction(d_trans, d_rot)
+        if velocities is not None and abs(delta_rot) > 0.0:
+            lin_vel, ang_vel = velocities
+            dt_est = None
+            if abs(ang_vel) > 1e-6 and abs(d_rot_raw) > 1e-6:
+                dt_est = d_rot_raw / ang_vel
+            elif abs(lin_vel) > 1e-6 and abs(d_trans_raw) > 1e-6:
+                dt_est = d_trans_raw / lin_vel
+            if dt_est is not None and dt_est > 1e-6:
+                ang_vel = d_rot / dt_est
+            velocities = (lin_vel, ang_vel)
         
         # 4. 更新机器人状态
         apply_motion_fn = getattr(robot, "apply_motion", None)
@@ -901,12 +981,13 @@ def main():
                 apply_motion_fn(d_trans, d_rot, linear_vel=velocities[0], angular_vel=velocities[1])
             else:
                 apply_motion_fn(d_trans, d_rot)
-        
+
         return d_trans, d_rot
 
     def integrate_recorded_motion(distance: float, rotation: float) -> None:
         if abs(distance) < 1e-9 and abs(rotation) < 1e-9:
             return
+        nonlocal angle_corrected_pose, angle_corrected_traj
         apply_motion_fn = getattr(robot, "apply_motion", None)
         if callable(apply_motion_fn):
             apply_motion_fn(distance, rotation)
@@ -928,6 +1009,22 @@ def main():
         robot.odom_x = robot.x
         robot.odom_y = robot.y
         robot.odom_theta = robot.theta
+        if angle_corrected_pose is not None and angle_corrected_traj is not None:
+            cx, cy, ctheta = angle_corrected_pose
+            if abs(rotation) < 1e-8:
+                dx_c = distance * math.cos(ctheta)
+                dy_c = distance * math.sin(ctheta)
+                theta_new_c = ctheta
+            else:
+                theta_new_c = ctheta + rotation
+                radius_c = distance / rotation if abs(rotation) > 1e-8 else 0.0
+                dx_c = radius_c * (math.sin(theta_new_c) - math.sin(ctheta))
+                dy_c = -radius_c * (math.cos(theta_new_c) - math.cos(ctheta))
+            cx += dx_c
+            cy += dy_c
+            theta_new_c = math.atan2(math.sin(theta_new_c), math.cos(theta_new_c))
+            angle_corrected_pose = (cx, cy, theta_new_c)
+            angle_corrected_traj.append((cx, cy))
 
     # 3. 初始扫描并建立初始地图
     try:
@@ -958,7 +1055,7 @@ def main():
             predicted_traj=None,
             robot_radius=ROBOT_VISUAL_RADIUS,
             safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
-            actual_traj=robot.trajectory,
+            actual_traj=get_actual_traj_points(),
             actual_traj_style=explore_traj_style,
             scan_angles=current_angles,
             unsafe_mask=wall_safety_mask,
@@ -986,7 +1083,7 @@ def main():
                     predicted_traj=None,
                     robot_radius=ROBOT_VISUAL_RADIUS,
                     safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
-                    actual_traj=robot.trajectory,
+                    actual_traj=get_actual_traj_points(),
                     actual_traj_style=explore_traj_style,
                     scan_angles=current_angles,
                     unsafe_mask=wall_safety_mask,
@@ -1018,7 +1115,7 @@ def main():
                 predicted_traj=None,
                 robot_radius=ROBOT_VISUAL_RADIUS,
                 safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
-                actual_traj=robot.trajectory,
+                actual_traj=get_actual_traj_points(),
                 actual_traj_style=explore_traj_style,
                 scan_angles=current_angles,
                 unsafe_mask=wall_safety_mask,
@@ -1042,7 +1139,7 @@ def main():
                     predicted_traj=None,
                     robot_radius=ROBOT_VISUAL_RADIUS,
                     safety_radius=ROBOT_VISUAL_RADIUS + BASE_SAFETY_CLEARANCE,
-                    actual_traj=robot.trajectory,
+                    actual_traj=get_actual_traj_points(),
                     actual_traj_style=explore_traj_style,
                     scan_angles=current_angles,
                     unsafe_mask=wall_safety_mask,
@@ -1086,7 +1183,7 @@ def main():
     occupancy = slam.get_occupancy()
     wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
     viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=occupancy,
-               predicted_traj=None, robot_radius=None, actual_traj=robot.trajectory,
+               predicted_traj=None, robot_radius=None, actual_traj=get_actual_traj_points(),
                actual_traj_style=explore_traj_style, scan_angles=current_angles,
                unsafe_mask=wall_safety_mask)
     
@@ -1653,7 +1750,7 @@ def main():
             ]
             eval_paths_vis = getattr(dwa_planner, 'last_eval_paths', None)
 
-            actual_traj_points = robot.trajectory
+            actual_traj_points = get_actual_traj_points()
             actual_traj_style = explore_traj_style
             extra_traj_list = list(viz_extra)
             if viz_context_provider is not None:
@@ -1756,7 +1853,7 @@ def main():
             occupancy = slam.get_occupancy()
             wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
             viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=occupancy,
-                       actual_traj=robot.trajectory, actual_traj_style=explore_traj_style, scan_angles=current_angles,
+              actual_traj=get_actual_traj_points(), actual_traj_style=explore_traj_style, scan_angles=current_angles,
                        unsafe_mask=wall_safety_mask)
             should_return_to_start = True
             exit_triggered = True
@@ -2068,7 +2165,7 @@ def main():
                 predicted_traj=_traj,
                 robot_radius=ROBOT_VISUAL_RADIUS,
                 safety_radius=get_inflated_radius(),
-                actual_traj=robot.trajectory,
+                actual_traj=get_actual_traj_points(),
                 actual_traj_style=explore_traj_style,
                 scan_angles=current_angles,
                 unsafe_mask=wall_safety_mask,
@@ -2270,7 +2367,7 @@ def main():
                             target=None,
                             path=None,
                             occupancy=occupancy,
-                            actual_traj=robot.trajectory,
+                            actual_traj=get_actual_traj_points(),
                             actual_traj_style=explore_traj_style,
                             scan_angles=current_angles,
                             unsafe_mask=wall_safety_mask
@@ -2316,7 +2413,7 @@ def main():
                             target=None,
                             path=None,
                             occupancy=occupancy_latest,
-                            actual_traj=robot.trajectory,
+                            actual_traj=get_actual_traj_points(),
                             actual_traj_style=explore_traj_style,
                             scan_angles=current_angles,
                             unsafe_mask=wall_safety_mask
@@ -2687,15 +2784,16 @@ def main():
             return None
 
         if return_traj_split_idx is None:
-            return_traj_split_idx = len(robot.trajectory)
+            return_traj_split_idx = len(get_actual_traj_points())
 
         def return_viz_context(goal_cell, active_path_cells, nearest_idx):
-            actual_points = robot.trajectory
+            traj_points = get_actual_traj_points()
+            actual_points = traj_points
             actual_style = return_traj_style
             extra_segments = []
             if return_traj_split_idx is not None:
-                explore_segment = robot.trajectory[:return_traj_split_idx]
-                return_segment = robot.trajectory[return_traj_split_idx:]
+                explore_segment = traj_points[:return_traj_split_idx]
+                return_segment = traj_points[return_traj_split_idx:]
                 if len(return_segment) >= 2:
                     actual_points = return_segment
                 if len(explore_segment) >= 2:
@@ -2740,7 +2838,7 @@ def main():
 
     if back_path:
         used_safety_val = float(used_safety) if used_safety is not None else 0.0
-        return_traj_split_idx = len(robot.trajectory)
+        return_traj_split_idx = len(get_actual_traj_points())
         returned = drive_path_with_dwa(back_path, label="安全返回路径")
         if returned:
             print("Robot returned to start.")

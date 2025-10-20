@@ -8,8 +8,10 @@ import asyncio
 import sys
 import threading
 import time
+import builtins
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Deque, List, Optional
 
@@ -18,6 +20,20 @@ try:  # pragma: no cover - optional dependency guard
 except ImportError as exc:  # pragma: no cover - environment check
     print("[ERROR] bleak is not installed. Install it with 'pip install bleak'", file=sys.stderr)
     raise SystemExit(1) from exc
+
+
+def _timestamped_print(*args, **kwargs) -> None:
+    """Prefix BLE logging with timestamps for consistent diagnostics."""
+    file = kwargs.pop("file", sys.stdout)
+    sep = kwargs.pop("sep", " ")
+    end = kwargs.pop("end", "\n")
+    flush = kwargs.pop("flush", False)
+    prefix = datetime.now().strftime("[%H:%M:%S.%f] ")
+    builtins.print(prefix, end="", file=file, flush=flush)
+    builtins.print(*args, sep=sep, end=end, file=file, flush=flush)
+
+
+print = _timestamped_print
 
 
 @dataclass

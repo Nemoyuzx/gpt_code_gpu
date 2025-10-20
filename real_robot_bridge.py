@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -355,6 +356,14 @@ class BleRobotBridge:
         # 写入特征UUID（用于发送控制命令）
         self._write_char = write_char
         self._client = None  # BLE客户端引用（需要从listener获取）
+        # 全局速度缩放比例，仅作用于实际下发的指令，不影响规划/可视化逻辑
+        overall_scale = motor_ctrl_params.get("overall_speed_scale")
+        if overall_scale is None:
+            overall_scale = os.getenv("BLE_MOTOR_SPEED_SCALE", "1.0")
+        try:
+            self._motor_speed_scale = float(overall_scale)
+        except (TypeError, ValueError):
+            self._motor_speed_scale = 1.0
 
     def wait_ready(self, timeout: float = 5.0) -> bool:
         return self.listener.ready_event.wait(timeout)
@@ -373,12 +382,18 @@ class BleRobotBridge:
         """
         try:
             left_speed, right_speed = self.motor_controller.velocity_to_encoder_speeds(v, w, dt)
-            command = self.motor_controller.send_command(left_speed, right_speed)
+            scale = self._motor_speed_scale
+            scaled_left = int(round(left_speed * scale))
+            scaled_right = int(round(right_speed * scale))
+            command = self.motor_controller.send_command(scaled_left, scaled_right)
             
             # 通过蓝牙发送命令
             if self._write_char:
                 self.listener.write_command(command)
-                print(f"[MOTOR] {command} (v={v:.3f} w={w:.3f})")
+                print(
+                    "[MOTOR] %s (requested v=%.3f w=%.3f | scale=%.3f)"
+                    % (command, v, w, scale)
+                )
             else:
                 print(f"[WARN] No write_char configured, command not sent: {command}")
             

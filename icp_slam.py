@@ -4,8 +4,6 @@ import torch
 import os   # 新增: 用于环境变量和设备判断
 import gc   # 新增: 用于显式进行垃圾回收
 import resource  # 新增: 获取内存占用（Unix/macOS）
-import datetime  # 新增: 时间戳
-import csv       # 新增: 写入CSV
 import psutil  # 可选依赖
 from typing import Optional, Sequence
 
@@ -17,16 +15,20 @@ MAX_RANGE_FACTOR = 0.9  # 超过最大范围的比例阈值，用于忽略远距
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "200"))  # ICP最大迭代次数，可通过环境变量调整
-ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-3"))  # ICP收敛容忍，默认放宽以加速收敛
+ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "1000"))  # ICP最大迭代次数，可通过环境变量调整
+ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
 ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "12"))  # ICP对应点匹配距离上限 (米)
 ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息
 
 ICP_ACCUM_TRANS_THRESHOLD = float(os.environ.get("ICP_ACCUM_TRANS", "0.02"))
-ICP_ACCUM_ROT_THRESHOLD = float(os.environ.get("ICP_ACCUM_ROT", "0.05"))
-ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(95.0))))
-ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "0.6"))
+ICP_ACCUM_ROT_THRESHOLD = float(os.environ.get("ICP_ACCUM_ROT", "0.03"))
+ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(70.0))))
+ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "3"))
 ICP_FAIL_SKIP_FRAMES = int(os.environ.get("ICP_FAIL_SKIP", "3"))
+
+# 激光雷达安装点相对车体中心的偏移（单位: 米），默认向后5cm，可通过环境变量覆盖
+LIDAR_MOUNT_OFFSET_X = float(os.environ.get("LIDAR_MOUNT_OFFSET_X", "-0.019"))
+LIDAR_MOUNT_OFFSET_Y = float(os.environ.get("LIDAR_MOUNT_OFFSET_Y", "0.0"))
 
 # 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
 MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "30000"))
@@ -48,6 +50,8 @@ class ICPSlam:
         self.x, self.y, self.theta = init_pose
         # 激光雷达安装角度偏移（车体坐标系下的零度方向修正）
         self.laser_angle_offset = math.radians(float(laser_angle_offset_deg))
+        # 激光雷达安装位置相对车体参考点的偏移（车体坐标系，x向前，y向左）
+        self.lidar_mount_offset = (float(LIDAR_MOUNT_OFFSET_X), float(LIDAR_MOUNT_OFFSET_Y))
 
         # 保存地图中的点云（全局坐标）用于ICP匹配
         self.map_points = []  # list of [x,y] obstacle points
@@ -170,35 +174,6 @@ class ICPSlam:
             parts.append(f"ICP iters: {int(icp_iterations)}")
         line = "[ICPSlam][Mem] " + " | ".join(parts)
         print(line)
-
-        # 追加写入CSV（可通过环境变量 MEMLOG_CSV 指定路径）
-        try:
-            csv_path = os.environ.get("MEMLOG_CSV", "mem_usage_log.csv")
-            # 准备行数据
-            ts = datetime.datetime.now().isoformat(timespec='seconds')
-            row = {
-                'timestamp': ts,
-                'rss_cur_mb': round(rss_cur_mb, 3) if rss_cur_mb is not None else None,
-                'rss_peak_mb': round(rss_mb, 3) if rss_mb is not None else None,
-                'cuda_alloc_mb': round(cuda_alloc_mb, 3) if cuda_alloc_mb is not None else None,
-                'cuda_reserved_mb': round(cuda_reserved_mb, 3) if cuda_reserved_mb is not None else None,
-                'mps_current_mb': round(mps_current_mb, 3) if mps_current_mb is not None else None,
-                'mps_driver_mb': round(mps_driver_mb, 3) if mps_driver_mb is not None else None,
-                'map_points': map_pts,
-                'map_points_mb': round(map_pts_mb, 6),
-                'occupancy_mb': round(occ_mb, 6),
-                'icp_iterations': int(icp_iterations) if icp_iterations is not None else None,
-            }
-            # 若文件不存在或为空，写入表头
-            need_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
-            with open(csv_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-                if need_header:
-                    writer.writeheader()
-                writer.writerow(row)
-        except Exception:
-            # 日志写入失败不影响主流程
-            pass
 
     def to_tensor(self, data):
         """将NumPy数组转换为PyTorch张量并移到当前设备"""
@@ -342,6 +317,7 @@ class ICPSlam:
         angle_offset = self.laser_angle_offset
 
         body_points = []
+        offset_body_x, offset_body_y = self.lidar_mount_offset
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR  # 80% 最大范围阈值
         adjacent_diff_threshold = ADJACENCY_DIFF_THRESHOLD       # 相邻点距离差阈值
 
@@ -372,8 +348,8 @@ class ICPSlam:
                 continue
             # 计算该激光点在机器人坐标系下的坐标
             local_angle = angle_offset + angles_np[i]
-            local_x = dist * math.cos(local_angle)
-            local_y = dist * math.sin(local_angle)
+            local_x = offset_body_x + dist * math.cos(local_angle)
+            local_y = offset_body_y + dist * math.sin(local_angle)
             body_points.append([local_x, local_y])
 
         if not body_points:
@@ -594,6 +570,13 @@ class ICPSlam:
         # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
         rx = int((self.x - self.min_x) / self.resolution)
         ry = int((self.y - self.min_y) / self.resolution)
+        offset_body_x, offset_body_y = self.lidar_mount_offset
+        cos_theta = math.cos(self.theta)
+        sin_theta = math.sin(self.theta)
+        sensor_x = self.x + offset_body_x * cos_theta - offset_body_y * sin_theta
+        sensor_y = self.y + offset_body_x * sin_theta + offset_body_y * cos_theta
+        sx_idx = int((sensor_x - self.min_x) / self.resolution)
+        sy_idx = int((sensor_y - self.min_y) / self.resolution)
         far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
         adjacent_diff_threshold = 2.0  # 与ICP部分一致或更宽松的阈值
         new_points = []  # 本次扫描新增的障碍点（全局坐标）
@@ -632,8 +615,8 @@ class ICPSlam:
             beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))  # 归一化角度
             hit_obstacle = dist < max_range and dist <= far_threshold and not math.isinf(dist)
             effective_dist = dist if hit_obstacle else min(far_threshold, dist if dist < float('inf') else far_threshold)
-            end_x = self.x + effective_dist * math.cos(beam_angle)
-            end_y = self.y + effective_dist * math.sin(beam_angle)
+            end_x = sensor_x + effective_dist * math.cos(beam_angle)
+            end_y = sensor_y + effective_dist * math.sin(beam_angle)
             # 将末端点转换为栅格地图索引
             tx = int((end_x - self.min_x) / self.resolution);  ty = int((end_y - self.min_y) / self.resolution)
             max_x_idx = self.occupancy.shape[1] - 1;          max_y_idx = self.occupancy.shape[0] - 1
@@ -646,8 +629,12 @@ class ICPSlam:
             if rx > max_x_idx: rx = max_x_idx
             if ry < 0: ry = 0
             if ry > max_y_idx: ry = max_y_idx
+            if sx_idx < 0: sx_idx = 0
+            if sx_idx > max_x_idx: sx_idx = max_x_idx
+            if sy_idx < 0: sy_idx = 0
+            if sy_idx > max_y_idx: sy_idx = max_y_idx
             # 获取射线经过的栅格路径
-            line = self._bresenham(rx, ry, tx, ty)
+            line = self._bresenham(sx_idx, sy_idx, tx, ty)
             if hit_obstacle:
                 # 射线击中了障碍物（在范围内且未被过滤）
                 # 将路径上除最后一点外的格子标记为空闲
