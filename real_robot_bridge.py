@@ -347,18 +347,22 @@ class MotorController:
         
         return int(round(encoder_left)), int(round(encoder_right))
 
-    def send_command(self, left_speed: int, right_speed: int) -> str:
+    def send_command(self, v: float, w: float) -> str:
         """
         生成控制命令字符串
         
         Args:
-            left_speed: 左轮编码器速度
-            right_speed: 右轮编码器速度
+            v: 线速度 (m/s)
+            w: 角速度 (rad/s)
             
         Returns:
-            命令字符串，格式: "CMD-SET a b"
+            命令字符串，格式: "CMD-VW v w" (v和w都乘以1000)
         """
-        command = f"CMD-SET {left_speed} {right_speed}"
+        # 将v和w转换为整数（乘以1000）
+        v_int = int(round(v * 1000))
+        w_int = int(round(w * 1000))
+        
+        command = f"CMD-VW {v_int} {w_int}"
         with self._lock:
             self._command_queue.append(command)
         return command
@@ -478,68 +482,22 @@ class BleRobotBridge:
         Args:
             v: 线速度 (m/s)
             w: 角速度 (rad/s)
-            dt: 时间步长 (s)
+            dt: 时间步长 (s) - 保留参数以兼容旧代码，但不再使用
             
         Returns:
             是否成功发送命令
         """
         try:
-            left_speed, right_speed = self.motor_controller.velocity_to_encoder_speeds(v, w, dt)
-            scale = self._motor_speed_scale
-
-            target_left = float(left_speed) * scale
-            target_right = float(right_speed) * scale
-            corrected_left = target_left
-            corrected_right = target_right
-
-            pid_dt = self._last_feedback_dt if self._last_feedback_dt is not None else dt
-            pid_dt = max(1e-3, float(pid_dt))
-            if self._pid_enabled and self._last_actual_ticks is not None:
-                actual_left, actual_right = self._last_actual_ticks
-                corrected_left += self._left_pid.compute(target_left, actual_left, pid_dt)
-                corrected_right += self._right_pid.compute(target_right, actual_right, pid_dt)
-
-            final_left = int(round(corrected_left))
-            final_right = int(round(corrected_right))
-            if self._command_abs_limit is not None:
-                limit = float(self._command_abs_limit)
-                final_left = int(round(max(-limit, min(limit, float(final_left)))))
-                final_right = int(round(max(-limit, min(limit, float(final_right)))))
-
-            if abs(final_left) < 1 and abs(final_right) < 1:
-                self._left_pid.reset()
-                self._right_pid.reset()
-                self._last_actual_ticks = None
-
-            if final_left < 0 or final_right < 0:
-                shift = -min(final_left, final_right)
-                final_left += shift
-                final_right += shift
-                if self._command_abs_limit is not None:
-                    limit = int(self._command_abs_limit)
-                    final_left = min(limit, max(0, final_left))
-                    final_right = min(limit, max(0, final_right))
-                else:
-                    final_left = max(0, final_left)
-                    final_right = max(0, final_right)
-                timestamp = datetime.now().strftime("[%H:%M:%S.%f]")
-                print(
-                    f"{timestamp} [MOTOR] Adjusted negative CMD-SET values by +{shift} to satisfy non-negative requirement"
-                )
-
-            # 限制CMD-SET最高速度为70
-            final_left = min(70, max(0, final_left))
-            final_right = min(70, max(0, final_right))
-
-            command = self.motor_controller.send_command(final_left, final_right)
+            # 直接使用v和w生成命令，不再进行复杂转换
+            command = self.motor_controller.send_command(v, w)
             
             # 通过蓝牙发送命令
             if self._write_char:
                 self.listener.write_command(command)
                 timestamp = datetime.now().strftime("[%H:%M:%S.%f]")
                 print(
-                    "%s [MOTOR] %s (requested v=%.3f w=%.3f | scale=%.3f | PID=%s)"
-                    % (timestamp, command, v, w, scale, "ON" if self._pid_enabled else "OFF")
+                    "%s [MOTOR] %s (v=%.3f m/s, w=%.3f rad/s)"
+                    % (timestamp, command, v, w)
                 )
             else:
                 timestamp = datetime.now().strftime("[%H:%M:%S.%f]")

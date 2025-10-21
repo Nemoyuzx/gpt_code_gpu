@@ -172,7 +172,8 @@ BLE_ENCODER_POLL_INTERVAL = float(os.getenv("BLE_ENCODER_POLL_INTERVAL", "0.01")
 # 角度偏差修正：默认相当于左右轮脉冲差值为 ANGLE_CORRECTION_FACTOR 个 tick
 ANGLE_CORRECTION_FACTOR = float(os.getenv("ANGLE_CORRECTION_FACTOR", "0.0"))
 
-# CMD-SET 输出缩放：999 对应 1.2 m/s（可通过环境变量调整）
+# CMD-VW 输出格式：直接发送v(m/s)*1000和w(rad/s)*1000
+# 以下参数已废弃，保留以兼容旧代码
 CMD_SET_MAX_VALUE = float(os.getenv("CMD_SET_MAX_VALUE", "999"))
 CMD_SET_MAX_SPEED = float(os.getenv("CMD_SET_MAX_SPEED", "1.2"))
 CMD_SET_SCALE = (
@@ -181,10 +182,7 @@ CMD_SET_SCALE = (
     else 0.0
 )
 
-# 轮速度差缩放比例（用于调整转向灵敏度）
-# 值 > 1.0: 增强转向（轮速差更大）
-# 值 < 1.0: 减弱转向（轮速差更小）
-# 默认 1.0: 不缩放
+# 轮速度差缩放比例（已废弃）
 WHEEL_SPEED_DIFF_SCALE = float(os.getenv("WHEEL_SPEED_DIFF_SCALE", "0.2"))
 
 # PID 控制开关与默认增益（可通过环境变量覆盖）
@@ -843,7 +841,7 @@ def main():
     print("\n" + "="*60)
     print("🎮 键盘控制说明：")
     print("  [s] - 启动自动控制（开始发送电机命令）")
-    print("  [p] - 强制停止小车（立即发送 CMD-SET 0 0）")
+    print("  [p] - 强制停止小车（立即发送 CMD-VW 0 0）")
     print("  [m] - 保存地图和路径到文件")
     print("  [空格] - 暂停/继续可视化更新")
     print("="*60 + "\n")
@@ -1262,26 +1260,18 @@ def main():
             else:
                 d_trans, d_rot = robot.velocity_step(v_cmd, w_cmd, dt)
             d_trans, d_rot, _ = apply_angle_correction(d_trans, d_rot)
-            wheel_half = WHEEL_TRACK / 2.0
-            v_left = v_cmd - w_cmd * wheel_half
-            v_right = v_cmd + w_cmd * wheel_half
-            cmd_left = v_left * CMD_SET_SCALE
-            cmd_right = v_right * CMD_SET_SCALE
-            if CMD_SET_MAX_VALUE > 0.0:
-                cmd_left = max(-CMD_SET_MAX_VALUE, min(CMD_SET_MAX_VALUE, cmd_left))
-                cmd_right = max(-CMD_SET_MAX_VALUE, min(CMD_SET_MAX_VALUE, cmd_right))
-            cmd_left_int = int(round(cmd_left))
-            cmd_right_int = int(round(cmd_right))
+            
+            # 模拟模式下直接输出v和w（与真实模式保持一致）
             print(
-                f"[MOTOR] CMD-SET {cmd_left_int} {cmd_right_int} "
-                f"(v={v_cmd:.3f} w={w_cmd:.3f})"
+                f"[MOTOR] SIM v={v_cmd:.3f} w={w_cmd:.3f} "
+                f"(d_trans={d_trans:.4f} d_rot={d_rot:.4f})"
             )
             return d_trans, d_rot
         
         # 真实小车模式：
         # 1. 检查强制停止请求
         if viz.check_and_clear_force_stop():
-            print("[CONTROL] 🛑 检测到强制停止请求，发送 CMD-SET 0 0")
+            print("[CONTROL] 🛑 检测到强制停止请求，发送 CMD-VW 0 0")
             ble_bridge.send_motor_command(0.0, 0.0, dt)
         # 2. 发送电机控制命令（仅当ENABLE_CONTROL_LOOP且可视化器允许时）
         elif ENABLE_CONTROL_LOOP and viz.is_auto_control_enabled():
