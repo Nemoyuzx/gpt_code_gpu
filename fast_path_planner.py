@@ -57,16 +57,25 @@ class FastPathPlanner:
         # 根据距离选择算法
         if manhattan_dist < 50:
             # 短距离：使用BFS
+            algo_name = "BFS"
             path = self._bfs_path(occupancy, start, goal, sd, max_unknown_cells)
         elif manhattan_dist < 200:
             # 中等距离：使用双端BFS
+            algo_name = "BiDi-BFS"
             path = self._bidirectional_bfs(occupancy, start, goal, sd, max_unknown_cells)
         else:
             # 长距离：使用优化A*
+            algo_name = "A*"
             path = self._optimized_astar(
                 occupancy, start, goal, sd, max_unknown_cells, 
                 unknown_step_penalty, max_iterations
             )
+        
+        # 打印调试信息（简洁版）
+        if path:
+            print(f"   [{algo_name}] 规划成功: 距离={manhattan_dist}, 安全距离={sd:.1f}, 路径长度={len(path)}")
+        else:
+            print(f"   [{algo_name}] 规划失败: 距离={manhattan_dist}, 安全距离={sd:.1f}")
         
         # 缓存结果
         if path is not None:

@@ -743,7 +743,9 @@ def main():
     target_cell_id = None
     GRID_TARGET_X = None
     GRID_TARGET_Y = None
-    GRID_TARGET_REACHED_THRESHOLD = 0.15
+    # 到达单元格中心的严格阈值：单元格大小的10%（0.7m × 10% = 0.07m）
+    # 这确保小车必须到达单元格中心附近才算到达
+    GRID_TARGET_REACHED_THRESHOLD = 0.07
     
     if not (USE_REAL_BLE_DATA or REPLAY_RECORDED_DATA):
         # 模拟模式：在此处输入（因为已经建好初始地图）
@@ -812,7 +814,7 @@ def main():
             return
         GRID_TARGET_X = target_cell.center_x
         GRID_TARGET_Y = target_cell.center_y
-        GRID_TARGET_REACHED_THRESHOLD = 0.15  # 到达目标的距离阈值（米）
+        GRID_TARGET_REACHED_THRESHOLD = 0.07  # 到达目标的距离阈值（米）- 单元格大小10%
         
         # 更新可视化，显示选定的目标单元格
         viz.set_grid_system(grid_system, target_cell_id)
@@ -1513,7 +1515,7 @@ def main():
     occupancy = slam.get_occupancy()
     wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
     viz.update(est_pose, scan, frontiers=None, target=None, path=None, occupancy=occupancy,
-               predicted_traj=None, robot_radius=None, actual_traj=get_actual_traj_points(),
+               predicted_traj=None, robot_radius=ROBOT_VISUAL_RADIUS, actual_traj=get_actual_traj_points(),
                actual_traj_style=explore_traj_style, scan_angles=current_angles,
                unsafe_mask=wall_safety_mask)
     
@@ -1630,7 +1632,7 @@ def main():
             return
         GRID_TARGET_X = target_cell.center_x
         GRID_TARGET_Y = target_cell.center_y
-        GRID_TARGET_REACHED_THRESHOLD = 0.15  # 到达目标的距离阈值（米）
+        GRID_TARGET_REACHED_THRESHOLD = 0.07  # 到达目标的距离阈值（米）- 单元格大小10%
         
         # 更新可视化，显示选定的目标单元格
         viz.set_grid_system(grid_system, target_cell_id)
@@ -1933,7 +1935,9 @@ def main():
     dwa_planner = DWAPlanner(dwa_cfg)
 
     def get_inflated_radius() -> float:
-        return dwa_cfg.robot_radius + dwa_cfg.safety_clearance
+        """获取膨胀半径（机器人半径+安全裕度）
+        注意：应该从ROBOT_BODY_RADIUS获取，而不是从dwa_cfg获取，确保数据源唯一"""
+        return ROBOT_BODY_RADIUS + BASE_SAFETY_CLEARANCE
 
     inflated_radius = get_inflated_radius()
     dynamic_wall_margin = max(1, int(inflated_radius / maze.resolution) + 1)
@@ -2710,6 +2714,8 @@ def main():
                     section_times.append((label, float(dwa_detail[key])))
         t_section = time.perf_counter()
 
+        # 速度提升逻辑
+        t_boost_start = time.perf_counter()
         if v_cmd > 1e-6:
             dw_max_raw = None
             if hasattr(dwa_planner, "last_dw") and isinstance(dwa_planner.last_dw, (list, tuple)) and len(dwa_planner.last_dw) >= 2:
@@ -2733,15 +2739,24 @@ def main():
                 if step_counter % 40 == 0:
                     dw_max_disp = dw_max_scaled if (dw_max_scaled is not None and math.isfinite(dw_max_scaled)) else float('nan')
                     print(f"[探索] 提升前进速度 -> {v_cmd:.2f} m/s (dw_max={dw_max_disp:.2f} dist_to_goal={dist_to_goal:.2f}m)")
+        t_boost_end = time.perf_counter()
+        boost_time_ms = (t_boost_end - t_boost_start) * 1000.0
 
         # 可视化跳帧优化：每N帧更新一次
+        t_viz_start = time.perf_counter()
         should_visualize = (step_counter % VISUALIZATION_SKIP_FRAMES == 0)
+        viz_breakdown = {}
+        
         if should_visualize:
-            # 只在需要可视化时才准备数据，避免不必要的开销
+            # 数据准备阶段
+            t_prep = time.perf_counter()
             current_angles = last_angles_cache.get("value")
             occupancy = slam.get_occupancy()
             wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+            viz_breakdown['data_prep'] = (time.perf_counter() - t_prep) * 1000.0
             
+            # 实际传输阶段
+            t_transfer = time.perf_counter()
             viz.update(
                 est_pose,
                 scan,
@@ -2758,7 +2773,21 @@ def main():
                 unsafe_mask=wall_safety_mask,
                 dwa_eval_paths=getattr(dwa_planner, 'last_eval_paths', None)
             )
-        section_times.append(("visualize", (time.perf_counter() - t_section) * 1000.0))
+            viz_breakdown['transfer'] = (time.perf_counter() - t_transfer) * 1000.0
+        
+        t_viz_end = time.perf_counter()
+        total_viz_time = (t_viz_end - t_viz_start) * 1000.0
+        
+        # 记录详细的可视化时间（如果超过阈值则打印警告）
+        if total_viz_time > 50.0:
+            print(f"[VIZ WARN] 可视化耗时 {total_viz_time:.2f}ms (should_visualize={should_visualize}, "
+                  f"boost={boost_time_ms:.2f}ms, breakdown={viz_breakdown})")
+        
+        section_times.append(("speed_boost", boost_time_ms))
+        section_times.append(("visualize", total_viz_time))
+        if viz_breakdown:
+            section_times.append(("viz_breakdown", viz_breakdown))
+        
         t_section = time.perf_counter()
         # 添加 DWA 详细统计
         if hasattr(dwa_planner, 'last_timing') and isinstance(dwa_planner.last_timing, dict):
@@ -3110,6 +3139,7 @@ def main():
                     reached = drive_path_with_dwa_segment(
                         path_to_follow,
                         label="障碍补扫路径",
+                        arrival_tol=GRID_TARGET_REACHED_THRESHOLD,  # 与探索时保持一致
                         replan_callback=replanner,
                         path_safety_cells=safety_cells
                     )
@@ -3213,6 +3243,19 @@ def main():
                     time.sleep(0.5)
                 elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
                     sim_motion_controller.set_command(0.0, 0.0)
+                
+                # 停车时更新可视化显示当前状态
+                est_pose = robot.get_pose() if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA else slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))[:3]
+                occupancy_viz = slam.get_occupancy()
+                viz.update(
+                    est_pose,
+                    scan,
+                    occupancy=occupancy_viz,
+                    scan_angles=last_angles_cache.get("value"),
+                    robot_radius=ROBOT_VISUAL_RADIUS,
+                    safety_radius=get_inflated_radius()
+                )
+                
                 time.sleep(1.0)  # 停车1秒
             else:
                 print(f"\n⚠️  导航到目标单元格失败")
@@ -3236,37 +3279,82 @@ def main():
     if 0 <= start_idx_y < occupancy_return.shape[0] and 0 <= start_idx_x < occupancy_return.shape[1]:
         occupancy_return[start_idx_y, start_idx_x] = 0
 
+    # 返程时使用固定的安全距离（因为已经探索完成，地图更准确）
+    # 注意：必须使用 max(1, int(round(...))) 确保至少1格
     safety_cells_nominal = max(1, int(round(get_inflated_radius() / maze.resolution)))
-    safety_cells_nominal_f = float(safety_cells_nominal)
-    safety_candidates = [float(safety_cells_nominal)]
-    # 若默认安全距离无解，则逐步放宽，但不低于1栅格
-    for shrink in range(safety_cells_nominal - 1, 0, -1):
-        safety_candidates.append(float(shrink))
-
-    back_path = None
-    used_safety = None
-    for sd in safety_candidates:
-        candidate = explorer.plan_path(
-            occupancy_return,
-            (current_idx_x, current_idx_y),
-            (start_idx_x, start_idx_y),
-            safety_distance=sd,
-            max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
-        )
-        if candidate:
-            back_path = candidate
-            used_safety = sd
-            break
+    print(f"   计算安全距离为 {safety_cells_nominal} 栅格 (机器人半径 {get_inflated_radius():.3f}m / 栅格分辨率 {maze.resolution:.3f}m)")
+    # 注意：不要限制最大值！计算出的安全距离已经是合理的（基于机器人半径）
+    safety_cells_nominal_f = float(safety_cells_nominal)+3
+    print(f"🛡️  返程安全距离设置: {safety_cells_nominal_f:.1f} 栅格 ({safety_cells_nominal_f * maze.resolution:.3f} 米)")
+    
+    # 返回时强制使用传统A*算法（更可靠），临时禁用FastPathPlanner
+    original_fast_planner_setting = explorer._use_fast_planner
+    explorer._use_fast_planner = False
+    print("🔧 返回路径规划：使用传统A*算法（禁用FastPathPlanner）")
+    
+    # 🔍 添加调试信息：分析地图状态
+    print(f"\n📊 返回路径规划调试信息：")
+    print(f"   起点: ({current_idx_x}, {current_idx_y}) -> 世界坐标 ({robot.x:.3f}, {robot.y:.3f})")
+    print(f"   终点: ({start_idx_x}, {start_idx_y}) -> 世界坐标 ({maze.start[0]:.3f}, {maze.start[1]:.3f})")
+    print(f"   地图大小: {occupancy_return.shape[1]} × {occupancy_return.shape[0]} 栅格")
+    print(f"   安全距离: {safety_cells_nominal_f:.1f} 栅格 = {safety_cells_nominal_f * maze.resolution:.3f} 米")
+    
+    # 统计地图状态
+    total_cells = occupancy_return.size
+    obstacle_cells = np.sum(occupancy_return == 1)
+    unknown_cells = np.sum(occupancy_return == -1)
+    free_cells = np.sum(occupancy_return == 0)
+    print(f"   地图统计: 障碍物={obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.1f}%), "
+          f"未知={unknown_cells}/{total_cells} ({unknown_cells/total_cells*100:.1f}%), "
+          f"空闲={free_cells}/{total_cells} ({free_cells/total_cells*100:.1f}%)")
+    
+    # 检查起点和终点的状态
+    start_cell_value = occupancy_return[start_idx_y, start_idx_x] if 0 <= start_idx_y < occupancy_return.shape[0] and 0 <= start_idx_x < occupancy_return.shape[1] else "越界"
+    current_cell_value = occupancy_return[current_idx_y, current_idx_x] if 0 <= current_idx_y < occupancy_return.shape[0] and 0 <= current_idx_x < occupancy_return.shape[1] else "越界"
+    print(f"   当前位置栅格值: {current_cell_value} (0=空闲, 1=障碍, -1=未知)")
+    print(f"   起点栅格值: {start_cell_value} (0=空闲, 1=障碍, -1=未知)")
+    
+    # 检查起点和终点周围是否安全
+    def check_safety_around(occ, x, y, sd):
+        h, w = occ.shape
+        unsafe_count = 0
+        total_checked = 0
+        for dy in range(-int(sd)-1, int(sd)+2):
+            for dx in range(-int(sd)-1, int(sd)+2):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    total_checked += 1
+                    dist = math.sqrt(dx*dx + dy*dy)
+                    if dist <= sd and occ[ny, nx] == 1:
+                        unsafe_count += 1
+        return unsafe_count, total_checked
+    
+    current_unsafe, current_total = check_safety_around(occupancy_return, current_idx_x, current_idx_y, safety_cells_nominal_f)
+    start_unsafe, start_total = check_safety_around(occupancy_return, start_idx_x, start_idx_y, safety_cells_nominal_f)
+    print(f"   当前位置周围: {current_unsafe}/{current_total} 个栅格在安全距离内有障碍物 {'❌不安全' if current_unsafe > 0 else '✅安全'}")
+    print(f"   起点周围: {start_unsafe}/{start_total} 个栅格在安全距离内有障碍物 {'❌不安全' if start_unsafe > 0 else '✅安全'}")
+    
+    # 直接使用固定的安全距离，不再逐步缩小
+    print(f"\n   使用安全距离 {safety_cells_nominal_f:.1f} 栅格进行路径规划...")
+    back_path = explorer.plan_path(
+        occupancy_return,
+        (current_idx_x, current_idx_y),
+        (start_idx_x, start_idx_y),
+        safety_distance=safety_cells_nominal_f,
+        max_unknown_cells=RETURN_MAX_UNKNOWN_CELLS
+    )
+    
+    # 恢复FastPathPlanner设置
+    explorer._use_fast_planner = original_fast_planner_setting
 
     if back_path:
-        used_safety_val = float(used_safety) if used_safety is not None else 0.0
-        if math.isclose(used_safety_val, safety_cells_nominal_f, rel_tol=1e-6):
-            print(f"使用探索阶段的安全距离 {used_safety_val:.1f} 栅格规划返程路线")
-        else:
-            print(f"原安全距离 {safety_cells_nominal_f:.1f} 栅格无解，改用 {used_safety_val:.1f} 栅格规划返程路线")
+        print(f"✓ 使用安全距离 {safety_cells_nominal_f:.1f} 栅格成功规划返程路线（共 {len(back_path)} 格）")
+        
+        # 计算带安全距离路径的长度
+        safe_path_length_meters = explorer.calculate_path_length(back_path, maze.resolution)
+        print(f"📏 带安全距离返回路径长度: {safe_path_length_meters:.2f} 米 ({len(back_path)-1} 栅格步数)")
     else:
-        min_safety = 1.0 if safety_cells_nominal_f >= 1.0 else safety_cells_nominal_f
-        print(f"无法在安全距离 {safety_cells_nominal_f:.1f}~{min_safety:.1f} 栅格范围内规划返程路径")
+        print(f"⚠️  无法使用安全距离 {safety_cells_nominal_f:.1f} 栅格规划返程路径")
 
     back_path_no_safety = explorer.plan_path_no_safety(
         occupancy_return,
@@ -3276,19 +3364,52 @@ def main():
 
     if back_path_no_safety:
         path_length_meters = explorer.calculate_path_length(back_path_no_safety, maze.resolution)
-        print(f"无安全距离最短路径长度: {path_length_meters:.2f} 米 ({len(back_path_no_safety)-1} 栅格步数)")
+        print(f"📏 无安全距离（紧急）路径长度: {path_length_meters:.2f} 米 ({len(back_path_no_safety)-1} 栅格步数)")
+        
+        # 如果两种路径都存在，比较它们
+        if back_path:
+            safe_path_length = explorer.calculate_path_length(back_path, maze.resolution)
+            extra_distance = safe_path_length - path_length_meters
+            extra_percent = (extra_distance / path_length_meters) * 100 if path_length_meters > 0 else 0
+            print(f"   安全路径比紧急路径多: {extra_distance:.2f} 米 ({extra_percent:.1f}%)")
 
+    # 更新可视化显示返程路径
     if back_path:
+        print(f"🎨 可视化显示: 使用带安全距离的A*返回路径（{safety_cells_nominal_f:.1f}栅格安全距离）")
         viz.set_emergency_path(back_path)
+        # 更新可视化显示返程路径
+        occupancy_viz = slam.get_occupancy()
+        viz.update(
+            est_pose,
+            scan,
+            path=back_path,
+            occupancy=occupancy_viz,
+            scan_angles=last_angles_cache.get("value"),
+            robot_radius=ROBOT_VISUAL_RADIUS,
+            safety_radius=get_inflated_radius()
+        )
     elif back_path_no_safety:
+        print(f"⚠️  可视化显示: 使用无安全距离的紧急返回路径（A*规划失败，降级方案）")
         viz.set_emergency_path(back_path_no_safety)
+        # 更新可视化显示无安全距离的返程路径
+        occupancy_viz = slam.get_occupancy()
+        viz.update(
+            est_pose,
+            scan,
+            path=back_path_no_safety,
+            occupancy=occupancy_viz,
+            scan_angles=last_angles_cache.get("value"),
+            robot_radius=ROBOT_VISUAL_RADIUS,
+            safety_radius=get_inflated_radius()
+        )
 
     def drive_path_with_dwa(path_cells, label="返回路径"):
         nonlocal est_pose, scan, total_distance_traveled, step_counter, return_traj_split_idx
         if not path_cells or len(path_cells) < 2:
             return False
 
-        path_safety_val = float(used_safety) if used_safety is not None else None
+        # 直接使用固定的安全距离
+        path_safety_val = safety_cells_nominal_f if back_path else None
 
         path_cells_current: List[Tuple[int, int]] = list(path_cells)
         initial_path_cells: List[Tuple[int, int]] = []
@@ -3375,6 +3496,11 @@ def main():
 
         def replan_return_path() -> List[Tuple[int, int]] | None:
             nonlocal path_safety_val
+            
+            # 返回路径重规划时也使用传统A*（更稳定可靠）
+            original_setting = explorer._use_fast_planner
+            explorer._use_fast_planner = False
+            
             pose_now = robot.get_pose()
             current_idx_x_update = int((pose_now[0] - maze.bounds[0]) / maze.resolution)
             current_idx_y_update = int((pose_now[1] - maze.bounds[1]) / maze.resolution)
@@ -3425,6 +3551,8 @@ def main():
             if updated_path and len(updated_path) >= 2:
                 path_safety_val = float(safety_cells_return)
                 set_path(updated_path, verbose=True)
+                # 恢复设置
+                explorer._use_fast_planner = original_setting
                 return updated_path
 
             if path_safety_val is not None:
@@ -3437,6 +3565,8 @@ def main():
                 )
                 if fallback_path and len(fallback_path) >= 2:
                     set_path(fallback_path, verbose=True)
+                    # 恢复设置
+                    explorer._use_fast_planner = original_setting
                     return fallback_path
 
             no_safety_path = explorer.plan_path_no_safety(
@@ -3446,8 +3576,12 @@ def main():
             )
             if no_safety_path and len(no_safety_path) >= 2:
                 set_path(no_safety_path, verbose=True)
+                # 恢复设置
+                explorer._use_fast_planner = original_setting
                 return no_safety_path
 
+            # 恢复设置后返回None
+            explorer._use_fast_planner = original_setting
             return None
 
         if return_traj_split_idx is None:
@@ -3484,7 +3618,7 @@ def main():
             reached = drive_path_with_dwa_segment(
                 segment_path,
                 label=segment_label,
-                arrival_tol=0.18,
+                arrival_tol=GRID_TARGET_REACHED_THRESHOLD,  # 与探索时保持一致
                 max_iter_factor=80,
                 path_safety_cells=path_safety_val,
                 viz_context_provider=return_viz_context
@@ -3504,9 +3638,95 @@ def main():
         return True
 
     if back_path:
-        used_safety_val = float(used_safety) if used_safety is not None else 0.0
         return_traj_split_idx = len(get_actual_traj_points())
-        print(f"\n🚀 开始返回起点...")
+        
+        # 🔄 在开始DWA之前，先原地旋转到路径方向
+        if len(back_path) >= 2:
+            # 计算路径的初始方向（从当前位置到第一个路径点）
+            current_world_x = maze.bounds[0] + (back_path[0][0] + 0.5) * maze.resolution
+            current_world_y = maze.bounds[1] + (back_path[0][1] + 0.5) * maze.resolution
+            next_world_x = maze.bounds[0] + (back_path[1][0] + 0.5) * maze.resolution
+            next_world_y = maze.bounds[1] + (back_path[1][1] + 0.5) * maze.resolution
+            
+            target_heading = math.atan2(next_world_y - current_world_y, next_world_x - current_world_x)
+            current_pose = robot.get_pose()
+            current_heading = current_pose[2]
+            
+            # 计算需要旋转的角度
+            angle_diff = math.atan2(math.sin(target_heading - current_heading), 
+                                   math.cos(target_heading - current_heading))
+            
+            print(f"\n🔄 返回前原地旋转对齐路径方向...")
+            print(f"   当前朝向: {math.degrees(current_heading):.1f}°")
+            print(f"   目标朝向: {math.degrees(target_heading):.1f}°")
+            print(f"   需要旋转: {math.degrees(angle_diff):.1f}°")
+            
+            # 如果角度差超过阈值，进行原地旋转
+            if abs(angle_diff) > math.radians(5):  # 超过5度才旋转
+                rotation_steps = 0
+                max_rotation_steps = 100
+                angular_speed = 0.5 if abs(angle_diff) > math.radians(30) else 0.3  # 大角度快速旋转
+                
+                while abs(angle_diff) > math.radians(2) and rotation_steps < max_rotation_steps:
+                    # 确定旋转方向和速度
+                    rotation_direction = 1.0 if angle_diff > 0 else -1.0
+                    w_cmd = rotation_direction * angular_speed
+                    
+                    # 发送旋转命令
+                    if USE_REAL_BLE_DATA and ble_bridge:
+                        ble_bridge.send_motor_command(0.0, w_cmd)
+                    elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
+                        sim_motion_controller.set_command(0.0, w_cmd)
+                    
+                    time.sleep(0.05)  # 50ms控制周期
+                    
+                    # 更新位姿和传感器
+                    if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA:
+                        # 模拟模式：从lidar获取新扫描
+                        current_pose = robot.get_pose()
+                        noisy_scan_data, _ = lidar.scan(current_pose)
+                        scan_data = noisy_scan_data
+                    else:
+                        # 真实数据模式：通过SLAM更新（scan已在外层循环中获取）
+                        # 简化处理：假设纯旋转，使用之前的scan数据
+                        est_pose = slam.update((0.0, w_cmd * 0.05), scan, last_angles_cache.get("value"))
+                        current_pose = est_pose[:3]
+                        scan_data = scan  # 使用外层的scan变量
+                    
+                    # 重新计算角度差
+                    current_heading = current_pose[2]
+                    angle_diff = math.atan2(math.sin(target_heading - current_heading), 
+                                           math.cos(target_heading - current_heading))
+                    
+                    rotation_steps += 1
+
+                    # 每1步更新一次可视化
+                    if rotation_steps % 1 == 0:
+                        occupancy_viz = slam.get_occupancy()
+                        viz.update(
+                            current_pose,
+                            scan_data,
+                            path=back_path,
+                            occupancy=occupancy_viz,
+                            scan_angles=last_angles_cache.get("value"),
+                            robot_radius=ROBOT_VISUAL_RADIUS,
+                            safety_radius=get_inflated_radius()
+                        )
+                
+                # 停止旋转
+                if USE_REAL_BLE_DATA and ble_bridge:
+                    ble_bridge.send_motor_command(0.0, 0.0)
+                elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
+                    sim_motion_controller.set_command(0.0, 0.0)
+                
+                time.sleep(0.2)  # 稳定一下
+                
+                final_heading = robot.get_pose()[2] if not USE_REAL_BLE_DATA else current_pose[2]
+                print(f"   ✅ 旋转完成，最终朝向: {math.degrees(final_heading):.1f}°, 步数: {rotation_steps}")
+            else:
+                print(f"   ✅ 朝向已对齐，无需旋转")
+        
+        print(f"\n🚀 开始返回起点（安全距离 {safety_cells_nominal_f:.1f} 格）...")
         returned = drive_path_with_dwa(back_path, label="安全返回路径")
         if returned:
             print("\n✅ 成功返回起点！")
@@ -3517,10 +3737,23 @@ def main():
                 time.sleep(0.5)
             elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
                 sim_motion_controller.set_command(0.0, 0.0)
+            
+            # 停车时更新可视化显示最终状态
+            final_pose = robot.get_pose() if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA else slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))[:3]
+            occupancy_final = slam.get_occupancy()
+            viz.update(
+                final_pose,
+                scan,
+                occupancy=occupancy_final,
+                scan_angles=last_angles_cache.get("value"),
+                robot_radius=ROBOT_VISUAL_RADIUS,
+                safety_radius=get_inflated_radius(),
+                actual_traj=get_actual_traj_points()
+            )
+            
             time.sleep(1.0)  # 停车1秒
             
             # 显示完成信息
-            final_pose = robot.get_pose() if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA else slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))[:3]
             dist_to_start = math.hypot(final_pose[0] - maze.start[0], final_pose[1] - maze.start[1])
             print(f"\n🎊 任务完成！")
             print(f"   起点位置: ({maze.start[0]:.3f}, {maze.start[1]:.3f})")
@@ -3531,7 +3764,47 @@ def main():
         else:
             print("\n⚠️  返程DWA未能在限定步数内抵达起点。")
     else:
-        print("❌ 未能规划带安全距离的返程路径，无法执行返程。")
+        print("❌ 未能规划带安全距离的返程路径，尝试使用无安全距离路径返回...")
+        if back_path_no_safety:
+            return_traj_split_idx = len(get_actual_traj_points())
+            print(f"\n🚀 开始返回起点（无安全距离紧急模式）...")
+            returned = drive_path_with_dwa(back_path_no_safety, label="紧急返回路径")
+            if returned:
+                print("\n✅ 成功返回起点（紧急模式）！")
+                # 返回起点后停车
+                print("🛑 已到达起点，停车...")
+                if USE_REAL_BLE_DATA and ble_bridge:
+                    ble_bridge.send_motor_command(0.0, 0.0)
+                    time.sleep(0.5)
+                elif not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA and sim_motion_controller:
+                    sim_motion_controller.set_command(0.0, 0.0)
+                
+                # 停车时更新可视化
+                final_pose = robot.get_pose() if not USE_REAL_BLE_DATA and not REPLAY_RECORDED_DATA else slam.update((0.0, 0.0), scan, last_angles_cache.get("value"))[:3]
+                occupancy_final = slam.get_occupancy()
+                viz.update(
+                    final_pose,
+                    scan,
+                    occupancy=occupancy_final,
+                    scan_angles=last_angles_cache.get("value"),
+                    robot_radius=ROBOT_VISUAL_RADIUS,
+                    safety_radius=get_inflated_radius(),
+                    actual_traj=get_actual_traj_points()
+                )
+                
+                time.sleep(1.0)
+                
+                dist_to_start = math.hypot(final_pose[0] - maze.start[0], final_pose[1] - maze.start[1])
+                print(f"\n🎊 任务完成（紧急模式）！")
+                print(f"   起点位置: ({maze.start[0]:.3f}, {maze.start[1]:.3f})")
+                print(f"   当前位置: ({final_pose[0]:.3f}, {final_pose[1]:.3f})")
+                print(f"   距离起点: {dist_to_start:.3f}m")
+                print(f"   总移动距离: {total_distance_traveled:.1f}m")
+                print(f"   探索前沿数: {frontiers_explored}")
+            else:
+                print("\n⚠️  紧急返程也未能在限定步数内抵达起点。")
+        else:
+            print("❌ 连无安全距离路径也无法规划，无法执行返程。")
     
     # 根据结束条件输出相应信息
     if 'should_return_to_start' in locals() and should_return_to_start:

@@ -369,6 +369,9 @@ class FrontierExplorer:
         sd = self.safety_distance if (safety_distance is None) else safety_distance
         allow_unknown = max_unknown_cells is not None and max_unknown_cells > 0
 
+        # 🔍 调试信息：打印A*搜索参数
+        print(f"   [A*调试] 起点=({sx},{sy}), 终点=({gx},{gy}), 地图={w}×{h}, 安全距离={sd:.1f}, 最大未知格={max_unknown_cells}, 无迭代限制")
+        
         start_state = (sx, sy, 0)
         open_set = []
         start_h = self._heuristic((sx, sy), (gx, gy))
@@ -381,6 +384,22 @@ class FrontierExplorer:
         
         # 更激进的早期终止：代价超过启发式2倍即放弃
         cost_limit = start_h * 2.0
+        
+        # 🔍 调试信息：检查起点和终点
+        start_val = occupancy[sy, sx] if 0 <= sy < h and 0 <= sx < w else -999
+        goal_val = occupancy[gy, gx] if 0 <= gy < h and 0 <= gx < w else -999
+        print(f"   [A*调试] 起点栅格值={start_val}, 终点栅格值={goal_val}")
+        print(f"   [A*调试] 启发式距离={start_h:.2f}, 代价上限={cost_limit:.2f}")
+        
+        # 检查起点安全性
+        start_safe = self._is_safe(occupancy, sx, sy, safety_distance=sd)
+        goal_safe = self._is_safe(occupancy, gx, gy, safety_distance=sd)
+        print(f"   [A*调试] 起点安全性={'✅安全' if start_safe else '❌不安全'}, 终点安全性={'✅安全' if goal_safe else '❌不安全'}")
+        
+        if not start_safe:
+            print(f"   [A*调试] ⚠️ 警告：起点位置不安全（安全距离{sd:.1f}栅格内有障碍物）")
+        if not goal_safe:
+            print(f"   [A*调试] ⚠️ 警告：终点位置不安全（安全距离{sd:.1f}栅格内有障碍物）")
         
         # 扩展移动方向：8方向 + "马步"跳跃（类似象棋马走日字）
         directions = [
@@ -404,7 +423,8 @@ class FrontierExplorer:
             (1, 2, 2.236),   # 下右马步
         ]
         
-        while open_set and iterations < max_iterations:
+        # 移除迭代次数限制，让A*可以完整搜索
+        while open_set:
             f_current, g_current, unknown_used, x, y = heapq.heappop(open_set)
             iterations += 1
 
@@ -413,9 +433,9 @@ class FrontierExplorer:
                 continue
             closed_set.add(state)
             
-            # 早期终止检查
-            if g_current > cost_limit:
-                continue
+            # 移除早期终止检查，让A*可以找到所有可能的路径
+            # if g_current > cost_limit:
+            #     continue
 
             if (x, y) == (gx, gy):
                 path = []
@@ -471,6 +491,18 @@ class FrontierExplorer:
                     heuristic = self._heuristic((nx, ny), (gx, gy))
                     f_score = tentative_g + heuristic + next_unknown_used * 0.25
                     heapq.heappush(open_set, (f_score, tentative_g, next_unknown_used, nx, ny))
+        
+        # 🔍 调试信息：搜索失败原因分析
+        print(f"   [A*调试] ❌ 路径搜索失败！")
+        print(f"   [A*调试] 总迭代次数={iterations}, 探索节点数={len(closed_set)}, 待探索节点数={len(open_set)}")
+        
+        # 分析失败原因
+        if len(open_set) == 0:
+            print(f"   [A*调试] 失败原因: 所有可探索节点已耗尽（无路可走）")
+            # 检查是否因为安全距离限制
+            if sd > 0:
+                print(f"   [A*调试] 可能原因: 安全距离{sd:.1f}栅格限制过严，导致起点/终点/中间路径不满足安全要求")
+                print(f"   [A*调试] 建议: 检查起点和终点周围是否有足够的安全空间")
         
         return None  # 无法找到路径
     

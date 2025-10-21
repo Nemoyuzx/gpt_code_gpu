@@ -140,22 +140,29 @@ class SharedMemoryVisualizer:
         更新可视化
         大型数据通过共享内存传输，小型数据通过队列传输
         """
+        import time
+        t_start = time.perf_counter()
+        
         if self.process is None or not self.process.is_alive():
             return
         
         # 将大型数据写入共享内存
+        t_shm_write = time.perf_counter()
         shape = (0, 0)
         if occupancy is not None:
             shape = occupancy.shape
             if shape[0] <= self.max_grid_size and shape[1] <= self.max_grid_size:
-                # 写入占用网格
+                # 写入占用网格（使用切片赋值，避免创建临时数组）
                 shm_array = np.ndarray(
                     (self.max_grid_size, self.max_grid_size),
                     dtype=np.int8,
                     buffer=self.shm_occupancy.buf
                 )
-                # 只复制实际使用的部分
-                shm_array[:shape[0], :shape[1]] = occupancy.astype(np.int8)
+                # 只在数据类型不同时才转换
+                if occupancy.dtype == np.int8:
+                    shm_array[:shape[0], :shape[1]] = occupancy
+                else:
+                    shm_array[:shape[0], :shape[1]] = occupancy.astype(np.int8)
                 self.current_shape = shape
             else:
                 print(f"[SHM VIZ WARN] Occupancy shape {shape} exceeds max size {self.max_grid_size}")
@@ -171,7 +178,10 @@ class SharedMemoryVisualizer:
                 )
                 shm_array[:shape[0], :shape[1]] = unsafe_mask
         
+        shm_write_time = (time.perf_counter() - t_shm_write) * 1000.0
+        
         # 小型数据通过队列传输
+        t_queue = time.perf_counter()
         data = {
             'robot_pose': robot_pose,
             'scan': scan,
@@ -191,17 +201,28 @@ class SharedMemoryVisualizer:
         }
         
         # 如果队列满了，移除旧数据
+        queue_dropped = False
         if self.command_queue.full():
             try:
                 self.command_queue.get_nowait()
+                queue_dropped = True
             except:
                 pass
         
+        queue_blocked = False
         try:
             self.command_queue.put_nowait(('update', data))
         except:
             # 队列满了就跳过这一帧
-            pass
+            queue_blocked = True
+        
+        queue_time = (time.perf_counter() - t_queue) * 1000.0
+        total_time = (time.perf_counter() - t_start) * 1000.0
+        
+        # 如果更新耗时超过阈值，打印警告
+        if total_time > 10.0 or queue_dropped or queue_blocked:
+            print(f"[SHM VIZ] update: {total_time:.2f}ms (shm_write={shm_write_time:.2f}ms, "
+                  f"queue={queue_time:.2f}ms, dropped={queue_dropped}, blocked={queue_blocked})")
     
     def __getattr__(self, name: str) -> Any:
         """
