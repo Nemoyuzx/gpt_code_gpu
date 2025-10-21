@@ -16,84 +16,21 @@ from dwa import LegacyDWAPlanner as DWAPlanner, LegacyDWAConfig as DWAConfig, oc
 from collections import deque
 from visualizer import Visualizer, LIDAR_DISPLAY_MAX_RANGE
 from noise_filter import NoiseFilter
+from async_visualizer import AsyncVisualizer
+from multiprocess_visualizer import MultiprocessVisualizer
+from shm_visualizer import SharedMemoryVisualizer
+from grid_system import GridCell, GridSystem
 import numpy as np
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+import queue
 
 
-# ==================== 网格单元系统 ====================
-class GridCell:
-    """表示一个0.7x0.7m的网格单元"""
-    def __init__(self, cell_id: int, grid_row: int, grid_col: int, center_x: float, center_y: float, size: float = 0.7):
-        self.id = cell_id  # 单元格序号（1-81）
-        self.row = grid_row  # 网格行号（0-8）
-        self.col = grid_col  # 网格列号（0-8）
-        self.center_x = center_x  # 单元格中心X坐标（世界坐标）
-        self.center_y = center_y  # 单元格中心Y坐标（世界坐标）
-        self.size = size  # 单元格边长（米）
-    
-    def get_bounds(self) -> Tuple[float, float, float, float]:
-        """返回单元格边界 (min_x, min_y, max_x, max_y)"""
-        half = self.size / 2
-        return (
-            self.center_x - half,
-            self.center_y - half,
-            self.center_x + half,
-            self.center_y + half
-        )
-    
-    def contains_point(self, x: float, y: float) -> bool:
-        """判断点(x,y)是否在此单元格内"""
-        min_x, min_y, max_x, max_y = self.get_bounds()
-        return min_x <= x <= max_x and min_y <= y <= max_y
-    
-    def __repr__(self):
-        return f"Cell#{self.id}[{self.row},{self.col}]@({self.center_x:.2f},{self.center_y:.2f})"
-
-
-class GridSystem:
-    """9x9网格系统，以小车初始位置为中心"""
-    def __init__(self, robot_x: float, robot_y: float, cell_size: float = 0.7):
-        self.cell_size = cell_size
-        self.robot_x = robot_x
-        self.robot_y = robot_y
-        self.cells: List[GridCell] = []
-        self._build_grid()
-    
-    def _build_grid(self):
-        """构建9x9网格，机器人位置为中心(4,4)"""
-        cell_id = 1
-        for row in range(9):
-            for col in range(9):
-                # 计算相对于中心的偏移
-                offset_row = row - 4  # -4 to 4
-                offset_col = col - 4  # -4 to 4
-                
-                # 计算单元格中心坐标
-                center_x = self.robot_x + offset_col * self.cell_size
-                center_y = self.robot_y + offset_row * self.cell_size
-                
-                cell = GridCell(cell_id, row, col, center_x, center_y, self.cell_size)
-                self.cells.append(cell)
-                cell_id += 1
-    
-    def get_cell_by_id(self, cell_id: int) -> Optional[GridCell]:
-        """通过序号获取单元格"""
-        for cell in self.cells:
-            if cell.id == cell_id:
-                return cell
-        return None
-    
-    def get_cell_at_position(self, x: float, y: float) -> Optional[GridCell]:
-        """获取包含指定坐标的单元格"""
-        for cell in self.cells:
-            if cell.contains_point(x, y):
-                return cell
-        return None
-    
-    def get_center_cell(self) -> GridCell:
-        """获取中心单元格（机器人初始位置）"""
-        return self.cells[40]  # 第41个单元格（row=4, col=4）
+# 可视化模式配置：
+# 'thread' - 线程模式（最慢，有线程安全问题）
+# 'process' - 多进程模式（通过队列传输，中等性能）
+# 'shm' - 共享内存模式（零拷贝传输，最快，推荐）
+VISUALIZATION_MODE = os.getenv("VISUALIZATION_MODE", "shm")
 
 
 def _timestamped_print(*args, **kwargs) -> None:
@@ -110,8 +47,55 @@ def _timestamped_print(*args, **kwargs) -> None:
 print = _timestamped_print
 
 
+def threaded_input(prompt: str, result_queue: queue.Queue) -> None:
+    """
+    在独立线程中获取用户输入
+    
+    Args:
+        prompt: 输入提示信息
+        result_queue: 用于存放输入结果的队列
+    """
+    try:
+        user_input = input(prompt)
+        result_queue.put(('success', user_input))
+    except (EOFError, KeyboardInterrupt):
+        result_queue.put(('interrupt', None))
+    except Exception as e:
+        result_queue.put(('error', str(e)))
+
+
+def get_input_non_blocking(prompt: str, timeout: Optional[float] = None) -> Optional[str]:
+    """
+    非阻塞方式获取用户输入
+    在等待输入时不会阻塞主进程，可视化可以继续更新
+    
+    Args:
+        prompt: 输入提示信息
+        timeout: 超时时间（秒），None表示无限等待
+    
+    Returns:
+        用户输入的字符串，如果超时或中断则返回None
+    """
+    result_queue = queue.Queue()
+    input_thread = threading.Thread(target=threaded_input, args=(prompt, result_queue), daemon=True)
+    input_thread.start()
+    
+    try:
+        status, result = result_queue.get(timeout=timeout)
+        if status == 'success':
+            return result
+        elif status == 'interrupt':
+            return None
+        else:
+            print(f"输入错误: {result}")
+            return None
+    except queue.Empty:
+        print("\n输入超时")
+        return None
+
+
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -196,6 +180,12 @@ CMD_SET_SCALE = (
     if CMD_SET_MAX_SPEED > 0.0
     else 0.0
 )
+
+# 轮速度差缩放比例（用于调整转向灵敏度）
+# 值 > 1.0: 增强转向（轮速差更大）
+# 值 < 1.0: 减弱转向（轮速差更小）
+# 默认 1.0: 不缩放
+WHEEL_SPEED_DIFF_SCALE = float(os.getenv("WHEEL_SPEED_DIFF_SCALE", "0.2"))
 
 # PID 控制开关与默认增益（可通过环境变量覆盖）
 ENABLE_PID_CONTROL = os.getenv("ENABLE_PID_CONTROL", "0") == "1"
@@ -629,7 +619,29 @@ def main():
     )
     explorer = FrontierExplorer(safety_distance=float(frontier_safety_cells))  # 设置与障碍物的安全距离
     explorer.set_safety_distance(float(frontier_safety_cells))
-    viz = Visualizer(maze, robot=robot, slam=slam)
+    
+    # 创建可视化器并启动（根据配置选择不同模式）
+    print(f"\n[VIZ] 可视化模式: {VISUALIZATION_MODE}")
+    if VISUALIZATION_MODE == "shm":
+        # 共享内存模式：零拷贝传输，最低延迟（推荐）
+        viz = SharedMemoryVisualizer(maze, robot=robot, slam=slam, max_queue_size=3)
+        viz.start()
+        # 等待子进程完成初始化
+        time.sleep(0.5)
+        print("[VIZ] 使用共享内存模式 - 零拷贝数据传输")
+    elif VISUALIZATION_MODE == "process":
+        # 多进程模式：通过队列传输，中等性能
+        viz = MultiprocessVisualizer(maze, robot=robot, slam=slam, max_queue_size=3)
+        viz.start()
+        # 等待子进程完成初始化
+        time.sleep(0.5)
+        print("[VIZ] 使用多进程模式 - 队列数据传输")
+    else:
+        # 线程模式：保留原有方式（可能有警告，性能最低）
+        viz_base = Visualizer(maze, robot=robot, slam=slam)
+        viz = AsyncVisualizer(viz_base, max_queue_size=3)
+        viz.start()
+        print("[VIZ] 使用线程模式 - 可能有Matplotlib警告")
     
     # 立即显示初始空白地图，让用户知道程序已启动
     initial_pose = robot.get_pose()
@@ -739,24 +751,59 @@ def main():
         print("💡 提示：请查看可视化窗口中的网格布局")
         print("="*60)
         target_cell_id = None
-        while target_cell_id is None:
-            try:
-                user_input = input(f"🎯 请输入目标单元格序号 (1-81，当前在{center_cell.id}): ").strip()
-                cell_id = int(user_input)
-                if 1 <= cell_id <= 81:
-                    target_cell = grid_system.get_cell_by_id(cell_id)
-                    if target_cell:
-                        target_cell_id = cell_id
-                        print(f"✅ 目标设定：单元格 #{target_cell_id} @ ({target_cell.center_x:.2f}, {target_cell.center_y:.2f})")
+        
+        # 在输入期间保持可视化更新的辅助函数
+        def keep_viz_alive():
+            """定期发送更新以保持可视化响应"""
+            viz.update(
+                current_pose,
+                last_scan_data,
+                frontiers=None,
+                target=None,
+                path=None,
+                occupancy=occupancy,
+                predicted_traj=None,
+                robot_radius=ROBOT_VISUAL_RADIUS,
+                actual_traj=None,
+                scan_angles=None,
+                unsafe_mask=None,
+            )
+        
+        # 启动一个线程定期更新可视化
+        keep_alive_running = threading.Event()
+        keep_alive_running.set()
+        
+        def viz_keep_alive_loop():
+            while keep_alive_running.is_set():
+                keep_viz_alive()
+                time.sleep(0.5)  # 每0.5秒更新一次
+        
+        viz_thread = threading.Thread(target=viz_keep_alive_loop, daemon=True)
+        viz_thread.start()
+        
+        try:
+            while target_cell_id is None:
+                try:
+                    user_input = input(f"🎯 请输入目标单元格序号 (1-81，当前在{center_cell.id}): ").strip()
+                    cell_id = int(user_input)
+                    if 1 <= cell_id <= 81:
+                        target_cell = grid_system.get_cell_by_id(cell_id)
+                        if target_cell:
+                            target_cell_id = cell_id
+                            print(f"✅ 目标设定：单元格 #{target_cell_id} @ ({target_cell.center_x:.2f}, {target_cell.center_y:.2f})")
+                        else:
+                            print("❌ 无效的单元格ID")
                     else:
-                        print("❌ 无效的单元格ID")
-                else:
-                    print("❌ 请输入1-81之间的数字")
-            except ValueError:
-                print("❌ 请输入有效的数字")
-            except (EOFError, KeyboardInterrupt):
-                print("\n程序终止")
-                return
+                        print("❌ 请输入1-81之间的数字")
+                except ValueError:
+                    print("❌ 请输入有效的数字")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n程序终止")
+                    return
+        finally:
+            # 停止保活线程
+            keep_alive_running.clear()
+            viz_thread.join(timeout=1.0)
         
         # 设置目标单元格中心为探索目标
         target_cell = grid_system.get_cell_by_id(target_cell_id)
@@ -1524,24 +1571,57 @@ def main():
         print("💡 提示：请查看可视化窗口中的初始地图和网格布局")
         print("="*60)
         target_cell_id = None
-        while target_cell_id is None:
-            try:
-                user_input = input(f"🎯 请输入目标单元格序号 (1-81，当前在{center_cell.id}): ").strip()
-                cell_id = int(user_input)
-                if 1 <= cell_id <= 81:
-                    target_cell = grid_system.get_cell_by_id(cell_id)
-                    if target_cell:
-                        target_cell_id = cell_id
-                        print(f"✅ 目标设定：单元格 #{target_cell_id} @ ({target_cell.center_x:.2f}, {target_cell.center_y:.2f})")
+        
+        # 在输入期间保持可视化更新
+        keep_alive_running = threading.Event()
+        keep_alive_running.set()
+        
+        def viz_keep_alive_loop_real():
+            while keep_alive_running.is_set():
+                try:
+                    scan_data = acquire_scan()[0]
+                    pose = (slam.x, slam.y, slam.theta)
+                    viz.update(
+                        pose,
+                        scan_data,
+                        frontiers=None,
+                        target=None,
+                        path=None,
+                        occupancy=slam.get_occupancy(),
+                        predicted_traj=None,
+                        robot_radius=ROBOT_VISUAL_RADIUS,
+                        scan_angles=last_angles_cache.get("value"),
+                    )
+                except Exception as e:
+                    pass  # 静默忽略更新错误
+                time.sleep(0.5)
+        
+        viz_thread = threading.Thread(target=viz_keep_alive_loop_real, daemon=True)
+        viz_thread.start()
+        
+        try:
+            while target_cell_id is None:
+                try:
+                    user_input = input(f"🎯 请输入目标单元格序号 (1-81，当前在{center_cell.id}): ").strip()
+                    cell_id = int(user_input)
+                    if 1 <= cell_id <= 81:
+                        target_cell = grid_system.get_cell_by_id(cell_id)
+                        if target_cell:
+                            target_cell_id = cell_id
+                            print(f"✅ 目标设定：单元格 #{target_cell_id} @ ({target_cell.center_x:.2f}, {target_cell.center_y:.2f})")
+                        else:
+                            print("❌ 无效的单元格ID")
                     else:
-                        print("❌ 无效的单元格ID")
-                else:
-                    print("❌ 请输入1-81之间的数字")
-            except ValueError:
-                print("❌ 请输入有效的数字")
-            except (EOFError, KeyboardInterrupt):
-                print("\n程序终止")
-                return
+                        print("❌ 请输入1-81之间的数字")
+                except ValueError:
+                    print("❌ 请输入有效的数字")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n程序终止")
+                    return
+        finally:
+            # 停止保活线程
+            keep_alive_running.clear()
+            viz_thread.join(timeout=1.0)
         
         # 设置目标单元格中心为探索目标
         target_cell = grid_system.get_cell_by_id(target_cell_id)
@@ -2654,14 +2734,14 @@ def main():
                     dw_max_disp = dw_max_scaled if (dw_max_scaled is not None and math.isfinite(dw_max_scaled)) else float('nan')
                     print(f"[探索] 提升前进速度 -> {v_cmd:.2f} m/s (dw_max={dw_max_disp:.2f} dist_to_goal={dist_to_goal:.2f}m)")
 
-        # 先用当前估计位姿绘制预测轨迹（起点一致，避免视觉错位）
-        current_angles = last_angles_cache.get("value")
-        occupancy = slam.get_occupancy()
-        wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
-        
         # 可视化跳帧优化：每N帧更新一次
         should_visualize = (step_counter % VISUALIZATION_SKIP_FRAMES == 0)
         if should_visualize:
+            # 只在需要可视化时才准备数据，避免不必要的开销
+            current_angles = last_angles_cache.get("value")
+            occupancy = slam.get_occupancy()
+            wall_safety_mask = compute_wall_safety_mask(occupancy, float(frontier_safety_cells))
+            
             viz.update(
                 est_pose,
                 scan,
@@ -3482,6 +3562,10 @@ def main():
     except Exception:
         pass
     
+    # 停止异步可视化线程
+    print("\n正在停止可视化线程...")
+    viz.stop()
+    
     robot.stop_threaded()
 
     # 释放GPU资源
@@ -3489,6 +3573,14 @@ def main():
         slam.release_resources()
 
 if __name__ == "__main__":
+    # macOS/多进程模式需要设置启动方法
+    if VISUALIZATION_MODE == "process":
+        import multiprocessing as mp
+        try:
+            mp.set_start_method('spawn', force=True)
+        except RuntimeError:
+            pass  # 已经设置过了
+    
     try:
         main()
     except Exception as e:

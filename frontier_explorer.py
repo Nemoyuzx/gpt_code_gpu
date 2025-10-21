@@ -2,6 +2,7 @@ from collections import deque
 import heapq
 import math
 import numpy as np
+from fast_path_planner import FastPathPlanner
 
 class FrontierExplorer:
     """前沿探索与路径规划模块。确定下一个目标前沿并规划路径。"""
@@ -30,10 +31,17 @@ class FrontierExplorer:
         # 增量前沿更新：记录上次已知区域和前沿点
         self._last_known_mask = None
         self._last_frontier_set = set()
+        
+        # 初始化快速路径规划器
+        self._fast_planner = FastPathPlanner(safety_distance=safety_distance)
+        self._use_fast_planner = True  # 可以通过环境变量控制
 
     def set_safety_distance(self, safety_distance: float) -> None:
         """Update the default safety distance (in grid units)."""
         self.safety_distance = float(max(0.0, safety_distance))
+        # 同步更新快速规划器的安全距离
+        if hasattr(self, '_fast_planner'):
+            self._fast_planner.safety_distance = self.safety_distance
 
     def _cluster_frontiers(self, frontiers, cluster_radius=3):
         """
@@ -336,6 +344,22 @@ class FrontierExplorer:
 
         返回路径单元格坐标列表，包含start和goal。若无法到达返回None。
         """
+        # 优先使用快速规划器
+        if self._use_fast_planner and hasattr(self, '_fast_planner'):
+            try:
+                return self._fast_planner.plan_path(
+                    occupancy, start, goal,
+                    safety_distance=safety_distance,
+                    max_unknown_cells=max_unknown_cells,
+                    unknown_step_penalty=unknown_step_penalty,
+                    max_iterations=max_iterations
+                )
+            except Exception as e:
+                # 如果快速规划器失败，回退到原始A*
+                print(f"[WARN] FastPlanner failed, falling back to original A*: {e}")
+                self._use_fast_planner = False
+        
+        # 原始A*实现（作为fallback）
         sx, sy = start
         gx, gy = goal
         if start == goal:

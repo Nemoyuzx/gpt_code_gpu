@@ -223,12 +223,13 @@ class Visualizer:
             if len(epx) > 1:
                 self.ax.plot(epx, epy, color='red', linewidth=2, label='Emergency Path (No Safety)')
         # 绘制激光雷达当前扫描点云
-        if scan and self.slam:
+        # 注意：即使 self.slam 是 None（多进程模式），也可以绘制扫描数据
+        if scan:
             scan_pts_x = []
             scan_pts_y = []
             num_beams = len(scan)
             max_range = LIDAR_DISPLAY_MAX_RANGE  # 使用固定的最大范围
-            angle_offset = getattr(self.slam, "laser_angle_offset", 0.0)
+            angle_offset = getattr(self.slam, "laser_angle_offset", 0.0) if self.slam else 0.0
             for i, dist in enumerate(scan):
                 if dist < max_range:
                     if scan_angles is not None and i < len(scan_angles) and math.isfinite(scan_angles[i]):
