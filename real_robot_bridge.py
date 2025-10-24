@@ -363,6 +363,7 @@ class MotorController:
         w_int = int(round(w * 1000))
         
         command = f"CMD-VW {v_int} {w_int}"
+        print(f"[MOTOR CMD] {command}")
         with self._lock:
             self._command_queue.append(command)
         return command

@@ -117,7 +117,7 @@ ROBOT_COLLISION_RADIUS = ROBOT_BODY_RADIUS
 BASE_SAFETY_CLEARANCE = 0.0  # 额外安全裕度取消，避免与DWA半径重复
 # A* 额外安全裕度（仅用于前沿搜索与基于A*的路径规划，不影响DWA半径）
 ASTAR_EXTRA_CLEARANCE = 0.0
-OCCUPANCY_GRID_RESOLUTION = 0.02  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
+OCCUPANCY_GRID_RESOLUTION = 0.025  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
 ROBOT_VISUAL_RADIUS = ROBOT_BODY_RADIUS  # 可视化中展示的真实车体半径
 
 # ==================== 系统参数配置 ====================
@@ -1261,11 +1261,10 @@ def main():
                 d_trans, d_rot = robot.velocity_step(v_cmd, w_cmd, dt)
             d_trans, d_rot, _ = apply_angle_correction(d_trans, d_rot)
             
-            # 模拟模式下直接输出v和w（与真实模式保持一致）
-            print(
-                f"[MOTOR] SIM v={v_cmd:.3f} w={w_cmd:.3f} "
-                f"(d_trans={d_trans:.4f} d_rot={d_rot:.4f})"
-            )
+            # 模拟模式：输出CMD-VW格式（与真实模式一致）
+            v_int = int(round(v_cmd * 1000))
+            w_int = int(round(w_cmd * 1000))
+            print(f"[MOTOR] CMD-VW {v_int} {w_int}")
             return d_trans, d_rot
         
         # 真实小车模式：
