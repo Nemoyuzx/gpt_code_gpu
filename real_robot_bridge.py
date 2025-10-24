@@ -189,7 +189,10 @@ class MotionDataAdapter:
         self._invert_right = -1 if invert_right else 1
         self._cached_return_timeout = max(0.0, cached_return_timeout)
 
-        self._prev_counts: Optional[Tuple[int, int]] = None
+        # 注意：encoder_modulus和encoder_half_range已废弃（现在接收差值而非累计值）
+        self._encoder_modulus = encoder_modulus  # 保留以兼容旧代码
+        self._encoder_half_range = encoder_modulus / 2 if encoder_modulus else None
+        
         self._prev_time: Optional[float] = None
         # Cache last valid motion to avoid blocking on timeout
         self._last_valid_motion: Tuple[float, float, Optional[Tuple[float, float]]] = (0.0, 0.0, None)
@@ -197,7 +200,6 @@ class MotionDataAdapter:
         self._last_motion_timestamp: Optional[float] = None
 
     def reset(self) -> None:
-        self._prev_counts = None
         self._prev_time = None
         self._last_valid_motion = (0.0, 0.0, None)
         self._has_valid_motion = False
@@ -233,20 +235,21 @@ class MotionDataAdapter:
     def _process_status(
         self, status: MpuStatus
     ) -> Optional[Tuple[float, float, Optional[Tuple[float, float]]]]:
-        counts = (int(status.count_run1), int(status.count_run2))
-
-        if self._prev_counts is None:
-            self._prev_counts = counts
-            self._prev_time = time.monotonic()
-            return 0.0, 0.0, None
-
-        if counts == self._prev_counts:
+        # count_run1和count_run2现在直接就是差值（delta），不需要再计算
+        delta_left = int(status.count_run1) * self._invert_left
+        delta_right = int(status.count_run2) * self._invert_right
+        
+        # 如果差值为0，说明没有运动
+        if delta_left == 0 and delta_right == 0:
             return None
+        
         now = time.monotonic()
-        dt = max(1e-3, now - (self._prev_time or now))
-        delta_left = self._unwrap_delta(counts[0] - self._prev_counts[0]) * self._invert_left
-        delta_right = self._unwrap_delta(counts[1] - self._prev_counts[1]) * self._invert_right
-        self._prev_counts = counts
+        # 估算时间间隔（如果有上次时间）
+        if self._prev_time is not None:
+            dt = max(1e-3, now - self._prev_time)
+        else:
+            dt = 0.05  # 默认50ms
+        
         self._prev_time = now
         self._last_motion_timestamp = now
 
@@ -257,14 +260,15 @@ class MotionDataAdapter:
         velocity = (d_trans / dt, d_rot / dt)
         return d_trans, d_rot, velocity
 
-    def _unwrap_delta(self, delta: int) -> int:
-        if self._encoder_modulus is None or self._encoder_half_range is None:
-            return delta
-        if delta > self._encoder_half_range:
-            delta -= self._encoder_modulus
-        elif delta < -self._encoder_half_range:
-            delta += self._encoder_modulus
-        return delta
+    # 已废弃：现在接收差值而非累计值，不需要处理回绕
+    # def _unwrap_delta(self, delta: int) -> int:
+    #     if self._encoder_modulus is None or self._encoder_half_range is None:
+    #         return delta
+    #     if delta > self._encoder_half_range:
+    #         delta -= self._encoder_modulus
+    #     elif delta < -self._encoder_half_range:
+    #         delta += self._encoder_modulus
+    #     return delta
 
 
 class MotorController:

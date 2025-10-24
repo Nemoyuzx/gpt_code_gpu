@@ -110,7 +110,7 @@ class ParsedDataWriter:
 
     def write_mpu(self, status: MpuStatus, raw_bytes: bytes) -> None:
         parsed_line = (
-            f"MPU degree_x={status.degree_x} count1={status.count_run1} count2={status.count_run2}"
+            f"MPU degree_x={status.degree_x} delta_count1={status.count_run1} delta_count2={status.count_run2}"
         )
         raw_line = "MPU_RAW " + " ".join(f"0x{b:02X}" for b in raw_bytes)
         self._append(parsed_line, raw_line)
@@ -432,12 +432,13 @@ class FrameParser:
 
     def _handle_mpu_frame(self, frame: bytes) -> None:
         degree_x = int.from_bytes(frame[1:3], byteorder="big", signed=True)
-        count_run1 = int.from_bytes(frame[3:7], byteorder="big", signed=False)
-        count_run2 = int.from_bytes(frame[7:11], byteorder="big", signed=False)
+        # count_run1和count_run2现在是有符号的差值（delta），而非累计值
+        count_run1 = int.from_bytes(frame[3:7], byteorder="big", signed=True)
+        count_run2 = int.from_bytes(frame[7:11], byteorder="big", signed=True)
         status = MpuStatus(degree_x=degree_x, count_run1=count_run1, count_run2=count_run2)
         self._pool.set_mpu_status(status)
         # MPU数据更新频繁，保持静默（需要时可以取消注释）
-        # print(f"[MPU] degree_x={degree_x} count1={count_run1} count2={count_run2}")
+        # print(f"[MPU] degree_x={degree_x} delta_count1={count_run1} delta_count2={count_run2}")
         self._writer.write_mpu(status, bytes(frame))
 
 
