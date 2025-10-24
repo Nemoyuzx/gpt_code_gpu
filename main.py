@@ -95,7 +95,7 @@ def get_input_non_blocking(prompt: str, timeout: Optional[float] = None) -> Opti
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -105,7 +105,8 @@ if USE_REAL_BLE_DATA:
     from real_robot_bridge import BleRobotBridge
 
 # 默认 BLE 设备配置（可通过环境变量覆盖）
-DEFAULT_BLE_DEVICE_ADDRESS = "60E2ECE4-761B-6B31-FD1F-6FD559C4FE52"
+DEFAULT_BLE_DEVICE_ADDRESS = "0BFDE17D-B410-2EC7-9470-648F4A07ED17"
+
 DEFAULT_BLE_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 # ==================== 机器人几何参数 ====================
