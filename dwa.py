@@ -29,7 +29,7 @@ class LegacyDWAConfig:
     建议调参顺序：max_speed → max_accel → robot_radius/safety_clearance → obstacle/clearance 代价 →
     rotation/turn_* → progress/speed 代价 → reverse 系列 → brake_* → 细节开关。
     """
-    max_speed: float = 0.5  # 调高最大线速度，配合真实小车1m/s级别 0.3
+    max_speed: float = 0.3  # 调高最大线速度，配合真实小车1m/s级别 0.3
     min_speed: float = 0.1  # 默认禁倒车（如需倒车可设为负）。 0.03
     max_yaw_rate: float = 90.0 * math.pi / 180.0  # 提升最大角速度以增强转弯响应
     max_accel: float = 0.2  # 降低加速度，让运动更平滑(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。

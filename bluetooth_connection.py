@@ -367,7 +367,7 @@ class FrameParser:
     HEADER_MPU = 0xA6
     LASER_PAIR_COUNT = 250
     FRAME_LEN_LASER = 5  # head + angle + distance
-    FRAME_LEN_MPU = 11   # head + deg + cnt1 + cnt2
+    FRAME_LEN_MPU = 7    # head(1) + deg(2) + cnt1(2) + cnt2(2)
 
     def __init__(
         self,
@@ -432,9 +432,9 @@ class FrameParser:
 
     def _handle_mpu_frame(self, frame: bytes) -> None:
         degree_x = int.from_bytes(frame[1:3], byteorder="big", signed=True)
-        # count_run1和count_run2现在是有符号的差值（delta），而非累计值
-        count_run1 = int.from_bytes(frame[3:7], byteorder="big", signed=True)
-        count_run2 = int.from_bytes(frame[7:11], byteorder="big", signed=True)
+        # count_run1和count_run2现在是16bit有符号的差值（delta），而非32bit累计值
+        count_run1 = int.from_bytes(frame[3:5], byteorder="big", signed=True)
+        count_run2 = int.from_bytes(frame[5:7], byteorder="big", signed=True)
         status = MpuStatus(degree_x=degree_x, count_run1=count_run1, count_run2=count_run2)
         self._pool.set_mpu_status(status)
         # MPU数据更新频繁，保持静默（需要时可以取消注释）
