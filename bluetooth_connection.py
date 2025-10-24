@@ -365,7 +365,7 @@ def _bytes_to_hex(payload: bytes) -> str:
 class FrameParser:
     HEADER_LASER = 0xA5
     HEADER_MPU = 0xA6
-    LASER_PAIR_COUNT = 250
+    LASER_POINTS_PER_GROUP = 250  # 每组包含250个激光点
     FRAME_LEN_LASER = 5  # head + angle + distance
     FRAME_LEN_MPU = 7    # head(1) + deg(2) + cnt1(2) + cnt2(2)
 
@@ -378,8 +378,13 @@ class FrameParser:
         self._buffer = bytearray()
         self._pool = data_pool
         self._debug_hex = debug_hex
-        self._laser_count = 0
         self._writer = writer
+        
+        # 数据组状态
+        self._current_mpu: Optional[MpuStatus] = None  # 当前组的MPU数据
+        self._current_laser_points: List[LaserSample] = []  # 当前组收集的激光点
+        self._group_count = 0  # 已完成的数据组计数
+        self._expecting_mpu = True  # 当前期待MPU帧还是激光帧
 
     def feed(self, chunk: bytes) -> None:
         if self._debug_hex:
@@ -391,55 +396,104 @@ class FrameParser:
         while True:
             if not self._buffer:
                 return
+            
             header = self._buffer[0]
-            if header == self.HEADER_LASER:
-                frame_len = self.FRAME_LEN_LASER
-            elif header == self.HEADER_MPU:
+            
+            # 检查是否符合预期的帧类型
+            if self._expecting_mpu:
+                if header != self.HEADER_MPU:
+                    # 期待MPU但收到其他数据，丢弃并重新同步
+                    lost = self._buffer.pop(0)
+                    print(f"[WARN] Expected MPU(0xA6) but got 0x{lost:02X}, dropping byte")
+                    continue
                 frame_len = self.FRAME_LEN_MPU
             else:
-                # 头部不匹配，丢弃一个字节尝试重新同步
-                lost = self._buffer.pop(0)
-                print(f"[WARN] Dropping unknown header byte 0x{lost:02X}")
-                continue
+                if header != self.HEADER_LASER:
+                    # 期待激光但收到其他数据，丢弃并重新同步
+                    lost = self._buffer.pop(0)
+                    print(f"[WARN] Expected LASER(0xA5) but got 0x{lost:02X}, dropping byte")
+                    continue
+                frame_len = self.FRAME_LEN_LASER
 
             if len(self._buffer) < frame_len:
                 return  # 等待更多数据
 
             frame = bytes(self._buffer[:frame_len])
             del self._buffer[:frame_len]
+            
             try:
-                if header == self.HEADER_LASER:
-                    self._handle_laser_frame(frame)
-                else:
+                if header == self.HEADER_MPU:
                     self._handle_mpu_frame(frame)
+                else:
+                    self._handle_laser_frame(frame)
             except Exception as exc:
                 print(f"[ERROR] Failed to parse frame {frame.hex()}: {exc}")
+                # 出错时重置到期待MPU状态
+                self._expecting_mpu = True
+                self._current_mpu = None
+                self._current_laser_points.clear()
 
     def _handle_laser_frame(self, frame: bytes) -> None:
+        """处理激光帧，收集到一组后与MPU数据一起提交"""
         raw_angle = (frame[1] << 8) | frame[2]
         raw_distance = (frame[3] << 8) | frame[4]
         angle_deg = raw_angle / 100.0
         distance_mm = float(raw_distance)
-        group_idx = self._laser_count % self.LASER_PAIR_COUNT
+        
+        # 使用当前组内的索引
+        group_idx = len(self._current_laser_points)
         sample = LaserSample(angle=angle_deg, distance=distance_mm, index=group_idx)
-        self._pool.add_laser_sample(sample)
-        self._laser_count += 1
+        
+        self._current_laser_points.append(sample)
         self._writer.write_laser_point(sample, bytes(frame))
         
-        # 每完成一组扫描（250个点）打印一次
-        if group_idx == self.LASER_PAIR_COUNT - 1:
-            print(f"[LASER] ✓ 已接收完整扫描 (第{self._laser_count // self.LASER_PAIR_COUNT}组，共{self.LASER_PAIR_COUNT}点)")
+        # 检查是否收集完一组数据（250个激光点）
+        if len(self._current_laser_points) >= self.LASER_POINTS_PER_GROUP:
+            self._complete_data_group()
+            # 下一个应该是MPU帧
+            self._expecting_mpu = True
 
     def _handle_mpu_frame(self, frame: bytes) -> None:
+        """处理MPU帧，开始新的数据组"""
         degree_x = int.from_bytes(frame[1:3], byteorder="big", signed=True)
-        # count_run1和count_run2现在是16bit有符号的差值（delta），而非32bit累计值
+        # count_run1和count_run2现在是16bit有符号的差值（delta）
         count_run1 = int.from_bytes(frame[3:5], byteorder="big", signed=True)
         count_run2 = int.from_bytes(frame[5:7], byteorder="big", signed=True)
+        
         status = MpuStatus(degree_x=degree_x, count_run1=count_run1, count_run2=count_run2)
-        self._pool.set_mpu_status(status)
-        # MPU数据更新频繁，保持静默（需要时可以取消注释）
-        # print(f"[MPU] degree_x={degree_x} delta_count1={count_run1} delta_count2={count_run2}")
         self._writer.write_mpu(status, bytes(frame))
+        
+        # 如果之前有未完成的组，警告并丢弃
+        if self._current_mpu is not None or self._current_laser_points:
+            print(f"[WARN] Starting new MPU frame but previous group incomplete "
+                  f"(had {len(self._current_laser_points)}/{self.LASER_POINTS_PER_GROUP} laser points)")
+        
+        # 开始新的数据组
+        self._current_mpu = status
+        self._current_laser_points.clear()
+        # 下一个应该是激光帧
+        self._expecting_mpu = False
+    
+    def _complete_data_group(self) -> None:
+        """完成一组数据：将MPU和激光数据提交到数据池"""
+        if self._current_mpu is None:
+            print(f"[WARN] Completed laser group but no MPU data available")
+            return
+        
+        # 将MPU数据提交到池
+        self._pool.set_mpu_status(self._current_mpu)
+        
+        # 将所有激光点添加到池
+        for sample in self._current_laser_points:
+            self._pool.add_laser_sample(sample)
+        
+        self._group_count += 1
+        print(f"[DATA GROUP] ✓ 完成第{self._group_count}组数据：MPU + {len(self._current_laser_points)}个激光点 "
+              f"(delta_count1={self._current_mpu.count_run1}, delta_count2={self._current_mpu.count_run2})")
+        
+        # 清理当前组
+        self._current_mpu = None
+        self._current_laser_points.clear()
 
 
 def build_notification_handler(
