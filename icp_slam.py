@@ -10,30 +10,30 @@ from datetime import datetime as dt
 
 
 
-#0.49
-#超过最大范围比例
-MAX_RANGE_FACTOR = 0.9  # 超过最大范围的比例阈值，用于忽略远距离点
+MAX_RANGE_FACTOR = 0.95  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
-ADJACENCY_DIFF_THRESHOLD = 1  # 相邻测距点之间的差异阈值 (米)
+ADJACENCY_DIFF_THRESHOLD = 2  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "1000"))  # ICP最大迭代次数，可通过环境变量调整
-ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-3"))  # ICP收敛容忍，默认放宽以加速收敛
-ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "6"))  # ICP对应点匹配距离上限 (米)
-ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息
+ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "500"))  # ICP最大迭代次数，可通过环境变量调整
+ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
+ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "30"))  # ICP对应点匹配距离上限 (米)
+ICP_DEBUG = os.environ.get("ICP_DEBUG", "1") == "1"  # 是否输出ICP调试信息
 
-ICP_ACCUM_TRANS_THRESHOLD = float(os.environ.get("ICP_ACCUM_TRANS", "0.02"))
-ICP_ACCUM_ROT_THRESHOLD = float(os.environ.get("ICP_ACCUM_ROT", "0.03"))
-ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(70.0))))
-ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "3"))
-ICP_FAIL_SKIP_FRAMES = int(os.environ.get("ICP_FAIL_SKIP", "3"))
+
+ICP_ACCUM_TRANS_THRESHOLD = float(os.environ.get("ICP_ACCUM_TRANS", "0.001"))
+ICP_ACCUM_ROT_THRESHOLD = float(os.environ.get("ICP_ACCUM_ROT", "0.00005"))
+ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(270.0))))
+ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "1"))
+ICP_FAIL_SKIP_FRAMES = int(os.environ.get("ICP_FAIL_SKIP", "1"))
 
 # 激光雷达安装点相对车体中心的偏移（单位: 米），默认向后5cm，可通过环境变量覆盖
 LIDAR_MOUNT_OFFSET_X = float(os.environ.get("LIDAR_MOUNT_OFFSET_X", "-0.019"))
 LIDAR_MOUNT_OFFSET_Y = float(os.environ.get("LIDAR_MOUNT_OFFSET_Y", "0.0"))
 
-# 为了限制内存：ICP匹配时目标点云的最大样本数W，以及全局地图点云的上限
-MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "30000"))
-MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "50000"))
+# 为了限制内存：ICP匹配时目标点云的最大样本数，以及全局地图点云的上限
+# 提高上限以保留更多地图信息，避免中途突然失败
+MAX_TGT_POINTS_FOR_ICP = int(os.environ.get("ICP_TGT_MAX", "50000"))  # 从30000提高到50000
+MAX_MAP_POINTS_GLOBAL = int(os.environ.get("MAP_POINTS_MAX", "10000000"))  # 从50000提高到100000
 
 class ICPSlam:
     """ICP SLAM建图与定位模块。利用激光数据和运动模型进行SLAM。支持GPU加速。"""
@@ -211,23 +211,63 @@ class ICPSlam:
             return torch.linalg.det(matrix)
 
     def _shrink_map_points(self, keep: int) -> None:
+        """智能削减地图点云，优先保留空间分布均匀的点"""
         if self.map_points_tensor is None:
             return
         total = int(self.map_points_tensor.shape[0])
         if total <= keep:
             return
+        
+        # 使用体素网格采样而非随机采样，保持地图特征
         try:
-            idx = torch.randperm(total, device=self.device)[:keep]
-        except Exception:
-            idx_cpu = torch.randperm(total)[:keep]
+            # 将点云移到CPU进行体素化处理（避免GPU内存峰值）
+            points_cpu = self.map_points_tensor.cpu().numpy()
+            
+            # 计算合适的体素大小
+            min_coords = points_cpu.min(axis=0)
+            max_coords = points_cpu.max(axis=0)
+            map_span = max_coords - min_coords
+            
+            # 根据目标点数估算体素大小
+            voxel_size = max(0.05, np.power(np.prod(map_span) / keep, 1.0/2.0))
+            
+            # 体素化：将点分配到网格中
+            voxel_indices = ((points_cpu - min_coords) / voxel_size).astype(np.int32)
+            
+            # 使用字典记录每个体素中的点（保留最后一个点）
+            voxel_dict = {}
+            for i, voxel_idx in enumerate(voxel_indices):
+                key = tuple(voxel_idx)
+                voxel_dict[key] = i  # 保留每个体素的一个代表点
+            
+            # 提取保留的点索引
+            keep_indices = list(voxel_dict.values())
+            
+            # 如果体素化后点数仍然过多，再进行随机采样
+            if len(keep_indices) > keep:
+                keep_indices = np.random.choice(keep_indices, keep, replace=False)
+            
+            # 更新地图点云
+            self.map_points_tensor = torch.from_numpy(points_cpu[keep_indices]).to(self.device)
+            
+            print(f"[ICP][INFO] 地图点云从 {total} 削减到 {len(keep_indices)} (体素大小={voxel_size:.3f}m)")
+            
+        except Exception as e:
+            # 如果体素化失败，回退到随机采样
+            print(f"[ICP][WARN] 体素化失败，使用随机采样: {e}")
             try:
-                idx = idx_cpu.to(self.device)
+                idx = torch.randperm(total, device=self.device)[:keep]
             except Exception:
-                idx = idx_cpu
-                self.map_points_tensor = self.map_points_tensor.cpu()
-        self.map_points_tensor = self.map_points_tensor.index_select(0, idx)
-        if self.map_points_tensor.device != self.device:
-            self.map_points_tensor = self.map_points_tensor.to(self.device)
+                idx_cpu = torch.randperm(total)[:keep]
+                try:
+                    idx = idx_cpu.to(self.device)
+                except Exception:
+                    idx = idx_cpu
+                    self.map_points_tensor = self.map_points_tensor.cpu()
+            self.map_points_tensor = self.map_points_tensor.index_select(0, idx)
+            if self.map_points_tensor.device != self.device:
+                self.map_points_tensor = self.map_points_tensor.to(self.device)
+
 
     def _handle_icp_failure(
         self,
@@ -248,7 +288,8 @@ class ICPSlam:
             f"[ICP][WARN] {reason} ({', '.join(detail_parts)}) -> consecutive_failures={self.icp_consecutive_failures}"
         )
         self.icp_last_status = "fail"
-        target_keep = max(int(MAX_TGT_POINTS_FOR_ICP * 0.7), 15000)
+        # ICP失败时不要过度削减地图点云，保留更多信息用于恢复
+        target_keep = max(int(MAX_TGT_POINTS_FOR_ICP * 0.9), 40000)  # 从0.7提高到0.9，从15000提高到40000
         self._shrink_map_points(target_keep)
         if self.icp_consecutive_failures >= 3:
             self.icp_skip_frames = max(self.icp_skip_frames, 2)

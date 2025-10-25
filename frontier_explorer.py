@@ -31,6 +31,9 @@ class FrontierExplorer:
         # 增量前沿更新：记录上次已知区域和前沿点
         self._last_known_mask = None
         self._last_frontier_set = set()
+        # 强制全量刷新计数器
+        self._incremental_update_count = 0
+        self._full_refresh_interval = 10  # 每N次增量更新后强制全量刷新
         
         # 初始化快速路径规划器
         self._fast_planner = FastPathPlanner(safety_distance=safety_distance)
@@ -43,15 +46,42 @@ class FrontierExplorer:
         if hasattr(self, '_fast_planner'):
             self._fast_planner.safety_distance = self.safety_distance
 
+    def force_full_refresh(self) -> None:
+        """
+        强制在下次调用时执行全量前沿刷新。
+        
+        使用场景：
+        - 检测到地图有重大变化时
+        - 怀疑增量更新累积误差时
+        - 手动触发完整重扫描
+        """
+        self._incremental_update_count = self._full_refresh_interval
+        print("[Frontier] 已设置强制全量刷新标志")
+
+    def set_refresh_interval(self, interval: int) -> None:
+        """
+        设置定期全量刷新的间隔次数。
+        
+        参数:
+        - interval: 每N次增量更新后执行全量刷新（默认10次）
+        """
+        self._full_refresh_interval = max(1, interval)
+        print(f"[Frontier] 全量刷新间隔已设置为 {self._full_refresh_interval} 次增量更新")
+
     def _cluster_frontiers(self, frontiers, cluster_radius=3):
         """
         将前沿点聚类，每个簇选一个代表点。
+        
+        优化策略：
+        1. 使用更大的聚类半径，减少候选点数量
+        2. 选择簇中最优的代表点（不仅仅是质心最近点）
+        3. 优先选择簇规模大的（代表更大的未知区域）
         
         参数:
         - frontiers: 前沿点列表 [(x, y), ...]
         - cluster_radius: 聚类半径（栅格单位）
         
-        返回: 聚类后的代表点列表
+        返回: 聚类后的代表点列表（按簇规模排序）
         """
         if not frontiers:
             return []
@@ -80,11 +110,31 @@ class FrontierExplorer:
             # 计算簇的质心作为代表点
             cx = sum(p[0] for p in cluster) / len(cluster)
             cy = sum(p[1] for p in cluster) / len(cluster)
-            # 找到最接近质心的实际前沿点
-            rep = min(cluster, key=lambda p: (p[0]-cx)**2 + (p[1]-cy)**2)
-            clusters.append(rep)
+            
+            # 优化代表点选择：不仅考虑距离质心的距离，还考虑点的"中心性"
+            # 选择到簇内其他点平均距离最小的点（更中心的位置）
+            best_rep = None
+            best_score = float('inf')
+            for candidate in cluster:
+                # 到质心的距离
+                dist_to_centroid = math.sqrt((candidate[0]-cx)**2 + (candidate[1]-cy)**2)
+                # 到簇内其他点的平均距离
+                avg_dist = sum(math.sqrt((candidate[0]-p[0])**2 + (candidate[1]-p[1])**2) 
+                              for p in cluster) / len(cluster)
+                # 综合评分：距离质心近 + 到其他点距离小
+                score = dist_to_centroid * 0.6 + avg_dist * 0.4
+                if score < best_score:
+                    best_score = score
+                    best_rep = candidate
+            
+            # 记录簇信息（代表点 + 簇规模）
+            clusters.append((best_rep, len(cluster)))
         
-        return clusters
+        # 按簇规模降序排序（优先大簇，代表更大的未知区域）
+        clusters.sort(key=lambda x: x[1], reverse=True)
+        
+        # 只返回代表点
+        return [cluster[0] for cluster in clusters]
 
     def find_frontiers(self, occupancy):
         """
@@ -190,34 +240,84 @@ class FrontierExplorer:
                     parent[(nx, ny)] = (x, y)
                     dq.append((nx, ny))
 
-        # 策略2: 全局前沿检测 + 简化的聚类优化
+        # 策略2: 全局前沿检测 + 智能聚类和评分
         frontiers = self._find_all_frontiers(occupancy)
         if not frontiers:
             return None, None
 
-        # 简化聚类：只在前沿点很多时才聚类
-        if len(frontiers) > 100:
-            clustered_frontiers = self._cluster_frontiers(frontiers, cluster_radius=5)
-        else:
-            clustered_frontiers = frontiers
+        # 智能聚类：总是使用聚类来减少候选点，提高质量
+        # 使用更大的聚类半径来合并相近的前沿区域
+        cluster_radius = 15 if len(frontiers) > 200 else 6
+        clustered_frontiers = self._cluster_frontiers(frontiers, cluster_radius=cluster_radius)
         
         origin = (sx, sy)
-        # 按启发式距离排序
-        clustered_frontiers = sorted(clustered_frontiers, key=lambda cell: self._heuristic(origin, cell))
+        
+        # 优化评分函数：综合考虑距离和探索价值
+        def evaluate_frontier(frontier):
+            """
+            综合评分函数：
+            - 距离：越近越好
+            - 开放度：周围未知区域越多越好
+            - 可达性：路径越短越好
+            """
+            fx, fy = frontier
+            
+            # 1. 距离评分（启发式距离）
+            distance = self._heuristic(origin, frontier)
+            
+            # 2. 探索价值评分：统计周围未知格子数量
+            unknown_count = 0
+            check_range = 5  # 检查5格范围内的未知区域
+            for dy in range(-check_range, check_range + 1):
+                for dx in range(-check_range, check_range + 1):
+                    nx, ny = fx + dx, fy + dy
+                    if 0 <= nx < w and 0 <= ny < h:
+                        if occupancy[ny, nx] == -1:
+                            unknown_count += 1
+            
+            # 3. 开放度评分：周围空闲格子数量（避免狭窄通道）
+            free_count = 0
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    nx, ny = fx + dx, fy + dy
+                    if 0 <= nx < w and 0 <= ny < h:
+                        if occupancy[ny, nx] == 0:
+                            free_count += 1
+            
+            # 综合评分：距离权重0.5，探索价值权重0.3，开放度权重0.2
+            # 归一化各项指标
+            distance_score = distance / max(w, h)  # 归一化距离
+            exploration_score = 1.0 - min(1.0, unknown_count / 100.0)  # 未知越多越好
+            openness_score = 1.0 - min(1.0, free_count / 25.0)  # 越开阔越好
+            
+            # 加权综合评分（越小越好）
+            total_score = (
+                distance_score * 0.5 +
+                exploration_score * 0.3 +
+                openness_score * 0.2
+            )
+            
+            return total_score
+        
+        # 按综合评分排序（而不是单纯的距离）
+        clustered_frontiers = sorted(clustered_frontiers, key=evaluate_frontier)
         
         best_frontier = None
         best_path = None
         min_dist = float('inf')
-        max_candidates = 50  # 进一步减少候选数量（80->50）
+        max_candidates = 30  # 减少到30个候选点（从50）
         
-        # 大幅降低A*搜索迭代次数，优先速度而非最优路径
-        max_astar_iterations = 5000  # 从20000降到5000，减少75%计算量
+        # 降低A*搜索迭代次数
+        max_astar_iterations = 5000
 
         for idx, frontier in enumerate(clustered_frontiers):
             if idx >= max_candidates:
                 break
             heuristic_lower = self._heuristic(origin, frontier)
             if heuristic_lower >= min_dist:
+                # 即使启发式距离更远，如果探索价值高，也继续尝试几个
+                if idx > 10:  # 前10个一定尝试，后面的按距离剪枝
+                    break
                 break
             
             # 直接使用标准A*，限制最大迭代次数
@@ -640,13 +740,73 @@ class FrontierExplorer:
                         return False
         return True
     
+    def _is_frontier_squeezed(self, occupancy, x, y, check_radius=6):
+        """
+        检查前沿点是否被夹在两块占据区域之间（狭窄通道检测）。
+        
+        参数:
+        - occupancy: 占用栅格地图
+        - x, y: 前沿点坐标
+        - check_radius: 检查半径（栅格单位），默认6以适应稀疏激光雷达数据
+        
+        返回:
+        - True: 如果前沿点被夹在两块占据区域之间（应该被过滤掉）
+        - False: 前沿点位置正常，不在狭窄通道中
+        """
+        h, w = occupancy.shape
+        
+        # 检查八个主要方向上的占据情况
+        # 如果相对的两个方向都有占据区域，说明被夹在中间
+        # 增大检测范围到6个栅格，以适应稀疏的激光雷达数据
+        directions = [
+            # (方向1, 方向2) - 相对的方向对
+            ([(-1, 0), (-2, 0), (-3, 0), (-4, 0), (-5, 0), (-6, 0)], 
+             [(1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0)]),  # 左-右
+            ([(0, -1), (0, -2), (0, -3), (0, -4), (0, -5), (0, -6)], 
+             [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6)]),  # 上-下
+            ([(-1, -1), (-2, -2), (-3, -3), (-4, -4), (-5, -5), (-6, -6)], 
+             [(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)]),  # 左上-右下
+            ([(-1, 1), (-2, 2), (-3, 3), (-4, 4), (-5, 5), (-6, 6)], 
+             [(1, -1), (2, -2), (3, -3), (4, -4), (5, -5), (6, -6)]),  # 左下-右上
+        ]
+        
+        squeezed_count = 0
+        
+        for dir1, dir2 in directions:
+            # 检查方向1是否有占据
+            has_obstacle_dir1 = False
+            for dx, dy in dir1:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    if occupancy[ny, nx] == 1:
+                        has_obstacle_dir1 = True
+                        break
+            
+            # 检查方向2是否有占据
+            has_obstacle_dir2 = False
+            for dx, dy in dir2:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    if occupancy[ny, nx] == 1:
+                        has_obstacle_dir2 = True
+                        break
+            
+            # 如果相对的两个方向都有障碍物，说明这个方向上被夹住
+            if has_obstacle_dir1 and has_obstacle_dir2:
+                squeezed_count += 1
+        
+        # 如果至少有2个方向对都被夹住，说明前沿点在狭窄通道中
+        # 这种位置的前沿点通常不适合作为探索目标
+        return squeezed_count >= 2
+    
     def _find_all_frontiers(self, occupancy):
         """
-        遍历整张地图找出所有满足安全距离的前沿点（增量更新优化版本）。
+        遍历整张地图找出所有满足安全距离的前沿点（增量更新优化版本 + 定期全量刷新）。
         
         策略：
         1. 首次调用：全图扫描构建初始前沿集合
         2. 后续调用：仅检查新探测区域周边的小范围，局部更新前沿集合
+        3. 定期刷新：每N次增量更新后强制全量刷新，防止累积误差
         
         前沿定义为：已知空闲且邻接未知区域的栅格。
 
@@ -658,8 +818,14 @@ class FrontierExplorer:
         h, w = occupancy.shape
         known_mask = occupancy != -1  # 已知栅格（空闲或占据）
         
+        # 强制定期全量刷新
+        force_full_refresh = (self._incremental_update_count >= self._full_refresh_interval)
+        
         # 首次调用或地图显著变化时，执行全图扫描
-        if self._last_known_mask is None or self._last_known_mask.shape != known_mask.shape:
+        if self._last_known_mask is None or self._last_known_mask.shape != known_mask.shape or force_full_refresh:
+            if force_full_refresh:
+                print(f"[Frontier] 触发定期全量刷新（已累计{self._incremental_update_count}次增量更新）")
+                self._incremental_update_count = 0  # 重置计数器
             result = self._full_frontier_scan(occupancy, known_mask)
             print(f"[Frontier] 全图扫描: {(time.perf_counter()-t_start)*1000:.2f}ms, 前沿数={len(result)}")
             return result
@@ -717,14 +883,22 @@ class FrontierExplorer:
                         break
                 
                 if has_unknown:
-                    if self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
-                        self._last_frontier_set.add((x, y))
+                    # 检查安全距离
+                    if not self._is_safe(occupancy, x, y, safety_distance=self.safety_distance):
+                        continue
+                    # 检查是否被夹在两块占据区域之间（狭窄通道）
+                    if self._is_frontier_squeezed(occupancy, x, y):
+                        continue
+                    self._last_frontier_set.add((x, y))
         
         # 更新已知区域记录
         self._last_known_mask = known_mask.copy()
         
+        # 增量更新计数器递增
+        self._incremental_update_count += 1
+        
         result = list(self._last_frontier_set)
-        print(f"[Frontier] 增量更新: {(time.perf_counter()-t_start)*1000:.2f}ms, 检查区域={check_region_size}格, 新前沿数={len(result)}")
+        print(f"[Frontier] 增量更新: {(time.perf_counter()-t_start)*1000:.2f}ms, 检查区域={check_region_size}格, 新前沿数={len(result)} (计数:{self._incremental_update_count}/{self._full_refresh_interval})")
         return result
     
     def _full_frontier_scan(self, occupancy, known_mask):
@@ -754,8 +928,13 @@ class FrontierExplorer:
         candidate_indices = np.argwhere(potential_mask)
 
         for y, x in candidate_indices:
-            if self._is_safe(occupancy, int(x), int(y), safety_distance=self.safety_distance):
-                frontiers.append((int(x), int(y)))
+            # 检查安全距离
+            if not self._is_safe(occupancy, int(x), int(y), safety_distance=self.safety_distance):
+                continue
+            # 检查是否被夹在两块占据区域之间（狭窄通道）
+            if self._is_frontier_squeezed(occupancy, int(x), int(y)):
+                continue
+            frontiers.append((int(x), int(y)))
         
         # 缓存结果
         self._last_frontier_set = set(frontiers)

@@ -169,7 +169,7 @@ class MotionDataAdapter:
         ticks_per_meter: float,
         poll_interval: float = 0.01,
         timeout: float = 0.25,
-        encoder_modulus: Optional[int] = 2 ** 32,
+        encoder_modulus: Optional[int] = 2 ** 16,  # 16bit有符号累计值，默认65536
         invert_left: bool = False,
         invert_right: bool = False,
         cached_return_timeout: float = 0.03,
@@ -189,10 +189,11 @@ class MotionDataAdapter:
         self._invert_right = -1 if invert_right else 1
         self._cached_return_timeout = max(0.0, cached_return_timeout)
 
-        # 注意：encoder_modulus和encoder_half_range已废弃（现在接收差值而非累计值）
-        self._encoder_modulus = encoder_modulus  # 保留以兼容旧代码
+        # 保留encoder_modulus以兼容旧代码（实际不再使用）
+        self._encoder_modulus = encoder_modulus
         self._encoder_half_range = encoder_modulus / 2 if encoder_modulus else None
         
+        self._prev_counts: Optional[Tuple[int, int]] = None  # 上次的累计值
         self._prev_time: Optional[float] = None
         # Cache last valid motion to avoid blocking on timeout
         self._last_valid_motion: Tuple[float, float, Optional[Tuple[float, float]]] = (0.0, 0.0, None)
@@ -200,6 +201,7 @@ class MotionDataAdapter:
         self._last_motion_timestamp: Optional[float] = None
 
     def reset(self) -> None:
+        self._prev_counts = None
         self._prev_time = None
         self._last_valid_motion = (0.0, 0.0, None)
         self._has_valid_motion = False
@@ -235,40 +237,58 @@ class MotionDataAdapter:
     def _process_status(
         self, status: MpuStatus
     ) -> Optional[Tuple[float, float, Optional[Tuple[float, float]]]]:
-        # count_run1和count_run2现在直接就是差值（delta），不需要再计算
-        delta_left = int(status.count_run1) * self._invert_left
-        delta_right = int(status.count_run2) * self._invert_right
+        # status中的count_run1和count_run2现在是累计值（由ParsedDataPool自动累加）
+        counts = (int(status.count_run1), int(status.count_run2))
         
-        # 如果差值为0，说明没有运动
-        if delta_left == 0 and delta_right == 0:
+        # 首次接收，初始化
+        if self._prev_counts is None:
+            self._prev_counts = counts
+            self._prev_time = time.monotonic()
+            return 0.0, 0.0, None
+        
+        # 如果没有变化，返回None
+        if counts == self._prev_counts:
             return None
         
         now = time.monotonic()
-        # 估算时间间隔（如果有上次时间）
-        if self._prev_time is not None:
-            dt = max(1e-3, now - self._prev_time)
-        else:
-            dt = 0.05  # 默认50ms
+        if self._prev_time is None:
+            self._prev_time = now
+            return None
+        dt = max(1e-3, now - self._prev_time)
         
+        # 计算差值（累计值之差），并处理回绕
+        raw_delta_left = counts[0] - self._prev_counts[0]
+        raw_delta_right = counts[1] - self._prev_counts[1]
+        
+        delta_left = self._unwrap_delta(raw_delta_left) * self._invert_left
+        delta_right = self._unwrap_delta(raw_delta_right) * self._invert_right - 2  # 右轮减2
+        
+        self._prev_counts = counts
         self._prev_time = now
         self._last_motion_timestamp = now
 
+        # 差值可以是负值（正常情况）：
+        # - 转弯时左右轮速度不同，某一轮可能减速或反转
+        # - 小车后退时两轮都是负值
+        # - 原地旋转时一轮正值一轮负值
         meters_left = delta_left / self._ticks_per_meter
         meters_right = delta_right / self._ticks_per_meter
-        d_trans = 0.5 * (meters_left + meters_right)
-        d_rot = (meters_right - meters_left) / self._wheel_track
+        d_trans = 0.5 * (meters_left + meters_right)  # 平移量（可正可负）
+        d_rot = (meters_right - meters_left) / self._wheel_track  # 旋转量（可正可负）
         velocity = (d_trans / dt, d_rot / dt)
         return d_trans, d_rot, velocity
 
-    # 已废弃：现在接收差值而非累计值，不需要处理回绕
-    # def _unwrap_delta(self, delta: int) -> int:
-    #     if self._encoder_modulus is None or self._encoder_half_range is None:
-    #         return delta
-    #     if delta > self._encoder_half_range:
-    #         delta -= self._encoder_modulus
-    #     elif delta < -self._encoder_half_range:
-    #         delta += self._encoder_modulus
-    #     return delta
+    def _unwrap_delta(self, delta: int) -> int:
+        """处理16bit有符号累计值的回绕"""
+        if self._encoder_modulus is None or self._encoder_half_range is None:
+            return delta
+        # 对于16bit有符号数：范围是 -32768 ~ 32767，模数是 65536
+        half_range_int = int(self._encoder_half_range)
+        if delta > half_range_int:
+            delta -= int(self._encoder_modulus)
+        elif delta < -half_range_int:
+            delta += int(self._encoder_modulus)
+        return delta
 
 
 class MotorController:

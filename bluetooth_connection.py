@@ -13,7 +13,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Deque, List, Optional
+from typing import Callable, Deque, List, Optional, Tuple
 
 try:  # pragma: no cover - optional dependency guard
     from bleak import BleakClient, BleakScanner, BleakError  # type: ignore[import]
@@ -61,6 +61,7 @@ class ParsedDataPool:
             self._laser_samples.append(sample)
 
     def set_mpu_status(self, status: MpuStatus) -> None:
+        """设置MPU状态（累计值）"""
         with self._lock:
             self._mpu_status = status
 
@@ -72,6 +73,7 @@ class ParsedDataPool:
                 return list(self._laser_samples)[-limit:]
 
     def get_mpu_status(self) -> Optional[MpuStatus]:
+        """返回MPU状态（累计值）"""
         with self._lock:
             return self._mpu_status
 
@@ -110,7 +112,7 @@ class ParsedDataWriter:
 
     def write_mpu(self, status: MpuStatus, raw_bytes: bytes) -> None:
         parsed_line = (
-            f"MPU degree_x={status.degree_x} delta_count1={status.count_run1} delta_count2={status.count_run2}"
+            f"MPU degree_x={status.degree_x} count1={status.count_run1} count2={status.count_run2}"
         )
         raw_line = "MPU_RAW " + " ".join(f"0x{b:02X}" for b in raw_bytes)
         self._append(parsed_line, raw_line)
@@ -456,7 +458,7 @@ class FrameParser:
     def _handle_mpu_frame(self, frame: bytes) -> None:
         """处理MPU帧，开始新的数据组"""
         degree_x = int.from_bytes(frame[1:3], byteorder="big", signed=True)
-        # count_run1和count_run2现在是16bit有符号的差值（delta）
+        # count_run1和count_run2是16bit有符号的累计值
         count_run1 = int.from_bytes(frame[3:5], byteorder="big", signed=True)
         count_run2 = int.from_bytes(frame[5:7], byteorder="big", signed=True)
         
@@ -489,7 +491,7 @@ class FrameParser:
         
         self._group_count += 1
         print(f"[DATA GROUP] ✓ 完成第{self._group_count}组数据：MPU + {len(self._current_laser_points)}个激光点 "
-              f"(delta_count1={self._current_mpu.count_run1}, delta_count2={self._current_mpu.count_run2})")
+              f"(count1={self._current_mpu.count_run1}, count2={self._current_mpu.count_run2})")
         
         # 清理当前组
         self._current_mpu = None

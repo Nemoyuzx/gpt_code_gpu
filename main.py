@@ -95,7 +95,7 @@ def get_input_non_blocking(prompt: str, timeout: Optional[float] = None) -> Opti
 
 
 REPLAY_RECORDED_DATA = os.getenv("REPLAY_RECORDED_DATA", "0") == "1"
-DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "0") == "1"
+DEFAULT_USE_REAL_BLE = os.getenv("USE_REAL_BLE_DATA", "1") == "1"
 USE_REAL_BLE_DATA = DEFAULT_USE_REAL_BLE and not REPLAY_RECORDED_DATA
 ENABLE_CONTROL_LOOP = os.getenv(
     "ENABLE_CONTROL_LOOP",
@@ -105,7 +105,7 @@ if USE_REAL_BLE_DATA:
     from real_robot_bridge import BleRobotBridge
 
 # 默认 BLE 设备配置（可通过环境变量覆盖）
-DEFAULT_BLE_DEVICE_ADDRESS = "0BFDE17D-B410-2EC7-9470-648F4A07ED17"
+DEFAULT_BLE_DEVICE_ADDRESS = "60E2ECE4-761B-6B31-FD1F-6FD559C4FE52"
 
 DEFAULT_BLE_NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
@@ -118,7 +118,7 @@ ROBOT_COLLISION_RADIUS = ROBOT_BODY_RADIUS
 BASE_SAFETY_CLEARANCE = 0.0  # 额外安全裕度取消，避免与DWA半径重复
 # A* 额外安全裕度（仅用于前沿搜索与基于A*的路径规划，不影响DWA半径）
 ASTAR_EXTRA_CLEARANCE = 0.0
-OCCUPANCY_GRID_RESOLUTION = 0.025  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
+OCCUPANCY_GRID_RESOLUTION = 0.03  # 占据栅格分辨率(m)，更高的分辨率带来更细腻的虚拟栅格
 ROBOT_VISUAL_RADIUS = ROBOT_BODY_RADIUS  # 可视化中展示的真实车体半径
 
 # ==================== 系统参数配置 ====================
@@ -164,7 +164,7 @@ BLE_ENCODER_MODULUS_ENV = os.getenv("BLE_ENCODER_MODULUS")
 BLE_ENCODER_MODULUS = (
     int(BLE_ENCODER_MODULUS_ENV)
     if BLE_ENCODER_MODULUS_ENV and BLE_ENCODER_MODULUS_ENV.lower() != "none"
-    else None
+    else 2 ** 16  # 16bit有符号累计值，模数为65536
 )
 # Reduced timeout from 0.25s to 0.08s to prevent motion_update blocking
 BLE_ENCODER_TIMEOUT = float(os.getenv("BLE_ENCODER_TIMEOUT", "0.08"))
@@ -611,7 +611,7 @@ def main():
         robot.start_threaded()
     lidar = Lidar(maze.walls, max_range=LIDAR_MAX_RANGE, angle_resolution=LIDAR_ANGLE_RESOLUTION, noise=LIDAR_NOISE)
     slam = ICPSlam(maze, start_pose, laser_angle_offset_deg=LIDAR_ANGLE_OFFSET_DEG)
-    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.06
+    base_frontier_safety = ROBOT_COLLISION_RADIUS + 0.07
     frontier_safety_cells = max(
         0,
         int(math.ceil(base_frontier_safety / maze.resolution))
@@ -962,7 +962,7 @@ def main():
                 RECORDED_DISTANCE_SCALE,
                 ticks_per_meter=RECORDED_TICKS_PER_METER,
                 wheel_track=WHEEL_TRACK,
-                encoder_modulus=BLE_ENCODER_MODULUS if BLE_ENCODER_MODULUS is not None else 2 ** 32,
+                encoder_modulus=BLE_ENCODER_MODULUS if BLE_ENCODER_MODULUS is not None else 2 ** 16,  # 16bit: 65536
                 invert_left=BLE_INVERT_LEFT,
                 invert_right=BLE_INVERT_RIGHT,
             )
@@ -2517,6 +2517,39 @@ def main():
                         safety_cells,
                         max_unknown_allowed=0
                     )
+                
+                # A*失败处理：强制刷新前沿点，寻找新的可达目标
+                if planned_path is None:
+                    print(f"[A*失败] 无法到达前沿点 {target_cell_latest}，强制刷新前沿并重新搜索")
+                    # 强制全量刷新前沿点
+                    explorer.force_full_refresh()
+                    # 重新搜索最近的前沿
+                    t_retry_start = time.perf_counter()
+                    retry_frontier, retry_path = explorer.find_nearest_frontier(occupancy, (rx_idx, ry_idx))
+                    retry_time_ms = (time.perf_counter() - t_retry_start) * 1000.0
+                    
+                    if retry_frontier is not None and retry_path:
+                        print(f"[A*失败] 重新搜索成功（{retry_time_ms:.2f}ms），找到新前沿 {retry_frontier}")
+                        target_cell_latest = retry_frontier
+                        planned_path = list(retry_path)
+                        planned_sd = safety_cells
+                        frontier_hint_cell = target_cell_latest
+                    else:
+                        print(f"[A*失败] 重新搜索也失败（{retry_time_ms:.2f}ms），尝试降低安全距离")
+                        # 尝试降低安全距离重试
+                        relaxed_safety = max(1.0, safety_cells * 0.5)
+                        planned_path, planned_sd = plan_path_with_safety(
+                            occupancy,
+                            (rx_idx, ry_idx),
+                            target_cell_latest,
+                            relaxed_safety,
+                            max_unknown_allowed=2
+                        )
+                        if planned_path is not None:
+                            print(f"[A*失败] 降低安全距离后成功规划路径")
+                        else:
+                            print(f"[A*失败] 所有尝试均失败，保持当前状态探索")
+                
                 global_path = planned_path if planned_path is not None else None
                 current_path = global_path if global_path else None
                 if global_path and (len(global_path) - 1) > FRONTIER_LONG_PATH_THRESHOLD_CELLS:

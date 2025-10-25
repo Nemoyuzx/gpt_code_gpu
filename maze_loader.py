@@ -112,7 +112,8 @@ class MazeLoader:
         max_y = max(max(p[1] for p in wall) for wall in walls)
         
         # 扩大地图边界，为SLAM探索提供更大的画布
-        map_buffer = 2.0  # 在每个方向扩展20米的缓冲区
+        # 增大缓冲区以防止SLAM建图时边缘被标记为墙壁
+        map_buffer = 3.0  # 在每个方向扩展5米的缓冲区（从2.0增加到5.0）
         min_x -= map_buffer
         min_y -= map_buffer
         max_x += map_buffer
