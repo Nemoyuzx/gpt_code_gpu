@@ -12,6 +12,7 @@ from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import shutil
+from output_paths import BLE_PARSED_LOG
 
 LASER_RE = re.compile(r"^LASER ")
 KEY_RE = re.compile(r"([a-zA-Z_]+)=([+-]?[0-9]*\.?[0-9]+)")
@@ -139,7 +140,7 @@ def visualize(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize BLE laser data in matplotlib.")
-    parser.add_argument("source", nargs="?", default="ble_parsed.log", help="Log file containing LASER lines.")
+    parser.add_argument("source", nargs="?", default=str(BLE_PARSED_LOG), help="Log file containing LASER lines.")
     parser.add_argument(
         "--samples-per-scan",
         type=int,

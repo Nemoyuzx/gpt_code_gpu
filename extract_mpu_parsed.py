@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 import re
 from typing import Iterable, TextIO
+from output_paths import BLE_PARSED_LOG, ensure_parent
 
 MPU_LINE_RE = re.compile(
     r"MPU\s+degree_x=(?P<degree>-?\d+)\s+count1=(?P<count1>-?\d+)\s+count2=(?P<count2>-?\d+)"
@@ -20,8 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "input",
         nargs="?",
-        default="ble_parsed.log",
-        help="Path to the ble_parsed log file (default: ble_parsed.log)",
+        default=str(BLE_PARSED_LOG),
+        help=f"Path to the ble_parsed log file (default: {BLE_PARSED_LOG})",
     )
     parser.add_argument(
         "--output",
@@ -79,6 +80,7 @@ def extract_parsed(input_path: Path, output_path: Path | None, *, fmt: str, head
         return
 
     if output_path:
+        output_path = ensure_parent(output_path)
         with output_path.open("w", encoding="utf-8", newline="") as dst:
             _write(entries, dst, fmt, header)
     else:

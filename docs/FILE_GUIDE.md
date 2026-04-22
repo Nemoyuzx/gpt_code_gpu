@@ -17,6 +17,7 @@
 | `dynamic_window_approach.py` | 教材式 DWA 参考实现，用于对照和实验。 |
 | `grid_system.py` | 将环境划分为更高层的逻辑网格，辅助区域搜索与展示。 |
 | `noise_filter.py` | 激光与里程计噪声处理。 |
+| `output_paths.py` | 统一管理日志、可视化图像和数据导出的默认目录。 |
 
 ## 可视化与性能分析
 

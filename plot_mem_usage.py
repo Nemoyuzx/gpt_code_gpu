@@ -7,8 +7,8 @@ Read mem_usage_log.csv and plot memory usage.
 - Subplot 3: CUDA/MPS memory (if available)
 
 Usage:
-    python plot_mem_usage.py --csv mem_usage_log.csv --out mem_usage_plot.png
-    python plot_mem_usage.py --csv mem_usage_log.csv --no-show
+    python plot_mem_usage.py --csv outputs/data/mem_usage_log.csv --out outputs/visualization/mem_usage_plot.png
+    python plot_mem_usage.py --csv outputs/data/mem_usage_log.csv --no-show
 """
 from __future__ import annotations
 import argparse
@@ -18,6 +18,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
 import numpy as np
+from output_paths import MEM_USAGE_CSV, MEM_USAGE_PLOT, ensure_parent
 
 
 def to_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -29,8 +30,8 @@ def to_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 def main():
     ap = argparse.ArgumentParser(description="Plot memory usage from mem_usage_log.csv")
-    ap.add_argument("--csv", default="mem_usage_log.csv", help="Path to CSV file (default: mem_usage_log.csv)")
-    ap.add_argument("--out", default="mem_usage_plot.png", help="Output image path (default: mem_usage_plot.png); set empty to skip saving")
+    ap.add_argument("--csv", default=str(MEM_USAGE_CSV), help=f"Path to CSV file (default: {MEM_USAGE_CSV})")
+    ap.add_argument("--out", default=str(MEM_USAGE_PLOT), help=f"Output image path (default: {MEM_USAGE_PLOT}); set empty to skip saving")
     ap.add_argument("--no-show", action="store_true", help="Do not show the window; only save to --out")
     ap.add_argument("--dpi", type=int, default=150, help="Figure DPI (default: 150)")
     ap.add_argument("--annotate", action="store_true", help="Annotate maxima on plots for quick reading")
@@ -214,8 +215,9 @@ def main():
 
     if args.out:
         try:
-            fig.savefig(args.out, dpi=args.dpi)
-            print(f"Saved: {args.out}")
+            out_path = ensure_parent(args.out)
+            fig.savefig(out_path, dpi=args.dpi)
+            print(f"Saved: {out_path}")
         except Exception as e:
             print(f"Failed to save figure: {e}")
     if not args.no_show:

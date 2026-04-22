@@ -11,6 +11,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Deque, List, Optional
+from output_paths import BLE_PARSED_LOG, BLE_RAW_LOG
 
 try:  # pragma: no cover - optional dependency guard
     from bleak import BleakClient, BleakScanner, BleakError  # type: ignore[import]
@@ -99,8 +100,8 @@ class ParsedDataWriter:
                 raw_file.write(raw_line + "\n")
 
 
-DEFAULT_PARSED_FILE = Path("ble_parsed.log")
-DEFAULT_RAW_FILE = Path("ble_raw.log")
+DEFAULT_PARSED_FILE = BLE_PARSED_LOG
+DEFAULT_RAW_FILE = BLE_RAW_LOG
 DATA_WRITER = ParsedDataWriter(DEFAULT_PARSED_FILE, DEFAULT_RAW_FILE)
 
 

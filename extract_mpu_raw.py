@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+from output_paths import BLE_RAW_LOG, ensure_parent
 
 
 def parse_args() -> argparse.Namespace:
@@ -10,8 +11,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "input",
         nargs="?",
-        default="ble_raw.log",
-        help="Path to the ble_raw log file (default: ble_raw.log)",
+        default=str(BLE_RAW_LOG),
+        help=f"Path to the ble_raw log file (default: {BLE_RAW_LOG})",
     )
     parser.add_argument(
         "--output",
@@ -26,6 +27,7 @@ def extract_lines(input_path: Path, output_path: Path | None) -> None:
         raise FileNotFoundError(f"Input log not found: {input_path}")
 
     if output_path:
+        output_path = ensure_parent(output_path)
         with input_path.open("r", encoding="utf-8") as src, output_path.open(
             "w", encoding="utf-8"
         ) as dst:

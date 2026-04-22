@@ -4,6 +4,7 @@ from matplotlib.patches import Circle, Rectangle
 from matplotlib.patches import Patch
 import math
 import numpy as np
+from output_paths import MAP_IMAGE, PATH_CSV, ensure_parent
 
 # 可视化参数
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
@@ -76,8 +77,8 @@ class Visualizer:
                 print("[Visualizer] 🛑 强制停止！小车将立即停止。")
         elif event.key == 'm':
             # 保存地图和路径
-            map_file = "map.png"
-            path_file = "path.csv"
+            map_file = MAP_IMAGE
+            path_file = PATH_CSV
             self.save_map(map_file)
             self.save_path(path_file)
             print(f"[Visualizer] 💾 地图已保存至 {map_file}, 路径已保存至 {path_file}")
@@ -418,14 +419,15 @@ class Visualizer:
 
     def save_map(self, filename):
         """将当前地图绘制保存为图像文件。"""
-        self.fig.savefig(filename)
+        self.fig.savefig(ensure_parent(filename))
 
     def save_path(self, filename):
         """将机器人行驶路径保存为CSV文件。"""
         if self.robot is None:
             return
         try:
-            with open(filename, 'w') as f:
+            target = ensure_parent(filename)
+            with target.open('w', encoding='utf-8') as f:
                 f.write("x,y\n")
                 for (x, y) in self.robot.trajectory:
                     f.write(f"{x:.3f},{y:.3f}\n")

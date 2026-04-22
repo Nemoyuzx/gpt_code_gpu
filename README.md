@@ -31,6 +31,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+程序运行时的本地输出默认统一放在：
+
+- `outputs/logs/`：BLE 解析日志、原始日志
+- `outputs/visualization/`：地图图片、可视化导出、分析图
+- `outputs/data/`：路径 CSV、统计数据等结构化结果
+
 如果需要接真实 BLE 小车，先复制环境变量模板并填入自己的设备参数：
 
 ```bash
@@ -93,6 +99,7 @@ python main.py
 
 - 根目录仍然保持相对扁平，目的是尽量不打断原有脚本的相对路径和使用方式。
 - 历史运行产物、缓存、日志和本机路径相关内容不再作为仓库内容的一部分。
+- 新生成的本地结果统一写入 `outputs/`，避免再次把运行产物散落到仓库根目录。
 - `weights/` 中保留的是项目训练得到的示例模型；如果后续模型继续增大，建议迁移到 Release 或 Git LFS。
 
 ## 开源协议

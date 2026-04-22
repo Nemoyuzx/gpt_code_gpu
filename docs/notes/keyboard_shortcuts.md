@@ -8,7 +8,7 @@
 |------|------|------|
 | **s** | 启动自动控制 | 开始发送电机命令，小车开始自主探索 |
 | **p** | 强制停止小车 | 立即发送 `CMD-SET 0 0` 并关闭自动控制 |
-| **m** | 保存地图和路径 | 保存当前地图为 `map.png`，路径为 `path.csv` |
+| **m** | 保存地图和路径 | 保存当前地图为 `outputs/visualization/map.png`，路径为 `outputs/data/path.csv` |
 | **空格** | 暂停/继续可视化 | 暂停或恢复可视化更新（控制循环继续） |
 
 ## 详细说明
@@ -67,17 +67,17 @@
 **功能：** 保存当前地图和轨迹到文件
 
 **生成文件：**
-- `map.png` - 当前SLAM地图的图像
-- `path.csv` - 机器人行驶轨迹的CSV文件
+- `outputs/visualization/map.png` - 当前SLAM地图的图像
+- `outputs/data/path.csv` - 机器人行驶轨迹的CSV文件
 
 **文件格式：**
 
-`map.png`：
+`outputs/visualization/map.png`：
 - PNG格式的地图图像
 - 包含：占据栅格、机器人位置、激光点云、前沿区域等
 - 可用于后续分析或展示
 
-`path.csv`：
+`outputs/data/path.csv`：
 ```csv
 x,y
 2.000,2.000
@@ -94,7 +94,7 @@ x,y
 
 **状态提示：**
 ```
-[Visualizer] 💾 地图已保存至 map.png, 路径已保存至 path.csv
+[Visualizer] 💾 地图已保存至 .../outputs/visualization/map.png, 路径已保存至 .../outputs/data/path.csv
 ```
 
 **注意事项：**
@@ -166,7 +166,7 @@ x,y
    → 继续探索
    
 5. 完成后按 [m] 保存
-   → 生成 map.png 和 path.csv
+   → 生成 `outputs/visualization/map.png` 和 `outputs/data/path.csv`
 ```
 
 ### 场景2：性能优化运行
@@ -243,10 +243,10 @@ echo $USE_REAL_BLE_DATA
 **查找方法：**
 ```bash
 # 在工作目录下
-ls -lt map.png path.csv
+ls -lt outputs/visualization/map.png outputs/data/path.csv
 
-# 当前工作目录
-pwd
+# 输出目录树
+find outputs -maxdepth 2 -type f | sort
 ```
 
 ### Q: 空格暂停后怎么知道小车在动？

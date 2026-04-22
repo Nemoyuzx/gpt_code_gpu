@@ -46,6 +46,7 @@ Thumbs.db
 logs/
 runtime/
 artifacts/
+outputs/
 ble_*.log
 log.txt
 

@@ -20,6 +20,7 @@ from async_visualizer import AsyncVisualizer
 from multiprocess_visualizer import MultiprocessVisualizer
 from shm_visualizer import SharedMemoryVisualizer
 from grid_system import GridCell, GridSystem
+from output_paths import BLE_PARSED_LOG, FINAL_MAP_IMAGE
 import numpy as np
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -261,7 +262,7 @@ class SimMotionController:
 
 
 # ==================== 录制数据回放配置 ====================
-RECORDED_LASER_LOG = Path(os.getenv("RECORDED_LASER_LOG", "ble_parsed.log"))
+RECORDED_LASER_LOG = Path(os.getenv("RECORDED_LASER_LOG", str(BLE_PARSED_LOG))).expanduser()
 RECORDED_SAMPLES_PER_SCAN = int(os.getenv("RECORDED_SAMPLES_PER_SCAN", "250"))
 RECORDED_DISTANCE_SCALE = float(os.getenv("RECORDED_DISTANCE_SCALE", "0.001"))
 RECORDED_MIN_FILL_RATIO = float(os.getenv("RECORDED_MIN_FILL_RATIO", str(BLE_SCAN_MIN_FILL)))
@@ -3838,8 +3839,8 @@ def main():
         
     # 导出最终地图（按需求关闭 final_path.csv 导出）
     print("\n💾 保存最终地图...")
-    viz.save_map("final_map.png")
-    print(f"   地图已保存至 final_map.png")
+    viz.save_map(FINAL_MAP_IMAGE)
+    print(f"   地图已保存至 {FINAL_MAP_IMAGE}")
     # 已禁用：不再导出最终路径 CSV
     # viz.save_path("final_path.csv")
     
