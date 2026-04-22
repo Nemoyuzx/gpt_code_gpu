@@ -14,10 +14,12 @@ MAX_RANGE_FACTOR = 0.95  # 超过最大范围的比例阈值，用于忽略远�
 #相邻测距点差异阈值
 ADJACENCY_DIFF_THRESHOLD = 2  # 相邻测距点之间的差异阈值 (米)
 
-ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "500"))  # ICP最大迭代次数，可通过环境变量调整
+ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "80"))  # ICP最大迭代次数，可通过环境变量调整（默认80，实测收敛通常<30）
 ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
 ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "30"))  # ICP对应点匹配距离上限 (米)
-ICP_DEBUG = os.environ.get("ICP_DEBUG", "1") == "1"  # 是否输出ICP调试信息
+ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息（默认关闭以减少I/O开销）
+ICP_MEM_LOG = os.environ.get("ICP_MEM_LOG", "0") == "1"  # 是否每帧打印内存使用（默认关闭）
+ICP_GC_EVERY = int(os.environ.get("ICP_GC_EVERY", "0"))  # 每N帧显式gc；0表示关闭
 
 
 ICP_ACCUM_TRANS_THRESHOLD = float(os.environ.get("ICP_ACCUM_TRANS", "0.001"))
@@ -362,46 +364,40 @@ class ICPSlam:
 
         angle_offset = self.laser_angle_offset
 
-        body_points = []
         offset_body_x, offset_body_y = self.lidar_mount_offset
-        far_threshold = self.get_max_range() * MAX_RANGE_FACTOR  # 80% 最大范围阈值
+        max_range_val = self.get_max_range()
+        far_threshold = max_range_val * MAX_RANGE_FACTOR  # 80% 最大范围阈值
         adjacent_diff_threshold = ADJACENCY_DIFF_THRESHOLD       # 相邻点距离差阈值
 
-        for i, dist in enumerate(scan):
-            if dist >= self.get_max_range() or dist > far_threshold:
-                # 超过最大测距或阈值，未击中障碍或太远，跳过
-                continue
-            # 检查与相邻点的距离差异，滤除陡升/陡降点
-            should_skip = False
-            if i > 0 and scan[i-1] < self.get_max_range() and scan[i-1] <= far_threshold:
-                if abs(dist - scan[i-1]) > adjacent_diff_threshold:
-                    should_skip = True
-            if i < len(scan) - 1 and scan[i+1] < self.get_max_range() and scan[i+1] <= far_threshold:
-                if abs(dist - scan[i+1]) > adjacent_diff_threshold:
-                    should_skip = True
-            # 环形激光雷达首尾相邻点差异检查
-            if i == 0 and len(scan) > 1:
-                last_dist = scan[-1]
-                if last_dist < self.get_max_range() and last_dist <= far_threshold:
-                    if abs(dist - last_dist) > adjacent_diff_threshold:
-                        should_skip = True
-            elif i == len(scan) - 1 and len(scan) > 1:
-                first_dist = scan[0]
-                if first_dist < self.get_max_range() and first_dist <= far_threshold:
-                    if abs(dist - first_dist) > adjacent_diff_threshold:
-                        should_skip = True
-            if should_skip:
-                continue
-            # 计算该激光点在机器人坐标系下的坐标
-            local_angle = angle_offset + angles_np[i]
-            local_x = offset_body_x + dist * math.cos(local_angle)
-            local_y = offset_body_y + dist * math.sin(local_angle)
-            body_points.append([local_x, local_y])
+        # 向量化构造 body 坐标系下的有效激光点：
+        #   1. 距离在可靠范围内；
+        #   2. 与前后（含环形首尾）相邻点的跳变小于阈值。
+        scan_np = np.asarray(scan, dtype=np.float64)
+        valid_dist = (scan_np < max_range_val) & (scan_np <= far_threshold)
+        if valid_dist.any():
+            # 相邻点（含环形）均为可靠点才参与比较
+            prev_scan = np.roll(scan_np, 1)
+            next_scan = np.roll(scan_np, -1)
+            prev_valid = np.roll(valid_dist, 1)
+            next_valid = np.roll(valid_dist, -1)
+            jump_prev = prev_valid & (np.abs(scan_np - prev_scan) > adjacent_diff_threshold)
+            jump_next = next_valid & (np.abs(scan_np - next_scan) > adjacent_diff_threshold)
+            keep_mask = valid_dist & ~jump_prev & ~jump_next
+        else:
+            keep_mask = valid_dist
 
-        if not body_points:
+        if keep_mask.any():
+            kept_dist = scan_np[keep_mask]
+            kept_angles = angle_offset + angles_np[keep_mask]
+            bx = offset_body_x + kept_dist * np.cos(kept_angles)
+            by = offset_body_y + kept_dist * np.sin(kept_angles)
+            body_points_np = np.stack([bx, by], axis=1).astype(np.float32, copy=False)
+        else:
+            body_points_np = np.zeros((0, 2), dtype=np.float32)
+
+        if body_points_np.shape[0] == 0:
             # 没有有效扫描点，直接返回预测位姿（无ICP校正）
             return (self.x, self.y, self.theta)
-        body_points_np = np.array(body_points, dtype=np.float32)
 
         # 如果存在已有地图点云且机器人在运动，则进行 ICP 匹配校正
         # 静止时跳过ICP以避免传感器噪声导致的位姿漂移
@@ -726,10 +722,15 @@ class ICPSlam:
                 # 清理临时列表，尽快释放内存
                 new_points.clear()
 
-        # 显式调用垃圾回收，释放Python对象占用的内存
-        gc.collect()
-        # 每次更新后打印内存使用量
-        self._print_memory_usage(icp_iterations)
+        # 显式调用垃圾回收（仅按配置间隔执行，避免每帧 gc 阻塞）
+        if ICP_GC_EVERY > 0:
+            self._gc_counter = getattr(self, "_gc_counter", 0) + 1
+            if self._gc_counter >= ICP_GC_EVERY:
+                self._gc_counter = 0
+                gc.collect()
+        # 内存使用量打印仅按需开启，避免频繁 I/O 拖慢主循环
+        if ICP_MEM_LOG:
+            self._print_memory_usage(icp_iterations)
         return (self.x, self.y, self.theta)
     
     def get_max_range(self):
