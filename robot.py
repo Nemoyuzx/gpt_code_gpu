@@ -131,29 +131,29 @@ class Robot:
         self._result_queue = None
         self._thread_stop.clear()
 
-        def apply_motion(self, distance: float, rotation: float, *, linear_vel: Optional[float] = None,
-                         angular_vel: Optional[float] = None) -> None:
-            """Integrate an externally measured motion increment into the robot state."""
-            theta0 = self.theta
-            if abs(rotation) < 1e-8:
-                dx = distance * math.cos(theta0)
-                dy = distance * math.sin(theta0)
-            else:
-                theta1 = theta0 + rotation
-                radius = distance / rotation if abs(rotation) > 1e-8 else 0.0
-                dx = radius * (math.sin(theta1) - math.sin(theta0))
-                dy = -radius * (math.cos(theta1) - math.cos(theta0))
-            self.x += dx
-            self.y += dy
-            self.theta = math.atan2(math.sin(theta0 + rotation), math.cos(theta0 + rotation))
-            self.trajectory.append((self.x, self.y))
-            self.odom_x = self.x
-            self.odom_y = self.y
-            self.odom_theta = self.theta
-            if linear_vel is not None:
-                self.linear_vel = linear_vel
-            if angular_vel is not None:
-                self.angular_vel = angular_vel
+    def apply_motion(self, distance: float, rotation: float, *, linear_vel: Optional[float] = None,
+                     angular_vel: Optional[float] = None) -> None:
+        """Integrate an externally measured motion increment into the robot state."""
+        theta0 = self.theta
+        if abs(rotation) < 1e-8:
+            dx = distance * math.cos(theta0)
+            dy = distance * math.sin(theta0)
+        else:
+            theta1 = theta0 + rotation
+            radius = distance / rotation if abs(rotation) > 1e-8 else 0.0
+            dx = radius * (math.sin(theta1) - math.sin(theta0))
+            dy = -radius * (math.cos(theta1) - math.cos(theta0))
+        self.x += dx
+        self.y += dy
+        self.theta = math.atan2(math.sin(theta0 + rotation), math.cos(theta0 + rotation))
+        self.trajectory.append((self.x, self.y))
+        self.odom_x = self.x
+        self.odom_y = self.y
+        self.odom_theta = self.theta
+        if linear_vel is not None:
+            self.linear_vel = linear_vel
+        if angular_vel is not None:
+            self.angular_vel = angular_vel
 
     def _thread_loop(self) -> None:
         if self._cmd_queue is None or self._result_queue is None:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Optional
 
 from bleak import BleakClient
@@ -17,9 +18,9 @@ from bluetooth_connection import (
     parse_delimiter,
 )
 
-DEVICE_ADDRESS = "60E2ECE4-761B-6B31-FD1F-6FD559C4FE52"
-NOTIFY_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"
-WRITE_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"
+DEVICE_ADDRESS = os.getenv("BLE_DEVICE_ADDRESS", "")
+NOTIFY_CHAR = os.getenv("BLE_NOTIFY_CHAR", "0000ffe1-0000-1000-8000-00805f9b34fb")
+WRITE_CHAR = os.getenv("BLE_WRITE_CHAR", NOTIFY_CHAR)
 CMD_RUN = b"CMD-VW 66 0\n"
 CMD_STOP = b"CMD-SET 0 0\n"
 RUN_DURATION_SEC =5
@@ -31,6 +32,9 @@ POST_STOP_DELAY = 1.0
 
 
 async def run_sequence() -> None:
+    if not DEVICE_ADDRESS:
+        raise SystemExit("BLE_DEVICE_ADDRESS is required to run record_cmd_run.py")
+
     clear_buffers()
     DATA_WRITER.reset()
 

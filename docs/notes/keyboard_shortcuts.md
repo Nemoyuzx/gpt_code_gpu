@@ -245,9 +245,8 @@ echo $USE_REAL_BLE_DATA
 # 在工作目录下
 ls -lt map.png path.csv
 
-# 完整路径
+# 当前工作目录
 pwd
-# 输出：/Users/nemoyu/Desktop/小学期/gpt_code_gpu
 ```
 
 ### Q: 空格暂停后怎么知道小车在动？
@@ -310,5 +309,5 @@ elif ENABLE_CONTROL_LOOP and viz.is_auto_control_enabled():
 
 - `visualizer.py` - 可视化模块实现
 - `main.py` - 主循环和控制逻辑
-- `slam_drift_fix.md` - SLAM漂移修复说明
-- `turning_speed_fix.md` - 转弯速度优化说明
+- `docs/ARCHITECTURE.md` - 系统整体架构
+- `docs/FILE_GUIDE.md` - 文件作用索引
