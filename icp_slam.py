@@ -12,11 +12,15 @@ from datetime import datetime as dt
 
 MAX_RANGE_FACTOR = 0.95  # 超过最大范围的比例阈值，用于忽略远距离点
 #相邻测距点差异阈值
-ADJACENCY_DIFF_THRESHOLD = 2  # 相邻测距点之间的差异阈值 (米)
+# 原为 2m，对尼龙环境中的连续墙面过于宽松；收紧到 0.5m 可更好地滤掉跨边缘
+# 的离群点（这类点会给 ICP 带来偏差）。
+ADJACENCY_DIFF_THRESHOLD = 0.5
 
 ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "80"))  # ICP最大迭代次数，可通过环境变量调整（默认80，实测收敛通常<30）
 ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
-ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "30"))  # ICP对应点匹配距离上限 (米)
+# 原为 30m（几乎不限制）。对应点距离上限过宽会让错匹配拉偏ICP，
+# 收紧到 1.0m：在帧间位姿增量更安静的分辨率下这个值足够宽遗，又能有效剥离外点。
+ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "1.0"))
 ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息（默认关闭以减少I/O开销）
 ICP_MEM_LOG = os.environ.get("ICP_MEM_LOG", "0") == "1"  # 是否每帧打印内存使用（默认关闭）
 ICP_GC_EVERY = int(os.environ.get("ICP_GC_EVERY", "0"))  # 每N帧显式gc；0表示关闭
@@ -24,8 +28,10 @@ ICP_GC_EVERY = int(os.environ.get("ICP_GC_EVERY", "0"))  # 每N帧显式gc；0�
 
 ICP_ACCUM_TRANS_THRESHOLD = float(os.environ.get("ICP_ACCUM_TRANS", "0.001"))
 ICP_ACCUM_ROT_THRESHOLD = float(os.environ.get("ICP_ACCUM_ROT", "0.00005"))
-ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(270.0))))
-ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "1"))
+# 原为 270° / 1m，这么宽的跳变阈值几乎不会拒绝任何 ICP 解，恶 ICP
+# 会静默地拉偏位姿。帧间实际修正应 << 0.3m / 30°，超出就视为失败。
+ICP_MAX_ANGLE_CORRECTION = float(os.environ.get("ICP_MAX_ANGLE_CORR", str(math.radians(30.0))))
+ICP_MAX_POS_CORRECTION = float(os.environ.get("ICP_MAX_POS_CORR", "0.3"))
 ICP_FAIL_SKIP_FRAMES = int(os.environ.get("ICP_FAIL_SKIP", "1"))
 
 # 激光雷达安装点相对车体中心的偏移（单位: 米），默认向后5cm，可通过环境变量覆盖
@@ -326,12 +332,14 @@ class ICPSlam:
         # 检查是否实际有运动
         is_moving = (abs(d_trans) >= MOTION_THRESHOLD_TRANS or abs(d_rot) >= MOTION_THRESHOLD_ROT)
 
-        # 步骤1: 预测位姿 (根据里程计增量更新估计位姿)
-        self.theta += d_rot
+        # 步骤1: 预测位姿（对称运动模型，消除旋转+平移联合时的系统性偏差）：
+        # 先转 d_rot/2，再沿中间方向平移 d_trans，最后转剩余 d_rot/2。
+        self.theta += 0.5 * d_rot
         self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
-        # 假设 d_trans 沿当前朝向方向
         self.x += d_trans * math.cos(self.theta)
         self.y += d_trans * math.sin(self.theta)
+        self.theta += 0.5 * d_rot
+        self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
 
         pred_x, pred_y, pred_theta = self.x, self.y, self.theta
 
@@ -634,7 +642,8 @@ class ICPSlam:
 
             max_range_val = self.get_max_range()
             far_threshold = max_range_val * MAX_RANGE_FACTOR
-            adjacent_diff_threshold_map = 2.0  # 与ICP部分一致或更宽松的阈值
+            # 建图阶段使用与 ICP 一致的跳变阈值，避免在过滤宽松时把边缘离群点也画进地图
+            adjacent_diff_threshold_map = ADJACENCY_DIFF_THRESHOLD
 
             # 向量化：相邻差分过滤 + 端点栅格坐标，一次性在 NumPy 中完成
             # 注意：这里的 scan_np/angles_np 已在步骤2中准备好
