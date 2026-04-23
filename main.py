@@ -16,7 +16,7 @@ import numpy as np
 # ==================== 系统参数配置 ====================
 # 路径规划参数
 SAFETY_DISTANCE_FACTOR = 0.7  # 路径截断百分比，表示只执行路径的前70%
-FRONTIER_SAFETY_DISTANCE = 6  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
+FRONTIER_SAFETY_DISTANCE = 5  # 前沿探索器与障碍物的安全距离 (提高, 使路径/前沿选择更远离墙体)
 
 # 迷宫和机器人参数
 MAZE_FILE = "2.json"  # 默认迷宫文件
