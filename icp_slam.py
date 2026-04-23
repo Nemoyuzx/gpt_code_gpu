@@ -16,7 +16,7 @@ MAX_RANGE_FACTOR = 0.95  # 超过最大范围的比例阈值，用于忽略远�
 # 的离群点（这类点会给 ICP 带来偏差）。
 ADJACENCY_DIFF_THRESHOLD = 0.5
 
-ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "80"))  # ICP最大迭代次数，可通过环境变量调整（默认80，实测收敛通常<30）
+ICP_MAX_ITER = int(os.environ.get("ICP_MAX_ITER", "30"))  # ICP最大迭代次数（默认30，实测收敛通常<20）
 ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容忍，默认放宽以加速收敛
 # 原为 30m（几乎不限制）。对应点距离上限过宽会让错匹配拉偏ICP，
 # 收紧到 1.0m：在帧间位姿增量更安静的分辨率下这个值足够宽遗，又能有效剥离外点。
@@ -463,6 +463,31 @@ class ICPSlam:
             src_body = self.to_tensor(body_points_np)  # 源点云（机器人坐标系，形状 [N_src, 2]）
             # 准备目标点云张量 (地图点)
             tgt = self.map_points_tensor  # 仅使用内存中的最新地图点云
+            # ---- 空间裁剪：ICP 只需要预测位姿附近的地图点 ----
+            # 源点云最远距离 = ICP_RANGE_LIMIT，再加上对应搜索半径冗余，就是 tgt
+            # 实际可能参与配对的最大距离。把 tgt 按 bbox 裁到这个范围可以把
+            # cdist 的规模从"整张地图"缩到"局部窗口"，这是每帧最大的开销。
+            try:
+                pred_x_for_crop = float(self.x)
+                pred_y_for_crop = float(self.y)
+                icp_range_limit_m = float(os.environ.get("ICP_RANGE_LIMIT", "4.0"))
+                if icp_range_limit_m <= 0:
+                    icp_range_limit_m = self.get_max_range() * MAX_RANGE_FACTOR
+                crop_radius = icp_range_limit_m + max(self.icp_correspondence_thresh, 1.0)
+                tgt_x = tgt[:, 0]
+                tgt_y = tgt[:, 1]
+                bbox_mask = (
+                    (tgt_x >= pred_x_for_crop - crop_radius)
+                    & (tgt_x <= pred_x_for_crop + crop_radius)
+                    & (tgt_y >= pred_y_for_crop - crop_radius)
+                    & (tgt_y <= pred_y_for_crop + crop_radius)
+                )
+                cropped = tgt[bbox_mask]
+                # 需要足够的支撑点才使用裁剪结果，否则退回全图
+                if int(cropped.shape[0]) >= 50:
+                    tgt = cropped
+            except Exception:
+                pass
             # 若目标点云过大，则随机子采样到上限，限制 cdist 峰值内存
             try:
                 if tgt.shape[0] > MAX_TGT_POINTS_FOR_ICP:
