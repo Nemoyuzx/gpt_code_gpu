@@ -1,0 +1,13 @@
+name: SmallSemester_Slim
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - numpy==2.3.3
+      - matplotlib==3.10.7
+      - pandas==2.2.3
+      - psutil==7.1.0
+      - torch==2.8.0
+      - bleak==0.22.3

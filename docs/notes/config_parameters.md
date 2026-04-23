@@ -2,26 +2,23 @@
 
 ## 系统参数配置概览
 
-本文档列出了SLAM探索机器人仿真系统中所有可配置的参数，这些参数已被提取到文件开头作为常量定义，便于调整和维护。
-
 ### 路径规划参数
-- `SAFETY_DISTANCE_FACTOR = 0.75` - 路径截断百分比，表示只执行路径的前75%
-- `FRONTIER_SAFETY_DISTANCE = 6.0` - 前沿探索器与障碍物的安全距离
+- `FRONTIER_SAFETY_DISTANCE_METERS = ROBOT_COLLISION_RADIUS + BASE_SAFETY_CLEARANCE` - 前沿候选点必须距离障碍至少该安全距离才会被选取
+- 前沿搜索在路径与目标选择阶段都会滤除不满足安全距离的栅格
+- 返程阶段复用探索阶段的 DWA 路径跟随逻辑，以保持一致的轨迹控制特性
 
 ### 迷宫和机器人参数
-- `MAZE_FILE = "1.json"` - 默认迷宫文件
-- `ROBOT_ODOM_NOISE = (0, 0)` - 机器人里程计噪声 (x_noise, y_noise)
 - `VIRTUAL_WALL_RESOLUTION_FACTOR = 2` - 虚拟墙分辨率因子
 - `VIRTUAL_WALL_Y_OFFSET = -1` - 虚拟墙Y方向偏移
+- `OCCUPANCY_GRID_RESOLUTION = 0.02` - 占据栅格地图的分辨率（米/格）
 
 ### 激光雷达参数
-- `LIDAR_MAX_RANGE = 12.0` - 激光雷达最大探测距离
 - `LIDAR_ANGLE_RESOLUTION = 1.0` - 激光雷达角度分辨率
-- `LIDAR_NOISE = 0` - 激光雷达噪声
-
-### 出口检测参数
-- `EXIT_DETECTION_MIN_ANGLE = 180.0` - 检测出口的最小连续角度范围（度）
-
+- `LIDAR_NOISE = 0.01` - 激光雷达噪声
+`STUCK_WINDOW_STEPS = 16` - 判定窗口步数
+`STUCK_SPIN_W_THRESH = 1.1` - 认为“原地打转”的角速度阈值(rad/s)
+`STUCK_V_SMALL = 0.03` - 认为“几乎不前进”的线速度阈值(m/s)
+`STUCK_PROGRESS_EPS = 0.06` - 判定窗口内总位移阈值(m)
 ### 探索阈值参数
 - `MIN_EXPLORATION_DISTANCE = 10.0` - 最小探索距离阈值
 - `MIN_FRONTIERS_TO_EXPLORE = 2` - 最小探索前沿数量
@@ -29,6 +26,18 @@
 ### 运动控制精度参数
 - `ROTATION_THRESHOLD = 1e-3` - 旋转角度阈值
 - `MOVEMENT_THRESHOLD = 1e-6` - 移动距离阈值
+
+### DWA倒车相关参数
+- `reverse_heading_threshold ≈ 90°` - 朝向偏差接近90°才允许常规倒车
+- `reverse_deadband = 0.22` - 低于该速度幅度的倒车会被抑制
+- `reverse_min_speed_scale = 0.7` - 倒车的最小速度比例（相对于前进最小速度）
+- `reverse_rot_cost_scale = 0.85` / `reverse_spin_penalty_scale = 0.85` - 倒车时的转向代价/打转惩罚缩放，调高以减少倒车吸引力
+- `reverse_turn_bonus_gain = 0.12` - 倒车转弯奖励，保持较低
+- `reverse_continue_penalty_gain = 2.2` - 已校正后继续倒车的惩罚
+- `direct_reverse_reward_gain = 0.3` - 直接倒车奖励权重，再次调低
+- `direct_reverse_gap_threshold = 0.15m` - 仅当前向净空小于该值时触发直接倒车奖励
+- `forward_pref_cost_gain = 0.45` - 前向净空充足且角度小仍倒车时的惩罚增益
+- `forward_pref_gap_thresh = 0.50` - 仅当前向净空超过该值时才应用前进偏好惩罚
 
 ### 可视化参数
 - `VISUALIZATION_PAUSE_TIME = 0.005` - 暂停时的等待时间
@@ -38,10 +47,12 @@
 - `OBSTACLE_SEARCH_EXPANSION = 5.0` - 障碍物区域搜索范围扩大距离（米）
 
 ### 降噪滤波参数
-- `NOISE_FILTER_ENABLED = True` - 是否启用降噪滤波器
+- `NOISE_FILTER_ENABLED = True` - 降噪滤波器总开关
+- `LIDAR_FILTER_ENABLED = True` - 是否启用激光雷达降噪（独立控制）
 - `LIDAR_FILTER_TYPE = 'median'` - 激光雷达滤波类型: 'none', 'median', 'moving_average', 'gaussian'
 - `LIDAR_FILTER_WINDOW_SIZE = 5` - 激光雷达滤波窗口大小
-- `ODOM_FILTER_TYPE = 'kalman'` - 里程计滤波类型: 'none', 'kalman', 'moving_average'
+- `ODOM_FILTER_ENABLED = False` - 是否启用里程计降噪（独立控制）
+- `ODOM_FILTER_TYPE = 'none'` - 里程计滤波类型: 'none', 'kalman', 'moving_average'
 - `ODOM_FILTER_WINDOW_SIZE = 3` - 里程计滤波窗口大小
 
 ## 降噪滤波算法说明
@@ -58,8 +69,12 @@
 3. **移动平均 (`moving_average`)**: 使用历史数据的移动平均，角度使用圆形平均
 
 ### 使用建议
-- **高噪声环境**: 启用滤波器，使用较大的窗口大小
-- **实时性要求高**: 使用较小的窗口大小或禁用滤波器
+- **只处理激光雷达噪声**: 设置 `LIDAR_FILTER_ENABLED = True`, `ODOM_FILTER_ENABLED = False`
+- **只处理里程计噪声**: 设置 `LIDAR_FILTER_ENABLED = False`, `ODOM_FILTER_ENABLED = True`
+- **处理所有噪声**: 设置 `LIDAR_FILTER_ENABLED = True`, `ODOM_FILTER_ENABLED = True`
+- **禁用所有滤波**: 设置 `NOISE_FILTER_ENABLED = False`
+- **高噪声环境**: 启用对应滤波器，使用较大的窗口大小
+- **实时性要求高**: 使用较小的窗口大小或禁用对应滤波器
 - **精度要求高**: 推荐使用卡尔曼滤波处理里程计数据，中值滤波处理激光雷达数据
 
 ## 参数调整建议
@@ -72,7 +87,7 @@
 2. **提高探索精度**：
    - 减小 `LIDAR_ANGLE_RESOLUTION`
    - 减小 `ROTATION_THRESHOLD` 和 `MOVEMENT_THRESHOLD`
-   - 减小 `FRONTIER_SAFETY_DISTANCE`
+   - 减小 `FRONTIER_SAFETY_DISTANCE_METERS`
 
 3. **调整探索策略**：
    - 修改 `MIN_EXPLORATION_DISTANCE` 和 `MIN_FRONTIERS_TO_EXPLORE` 控制何时开始检测出口
@@ -83,7 +98,7 @@
    - 设置 `ROBOT_ODOM_NOISE` 和 `LIDAR_NOISE` 模拟真实环境
    
 2. **安全性调整**：
-   - 增大 `FRONTIER_SAFETY_DISTANCE` 提高安全性
+   - 增大 `FRONTIER_SAFETY_DISTANCE_METERS` 提高安全性
    - 减小 `SAFETY_DISTANCE_FACTOR` 使路径更保守
 
 ## 配置文件位置
