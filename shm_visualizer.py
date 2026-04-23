@@ -99,7 +99,10 @@ class SharedMemoryVisualizer:
         if self.process is not None:
             try:
                 # 发送停止命令
-                self.command_queue.put(('stop', None), timeout=1.0)
+                try:
+                    self.command_queue.put(('stop', None), timeout=1.0)
+                except Exception:
+                    pass
                 # 等待进程结束
                 self.process.join(timeout=3.0)
                 
@@ -111,9 +114,23 @@ class SharedMemoryVisualizer:
             except Exception as e:
                 print(f"[SHM VIZ ERROR] Error stopping process: {e}")
                 if self.process.is_alive():
-                    self.process.kill()
+                    try:
+                        self.process.kill()
+                    except Exception:
+                        pass
                     
             self.process = None
+
+        # 父进程也取消本端 feeder 线程，避免 Ctrl+C 场景下主进程退出时卡死
+        for q in (self.command_queue, self.response_queue):
+            try:
+                q.cancel_join_thread()
+            except Exception:
+                pass
+            try:
+                q.close()
+            except Exception:
+                pass
         
         # 清理共享内存
         try:
@@ -310,7 +327,16 @@ class SharedMemoryVisualizer:
         """可视化进程的主函数（在子进程中运行）"""
         shm_occupancy = None
         shm_unsafe_mask = None
-        
+
+        # 子进程忽略 SIGINT，让主进程独立处理 Ctrl+C，并通过 'stop' 命令通知子进程退出。
+        # 若不忽略，SIGINT 会在队列 feeder 线程持锁状态下触发解释器 finalize，
+        # 进而引发 "PyEval_RestoreThread: the function must be called with the GIL held" 致命错误。
+        try:
+            import signal
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        except Exception:
+            pass
+
         try:
             # 配置matplotlib
             import matplotlib
@@ -454,6 +480,18 @@ class SharedMemoryVisualizer:
                 plt.close('all')
             except:
                 pass
+            # 取消队列后台 feeder 线程，避免在解释器 finalize 时仍持有 GIL 锁。
+            # 必须在返回前调用，否则父进程 Ctrl+C 后子进程的 feeder 线程可能
+            # 在 PyEval_RestoreThread 处崩溃。
+            for q in (command_queue, response_queue):
+                try:
+                    q.cancel_join_thread()
+                except Exception:
+                    pass
+                try:
+                    q.close()
+                except Exception:
+                    pass
             print("[SHM VIZ PROCESS] Visualization process exiting")
 
 
