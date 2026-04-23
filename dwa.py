@@ -283,202 +283,210 @@ class DWAPlanner:
         timing['sample_filter'] = 0.0
         sample_count = 0
 
-        # --- 3. 采样评估 ---
-        for v in v_samples:
-            for w in w_samples:
-                sample_count += 1
-                t_traj = time.perf_counter()
-                traj = self._predict_trajectory(state, v, w)
-                timing['sample_traj_pred'] += (time.perf_counter() - t_traj) * 1000.0
-                
-                t_goal = time.perf_counter()
-                ang_c, dist_c = self._goal_cost(traj, goal)
-                timing['sample_goal_cost'] += (time.perf_counter() - t_goal) * 1000.0
-                
-                t_obs = time.perf_counter()
-                obs_min_dist, obs_raw_cost = self._obstacle_cost_components(traj, obstacles)
-                timing['sample_obs_cost'] += (time.perf_counter() - t_obs) * 1000.0
-                
-                # 早期碰撞检测：提前退出
-                t_filter = time.perf_counter()
-                if obs_min_dist <= robot_radius:
+        # --- 3. 批量预计算（向量化）：一次性算所有 (v, w) 的轨迹、障碍、goal 代价 ---
+        t_batch = time.perf_counter()
+        trajs_full, trajs_xy_strided = self._batch_predict_trajectories(state, v_samples, w_samples)
+        timing['sample_traj_pred'] = (time.perf_counter() - t_batch) * 1000.0
+        t_batch = time.perf_counter()
+        batch_min_dist, batch_raw_cost = self._batch_obstacle_costs(trajs_xy_strided, obstacles)
+        timing['sample_obs_cost'] = (time.perf_counter() - t_batch) * 1000.0
+        t_batch = time.perf_counter()
+        batch_ang_c, batch_dist_c = self._batch_goal_costs(trajs_full[:, -1, :3], goal)
+        timing['sample_goal_cost'] = (time.perf_counter() - t_batch) * 1000.0
+
+        v_flat = np.repeat(v_samples, w_samples.size)
+        w_flat = np.tile(w_samples, v_samples.size)
+
+        # --- 3b. 采样评估（Python 循环仅做代价聚合，无 numpy 重调用） ---
+        N_total = int(v_flat.size)
+        for idx in range(N_total):
+            v = float(v_flat[idx])
+            w = float(w_flat[idx])
+            sample_count += 1
+            obs_min_dist = float(batch_min_dist[idx])
+            obs_raw_cost = float(batch_raw_cost[idx])
+            ang_c = float(batch_ang_c[idx])
+            dist_c = float(batch_dist_c[idx])
+
+            t_filter = time.perf_counter()
+            # 早期碰撞检测：提前退出
+            if obs_min_dist <= robot_radius:
+                timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                continue
+            # 倒车约束
+            if v < 0:
+                if not dynamic_allow_reverse:
                     timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                     continue
-                # 倒车约束
-                if v < 0:
-                    if not dynamic_allow_reverse:
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                        continue
-                    # 倒车死区：非直接倒车区域内，过滤微幅倒车，避免 v≈-0.05~-0.10 抖动
-                    allow_small_reverse = (
-                        direct_reverse_zone or
-                        abs(w) >= reverse_deadband_w or
-                        ang_c >= reverse_deadband_angle_rad
-                    )
-                    if (abs(v) < self.cfg.reverse_deadband) and not allow_small_reverse:
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                        continue
-                    # 小角度且前向净空充足时，采样阶段也直接忽略倒车（双重保护）
-                    small_heading = (heading_diff < forward_pref_angle_rad)
-                    small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < forward_pref_angle_rad)
-                    if ((small_heading or small_path_align) and 
-                        self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                        continue
-                    if (not self.cfg.reverse_no_heading_gate and 
-                        (ang_c < self.cfg.reverse_heading_threshold and obs_min_dist > (self.cfg.robot_radius + self.cfg.reverse_clearance_threshold))):
-                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                        continue
-                # 小角度大转速过滤
-                if (
-                    ang_c < self.cfg.align_deadband
-                    and abs(w) > align_yaw_rate_thresh
-                    and v > -reverse_sample_eps
-                    and abs(v) < align_small_speed
-                ):
+                allow_small_reverse = (
+                    direct_reverse_zone or
+                    abs(w) >= reverse_deadband_w or
+                    ang_c >= reverse_deadband_angle_rad
+                )
+                if (abs(v) < self.cfg.reverse_deadband) and not allow_small_reverse:
                     timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                     continue
-                if ang_c < small_angle_loose:
-                    base_need = 0.5 * min_forward_speed
-                    if v >= 0:
-                        if abs(v) < base_need:
+                small_heading = (heading_diff < forward_pref_angle_rad)
+                small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < forward_pref_angle_rad)
+                if ((small_heading or small_path_align) and 
+                    self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
+                    timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                    continue
+                if (not self.cfg.reverse_no_heading_gate and 
+                    (ang_c < self.cfg.reverse_heading_threshold and obs_min_dist > (self.cfg.robot_radius + self.cfg.reverse_clearance_threshold))):
+                    timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                    continue
+            # 小角度大转速过滤
+            if (
+                ang_c < self.cfg.align_deadband
+                and abs(w) > align_yaw_rate_thresh
+                and v > -reverse_sample_eps
+                and abs(v) < align_small_speed
+            ):
+                timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                continue
+            if ang_c < small_angle_loose:
+                base_need = 0.5 * min_forward_speed
+                if v >= 0:
+                    if abs(v) < base_need:
+                        timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
+                        continue
+                else:
+                    if not self.cfg.reverse_allow_low_speed_small_angle:
+                        need_rev = 0.5 * reverse_min_speed
+                        if abs(v) < need_rev:
                             timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                             continue
-                    else:
-                        if not self.cfg.reverse_allow_low_speed_small_angle:
-                            need_rev = 0.5 * reverse_min_speed
-                            if abs(v) < need_rev:
-                                timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                                continue
-                timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
-                
-                t_other = time.perf_counter()
-                any_candidate = True
+            timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
 
-                to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
-                speed_c = self.cfg.speed_cost_gain * (self.cfg.max_speed - abs(traj[-1, 3]))
-                if v < -reverse_sample_eps:
-                    give_reward = True
-                    # 若与目标方向角度已很小则不再奖励倒车
-                    if ang_c < reverse_reward_angle_rad:
-                        give_reward = False
-                    if direct_reverse_zone and give_reward:
-                        speed_c -= self.cfg.direct_reverse_reward_gain * (-v)
-                # 前进偏好代价：小角度且gap充足仍倒车
-                forward_pref_c = 0.0
-                if v < -reverse_sample_eps:
-                    if (ang_c < forward_pref_angle_rad and 
-                        self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
-                        gain = self.cfg.forward_pref_cost_gain
-                        if self._global_step < self.cfg.initial_no_reverse_steps:
-                            gain *= self.cfg.forward_pref_initial_gain
-                        forward_pref_c = gain * (-v)
-                scaled_obs_raw = obs_raw_cost / max(1e-6, self.cfg.obstacle_cost_divisor)
-                if self.cfg.obstacle_cost_cap > 0:
-                    scaled_obs_raw = min(scaled_obs_raw, self.cfg.obstacle_cost_cap)
-                obs_c = self.cfg.obstacle_cost_gain * scaled_obs_raw
-                if obs_min_dist < inflated_r and obs_min_dist > robot_radius:
-                    clearance_c = self.cfg.clearance_cost_gain * ((inflated_r - obs_min_dist) / inflated_r)
-                else:
-                    clearance_c = 0.0
-                rot_scale = 1.0
-                if ang_c < self.cfg.small_angle:
-                    rot_scale += self.cfg.small_angle_rot_scale * (1 - ang_c / self.cfg.small_angle)
-                rot_c = self.cfg.rotation_cost_gain * abs(w) * rot_scale
-                # 倒车时进一步降低旋转代价，促使倒车结合较大角速度（减小转弯半径）
-                if v < -reverse_sample_eps:
-                    rot_c *= self.cfg.reverse_rot_cost_scale * self.cfg.reverse_rot_cost_scale_extra
-                # （已移除脱困后的强化转向阶段）
-                disp_x = traj[-1, 0] - start_x
-                disp_y = traj[-1, 1] - start_y
-                proj = max(0.0, disp_x * gdir[0] + disp_y * gdir[1])
-                progress_c = - self.cfg.progress_cost_gain * proj
-                net_disp = math.hypot(disp_x, disp_y)
-                forward_bias_c = 0.0
-                if net_disp < self.cfg.forward_bias_min_disp and abs(w) > self.cfg.forward_bias_w_thresh:
-                    forward_bias_c = self.cfg.forward_bias_cost_gain * (self.cfg.forward_bias_min_disp - net_disp)
-                disp_rew = - self.cfg.forward_disp_reward_gain * net_disp
-                delta_w_state = w - state[4]
-                delta_w_last = w - self._last_u[1]
-                change_w_c = self.cfg.change_yaw_cost_gain * (abs(delta_w_state) + 0.5 * abs(delta_w_last))
-                spin_c = self.cfg.spin_penalty_gain * (abs(w) / (abs(v) + self.cfg.spin_penalty_v_eps))
-                if v < -reverse_sample_eps:
-                    spin_c *= self.cfg.reverse_spin_penalty_scale
-                min_fwd = min_forward_speed if ang_c < small_angle else 0.0
-                low_forward_c = 0.0 if abs(v) >= min_fwd else (min_fwd - abs(v)) * self.cfg.low_forward_cost_gain
-                dir_switch_c = self.cfg.direction_switch_cost_gain if self._last_u[0] * v < -1e-4 else 0.0
-                wall_gap = obs_min_dist - robot_radius
-                if wall_gap < self.cfg.near_wall_threshold:
-                    nn = (self.cfg.near_wall_threshold - max(wall_gap, 0.0)) / self.cfg.near_wall_threshold
-                    rot_c *= (1.0 + nn * (self.cfg.near_wall_rot_boost - 1.0))
-                    desired_min = self.cfg.min_forward_ratio * self.cfg.max_speed
-                    if abs(v) < desired_min:
-                        low_forward_c += self.cfg.near_wall_forward_bias_gain * nn * (desired_min - abs(v))
-                dwell_c = self.cfg.dwell_penalty_gain * (self._dwell_count + 1) if abs(v) < self.cfg.dwell_speed_threshold else 0.0
-                dist_progress_c = - self.cfg.progress_dist_gain * (gdist - dist_c) if self.cfg.progress_dist_gain > 0 else 0.0
-                extra_prog = 0.0
-                if self._dwell_count > self.cfg.adaptive_dwell_threshold:
-                    factor = min(1.0, (self._dwell_count - self.cfg.adaptive_dwell_threshold) / max(1.0, self.cfg.adaptive_dwell_threshold))
-                    extra_prog = - self.cfg.adaptive_progress_extra_gain * factor * proj
-                # 倒车转弯奖励：鼓励同时具有负速度和显著角速度
-                reverse_turn_bonus = 0.0
-                if v < -self.cfg.reverse_turn_bonus_v and abs(w) > self.cfg.reverse_turn_bonus_w:
-                    reverse_turn_bonus = - self.cfg.reverse_turn_bonus_gain * abs(w)
-                # 持续倒车惩罚：已较好对齐仍倒车
-                reverse_continue_penalty = 0.0
-                if v < -self.cfg.reverse_plan_eps and ang_c < reverse_reward_angle_rad:
-                    reverse_continue_penalty = self.cfg.reverse_continue_penalty_gain * (-v)
-                # 原地旋转策略：当角度偏差大或gap较小时，鼓励 v≈0 的就地转向
-                if self.cfg.enable_inplace_rotation:
-                    cond_angle = (ang_c > inplace_angle_rad)
-                    gap_now = getattr(self, '_front_gap_cache', float('inf'))
-                    cond_gap = (gap_now < self.cfg.inplace_gap_thresh)
-                    if cond_angle or cond_gap:
-                        rot_c *= self.cfg.inplace_rot_cost_scale
-                        spin_c *= self.cfg.inplace_spin_penalty_scale
-                        # 放宽对低前进速度与小位移的惩罚，避免阻碍原地旋转
-                        if abs(v) < 0.05 * self.cfg.max_speed:
-                            low_forward_c *= 0.2
-                            forward_bias_c *= 0.2
-                # 墙距奖励：gap 越大奖励越大（以负成本形式加入）；靠墙(gap小)奖励越低
-                wall_reward = 0.0
-                if math.isfinite(obs_min_dist):
-                    gap = max(0.0, obs_min_dist - robot_radius)
-                    cap = max(1e-6, self.cfg.wall_reward_max_gap)
-                    norm = min(1.0, gap / cap)
-                    # 奖励取负成本：-gain * norm^power
-                    wall_reward = - self.cfg.wall_reward_gain * (norm ** max(0.0, self.cfg.wall_reward_power))
-                # 路径贴合（若提供path_hint）
-                path_align_c = 0.0
-                path_dev_c = 0.0
-                path_prog_c = 0.0
-                if self._path_hint_cache is not None:
-                    pa, pd, prog = self._path_hint_components_fast(traj[-1, 0], traj[-1, 1], traj[-1, 2])
-                    path_align_c = self.cfg.path_align_gain * pa
-                    path_dev_c = self.cfg.path_deviation_gain * abs(pd)
-                    path_prog_c = - self.cfg.path_progress_gain * max(0.0, prog)
+            t_other = time.perf_counter()
+            traj = trajs_full[idx]  # 仅在通过过滤后引用，避免不必要的 view 分配
+            any_candidate = True
 
-                cost = (to_goal_c + speed_c + obs_c + clearance_c + rot_c + progress_c + dist_progress_c + extra_prog +
-                        change_w_c + spin_c + low_forward_c + forward_bias_c + dwell_c + disp_rew + dir_switch_c +
-                        wall_reward + path_align_c + path_dev_c + path_prog_c +
-                        reverse_turn_bonus + reverse_continue_penalty + forward_pref_c)
-                timing['sample_other_costs'] += (time.perf_counter() - t_other) * 1000.0
-                
-                if math.isinf(cost):
-                    continue
-                if cost < best_cost:
-                    best_cost = cost
-                    best_u = (v, w)
-                    best_traj = traj
-                    best_components = {
-                        'to_goal': to_goal_c, 'speed': speed_c, 'obs': obs_c, 'clear': clearance_c,
-                        'rot': rot_c, 'progress': progress_c, 'dist_prog': dist_progress_c, 'extra_prog': extra_prog,
-                        'spin': spin_c, 'low_fwd': low_forward_c, 'change_w': change_w_c, 'fwd_bias': forward_bias_c,
-                        'dwell': dwell_c, 'disp_rew': disp_rew, 'dir_switch': dir_switch_c, 'min_dist': obs_min_dist,
-                        'rev_turn_bonus': reverse_turn_bonus, 'rev_keep_pen': reverse_continue_penalty,
-                        'fwd_pref': forward_pref_c, 'wall_reward': wall_reward,
-                        'path_align': path_align_c, 'path_dev': path_dev_c, 'path_prog': -path_prog_c
-                    }
+            to_goal_c = (self.cfg.to_goal_cost_gain * ang_c + self.cfg.to_goal_dist_cost_gain * dist_c)
+            speed_c = self.cfg.speed_cost_gain * (self.cfg.max_speed - abs(traj[-1, 3]))
+            if v < -reverse_sample_eps:
+                give_reward = True
+                # 若与目标方向角度已很小则不再奖励倒车
+                if ang_c < reverse_reward_angle_rad:
+                    give_reward = False
+                if direct_reverse_zone and give_reward:
+                    speed_c -= self.cfg.direct_reverse_reward_gain * (-v)
+            # 前进偏好代价：小角度且gap充足仍倒车
+            forward_pref_c = 0.0
+            if v < -reverse_sample_eps:
+                if (ang_c < forward_pref_angle_rad and 
+                    self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
+                    gain = self.cfg.forward_pref_cost_gain
+                    if self._global_step < self.cfg.initial_no_reverse_steps:
+                        gain *= self.cfg.forward_pref_initial_gain
+                    forward_pref_c = gain * (-v)
+            scaled_obs_raw = obs_raw_cost / max(1e-6, self.cfg.obstacle_cost_divisor)
+            if self.cfg.obstacle_cost_cap > 0:
+                scaled_obs_raw = min(scaled_obs_raw, self.cfg.obstacle_cost_cap)
+            obs_c = self.cfg.obstacle_cost_gain * scaled_obs_raw
+            if obs_min_dist < inflated_r and obs_min_dist > robot_radius:
+                clearance_c = self.cfg.clearance_cost_gain * ((inflated_r - obs_min_dist) / inflated_r)
+            else:
+                clearance_c = 0.0
+            rot_scale = 1.0
+            if ang_c < self.cfg.small_angle:
+                rot_scale += self.cfg.small_angle_rot_scale * (1 - ang_c / self.cfg.small_angle)
+            rot_c = self.cfg.rotation_cost_gain * abs(w) * rot_scale
+            # 倒车时进一步降低旋转代价，促使倒车结合较大角速度（减小转弯半径）
+            if v < -reverse_sample_eps:
+                rot_c *= self.cfg.reverse_rot_cost_scale * self.cfg.reverse_rot_cost_scale_extra
+            # （已移除脱困后的强化转向阶段）
+            disp_x = traj[-1, 0] - start_x
+            disp_y = traj[-1, 1] - start_y
+            proj = max(0.0, disp_x * gdir[0] + disp_y * gdir[1])
+            progress_c = - self.cfg.progress_cost_gain * proj
+            net_disp = math.hypot(disp_x, disp_y)
+            forward_bias_c = 0.0
+            if net_disp < self.cfg.forward_bias_min_disp and abs(w) > self.cfg.forward_bias_w_thresh:
+                forward_bias_c = self.cfg.forward_bias_cost_gain * (self.cfg.forward_bias_min_disp - net_disp)
+            disp_rew = - self.cfg.forward_disp_reward_gain * net_disp
+            delta_w_state = w - state[4]
+            delta_w_last = w - self._last_u[1]
+            change_w_c = self.cfg.change_yaw_cost_gain * (abs(delta_w_state) + 0.5 * abs(delta_w_last))
+            spin_c = self.cfg.spin_penalty_gain * (abs(w) / (abs(v) + self.cfg.spin_penalty_v_eps))
+            if v < -reverse_sample_eps:
+                spin_c *= self.cfg.reverse_spin_penalty_scale
+            min_fwd = min_forward_speed if ang_c < small_angle else 0.0
+            low_forward_c = 0.0 if abs(v) >= min_fwd else (min_fwd - abs(v)) * self.cfg.low_forward_cost_gain
+            dir_switch_c = self.cfg.direction_switch_cost_gain if self._last_u[0] * v < -1e-4 else 0.0
+            wall_gap = obs_min_dist - robot_radius
+            if wall_gap < self.cfg.near_wall_threshold:
+                nn = (self.cfg.near_wall_threshold - max(wall_gap, 0.0)) / self.cfg.near_wall_threshold
+                rot_c *= (1.0 + nn * (self.cfg.near_wall_rot_boost - 1.0))
+                desired_min = self.cfg.min_forward_ratio * self.cfg.max_speed
+                if abs(v) < desired_min:
+                    low_forward_c += self.cfg.near_wall_forward_bias_gain * nn * (desired_min - abs(v))
+            dwell_c = self.cfg.dwell_penalty_gain * (self._dwell_count + 1) if abs(v) < self.cfg.dwell_speed_threshold else 0.0
+            dist_progress_c = - self.cfg.progress_dist_gain * (gdist - dist_c) if self.cfg.progress_dist_gain > 0 else 0.0
+            extra_prog = 0.0
+            if self._dwell_count > self.cfg.adaptive_dwell_threshold:
+                factor = min(1.0, (self._dwell_count - self.cfg.adaptive_dwell_threshold) / max(1.0, self.cfg.adaptive_dwell_threshold))
+                extra_prog = - self.cfg.adaptive_progress_extra_gain * factor * proj
+            # 倒车转弯奖励：鼓励同时具有负速度和显著角速度
+            reverse_turn_bonus = 0.0
+            if v < -self.cfg.reverse_turn_bonus_v and abs(w) > self.cfg.reverse_turn_bonus_w:
+                reverse_turn_bonus = - self.cfg.reverse_turn_bonus_gain * abs(w)
+            # 持续倒车惩罚：已较好对齐仍倒车
+            reverse_continue_penalty = 0.0
+            if v < -self.cfg.reverse_plan_eps and ang_c < reverse_reward_angle_rad:
+                reverse_continue_penalty = self.cfg.reverse_continue_penalty_gain * (-v)
+            # 原地旋转策略：当角度偏差大或gap较小时，鼓励 v≈0 的就地转向
+            if self.cfg.enable_inplace_rotation:
+                cond_angle = (ang_c > inplace_angle_rad)
+                gap_now = getattr(self, '_front_gap_cache', float('inf'))
+                cond_gap = (gap_now < self.cfg.inplace_gap_thresh)
+                if cond_angle or cond_gap:
+                    rot_c *= self.cfg.inplace_rot_cost_scale
+                    spin_c *= self.cfg.inplace_spin_penalty_scale
+                    # 放宽对低前进速度与小位移的惩罚，避免阻碍原地旋转
+                    if abs(v) < 0.05 * self.cfg.max_speed:
+                        low_forward_c *= 0.2
+                        forward_bias_c *= 0.2
+            # 墙距奖励：gap 越大奖励越大（以负成本形式加入）；靠墙(gap小)奖励越低
+            wall_reward = 0.0
+            if math.isfinite(obs_min_dist):
+                gap = max(0.0, obs_min_dist - robot_radius)
+                cap = max(1e-6, self.cfg.wall_reward_max_gap)
+                norm = min(1.0, gap / cap)
+                # 奖励取负成本：-gain * norm^power
+                wall_reward = - self.cfg.wall_reward_gain * (norm ** max(0.0, self.cfg.wall_reward_power))
+            # 路径贴合（若提供path_hint）
+            path_align_c = 0.0
+            path_dev_c = 0.0
+            path_prog_c = 0.0
+            if self._path_hint_cache is not None:
+                pa, pd, prog = self._path_hint_components_fast(traj[-1, 0], traj[-1, 1], traj[-1, 2])
+                path_align_c = self.cfg.path_align_gain * pa
+                path_dev_c = self.cfg.path_deviation_gain * abs(pd)
+                path_prog_c = - self.cfg.path_progress_gain * max(0.0, prog)
+
+            cost = (to_goal_c + speed_c + obs_c + clearance_c + rot_c + progress_c + dist_progress_c + extra_prog +
+                    change_w_c + spin_c + low_forward_c + forward_bias_c + dwell_c + disp_rew + dir_switch_c +
+                    wall_reward + path_align_c + path_dev_c + path_prog_c +
+                    reverse_turn_bonus + reverse_continue_penalty + forward_pref_c)
+            timing['sample_other_costs'] += (time.perf_counter() - t_other) * 1000.0
+            
+            if math.isinf(cost):
+                continue
+            if cost < best_cost:
+                best_cost = cost
+                best_u = (v, w)
+                best_traj = traj
+                best_components = {
+                    'to_goal': to_goal_c, 'speed': speed_c, 'obs': obs_c, 'clear': clearance_c,
+                    'rot': rot_c, 'progress': progress_c, 'dist_prog': dist_progress_c, 'extra_prog': extra_prog,
+                    'spin': spin_c, 'low_fwd': low_forward_c, 'change_w': change_w_c, 'fwd_bias': forward_bias_c,
+                    'dwell': dwell_c, 'disp_rew': disp_rew, 'dir_switch': dir_switch_c, 'min_dist': obs_min_dist,
+                    'rev_turn_bonus': reverse_turn_bonus, 'rev_keep_pen': reverse_continue_penalty,
+                    'fwd_pref': forward_pref_c, 'wall_reward': wall_reward,
+                    'path_align': path_align_c, 'path_dev': path_dev_c, 'path_prog': -path_prog_c
+                }
         timing['sample_main'] = (time.perf_counter() - sample_main_start) * 1000.0
         timing['sample_count'] = sample_count
         timing['sample_relax'] = 0.0
@@ -844,6 +852,125 @@ class DWAPlanner:
         if not np.any(m2):
             return float('inf')
         return float(np.min(dist[m2]))
+
+    def _batch_predict_trajectories(self, state, v_arr: np.ndarray, w_arr: np.ndarray):
+        """批量预测所有 (v, w) 组合的轨迹，返回 (trajs_full, trajs_xy_strided).
+
+        trajs_full: [N, steps+1, 5] float32 (x, y, theta, v, w)。
+        trajs_xy_strided: [N, K, 2] float32 —— 仅取位置并按 obstacle_eval_step_stride 抽稀，
+                          供批障碍代价使用。
+        v_arr 形状 [M]，w_arr 形状 [L]；N = M*L，按 v 外 w 内展开（与原双重循环顺序一致）。
+        """
+        cfg = self.cfg
+        dt = cfg.dt
+        steps = max(1, int(math.ceil(cfg.predict_time / dt)))
+        # 展平组合（v 外, w 内），与原 for v: for w: 顺序一致
+        V, W = np.meshgrid(v_arr, w_arr, indexing='ij')
+        v_flat = V.reshape(-1).astype(np.float32, copy=False)  # [N]
+        w_flat = W.reshape(-1).astype(np.float32, copy=False)
+        N = v_flat.size
+        ts = dt * np.arange(1, steps + 1, dtype=np.float32)  # [S]
+
+        x0 = float(state[0]); y0 = float(state[1]); theta0 = float(state[2])
+        sin0 = math.sin(theta0); cos0 = math.cos(theta0)
+
+        trajs = np.empty((N, steps + 1, 5), dtype=np.float32)
+        trajs[:, 0, 0] = x0
+        trajs[:, 0, 1] = y0
+        trajs[:, 0, 2] = theta0
+        trajs[:, 0, 3] = float(state[3])
+        trajs[:, 0, 4] = float(state[4])
+
+        # 分离直线与弧线两种情形，避免 w≈0 时的数值问题
+        w_abs = np.abs(w_flat)
+        straight = w_abs < 1e-8
+        # 直线段：x = x0 + v*t*cos0, y = y0 + v*t*sin0, theta = theta0
+        if np.any(straight):
+            v_s = v_flat[straight][:, None]  # [Ns,1]
+            disp = v_s * ts[None, :]         # [Ns,S]
+            trajs[straight, 1:, 0] = x0 + disp * cos0
+            trajs[straight, 1:, 1] = y0 + disp * sin0
+            trajs[straight, 1:, 2] = theta0
+        # 弧线段
+        if np.any(~straight):
+            idx = ~straight
+            v_a = v_flat[idx][:, None]  # [Na,1]
+            w_a = w_flat[idx][:, None]
+            theta_a = theta0 + w_a * ts[None, :]  # [Na,S]
+            sin_th = np.sin(theta_a)
+            cos_th = np.cos(theta_a)
+            R = v_a / w_a
+            trajs[idx, 1:, 0] = x0 + R * (sin_th - sin0)
+            trajs[idx, 1:, 1] = y0 - R * (cos_th - cos0)
+            trajs[idx, 1:, 2] = np.arctan2(sin_th, cos_th)
+
+        trajs[:, 1:, 3] = v_flat[:, None]
+        trajs[:, 1:, 4] = w_flat[:, None]
+
+        stride = max(1, int(cfg.obstacle_eval_step_stride))
+        xy_strided = trajs[:, ::stride, :2]  # view
+        if xy_strided.shape[1] == 0:
+            xy_strided = trajs[:, -1:, :2]
+        return trajs, xy_strided
+
+    def _batch_obstacle_costs(self, trajs_xy: np.ndarray, obstacles: np.ndarray | None):
+        """批量计算每条轨迹的 (min_dist, raw_cost)。
+
+        trajs_xy: [N, K, 2] float32。
+        返回: (min_dist[N] float32, raw_cost[N] float32)。
+        约定：min_dist <= robot_radius 的轨迹 raw_cost 设为 +inf。
+        """
+        cfg = self.cfg
+        N = trajs_xy.shape[0]
+        cache = self._obs_local_cache
+        if cache is None:
+            if obstacles is None or len(obstacles) == 0:
+                md = np.full(N, np.inf, dtype=np.float32)
+                rc = np.zeros(N, dtype=np.float32)
+                return md, rc
+            cache = np.asarray(obstacles, dtype=np.float32)
+        if cache.size == 0:
+            md = np.full(N, np.inf, dtype=np.float32)
+            rc = np.zeros(N, dtype=np.float32)
+            return md, rc
+        obs = cache.astype(np.float32, copy=False)
+        if obs.shape[0] > cfg.obstacle_eval_max_points:
+            step = int(np.ceil(obs.shape[0] / cfg.obstacle_eval_max_points))
+            obs = obs[::step]
+        # 广播: [N,K,1,2] - [1,1,M,2] → [N,K,M] 距离平方
+        # 为降低峰值内存，按轨迹分块处理。
+        M = obs.shape[0]
+        K = trajs_xy.shape[1]
+        # 每块按 (N,K,M) 不超过 ~2M entries 切分
+        max_entries = 2_000_000
+        block = max(1, min(N, max_entries // max(1, K * M)))
+        min_dist = np.empty(N, dtype=np.float32)
+        for i in range(0, N, block):
+            j = min(N, i + block)
+            diff = trajs_xy[i:j, :, None, :] - obs[None, None, :, :]
+            d2 = np.einsum('nkmd,nkmd->nkm', diff, diff)
+            min_dist[i:j] = np.sqrt(d2.reshape(j - i, -1).min(axis=1))
+        # 与 _obstacle_cost_components 一致的代价
+        rr = cfg.robot_radius
+        raw_cost = np.zeros(N, dtype=np.float32)
+        collide = min_dist <= rr
+        raw_cost[collide] = np.inf
+        safe = ~collide
+        rel = np.maximum(1e-3, min_dist[safe] - rr)
+        raw_cost[safe] = 1.0 / (rel + 0.05)
+        return min_dist, raw_cost
+
+    def _batch_goal_costs(self, trajs_end_xy_theta: np.ndarray, goal):
+        """批量计算 goal 代价。trajs_end_xy_theta: [N, 3] (x, y, theta)。
+        返回: (ang_cost[N], dist_cost[N])。
+        """
+        dx = goal[0] - trajs_end_xy_theta[:, 0]
+        dy = goal[1] - trajs_end_xy_theta[:, 1]
+        heading = np.arctan2(dy, dx)
+        diff = heading - trajs_end_xy_theta[:, 2]
+        ang_cost = np.abs(np.arctan2(np.sin(diff), np.cos(diff))).astype(np.float32)
+        dist_cost = np.hypot(dx, dy).astype(np.float32)
+        return ang_cost, dist_cost
 
     def _predict_trajectory(self, state, v, w):
         cfg = self.cfg
