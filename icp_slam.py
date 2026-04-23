@@ -281,6 +281,62 @@ class ICPSlam:
                     tgt = tgt.index_select(0, idx)
             except Exception:
                 pass
+            # --- 大角度转弯/掉头稳定性增强 ---
+            # 当里程计旋转较大或上一帧疑似失配时，先做一次 yaw 粗搜索，选取
+            # 最近邻均距最小的 delta 作为 theta 初值，再进 ICP，避免局部最优。
+            rot_mag = abs(d_rot)
+            big_rot_thresh = 0.35  # rad (~20°)，超过则触发粗搜索
+            with torch.no_grad():
+                if rot_mag > big_rot_thresh:
+                    # 候选 delta 范围随 d_rot 幅度扩展
+                    half_range = min(math.pi, max(0.4, 0.9 * rot_mag))
+                    n_cand = 13
+                    deltas = torch.linspace(-half_range, half_range, n_cand,
+                                            device=self.device, dtype=src.dtype)
+                    pos_t = torch.tensor([self.x, self.y], device=self.device, dtype=src.dtype)
+                    pts_rel = src - pos_t  # [N,2]
+                    best_delta = 0.0
+                    best_score = float('inf')
+                    for d_cand in deltas.tolist():
+                        c = math.cos(d_cand); s = math.sin(d_cand)
+                        R_cand = torch.tensor([[c, -s], [s, c]], device=self.device, dtype=src.dtype)
+                        rotated = pts_rel @ R_cand.T + pos_t
+                        # 粗搜索只看平均最近邻距离（子采样以控时）
+                        n_sub = min(rotated.shape[0], 256)
+                        if n_sub < rotated.shape[0]:
+                            ridx = torch.randperm(rotated.shape[0], device=self.device)[:n_sub]
+                            sub = rotated.index_select(0, ridx)
+                        else:
+                            sub = rotated
+                        dmat = torch.cdist(sub, tgt)
+                        m = torch.min(dmat, dim=1).values.mean().item()
+                        if m < best_score:
+                            best_score = m
+                            best_delta = d_cand
+                    if abs(best_delta) > 1e-4:
+                        # 应用粗对齐：更新 theta，并绕 (self.x, self.y) 旋转 src 与 pts_local
+                        c = math.cos(best_delta); s = math.sin(best_delta)
+                        R_cand = torch.tensor([[c, -s], [s, c]], device=self.device, dtype=src.dtype)
+                        src = (src - pos_t) @ R_cand.T + pos_t
+                        self.theta = math.atan2(math.sin(self.theta + best_delta),
+                                                math.cos(self.theta + best_delta))
+                        Rnp = np.array([[c, -s], [s, c]], dtype=pts_local.dtype)
+                        pts_local = (pts_local - np.array([self.x, self.y], dtype=pts_local.dtype)) @ Rnp.T \
+                                    + np.array([self.x, self.y], dtype=pts_local.dtype)
+
+            # --- 自适应 ICP 对应阈值（退火）---
+            # 默认 icp_correspondence_thresh 很小，大旋转时会令 valid_mask<3 立刻退出。
+            # 首轮放宽到与扫描尺度/旋转幅度相关的值，再随迭代几何衰减到基准阈值。
+            try:
+                finite_scan = [d for d in scan if d < self.get_max_range()]
+                scan_scale = float(np.median(finite_scan)) if finite_scan else 1.0
+            except Exception:
+                scan_scale = 1.0
+            base_thresh = float(self.icp_correspondence_thresh)
+            first_thresh = max(base_thresh,
+                               0.05 * scan_scale + 0.6 * rot_mag * scan_scale)
+            # 衰减系数：迭代次数内从 first -> base
+            anneal_decay = 0.85
             # 在 no_grad 环境下进行 ICP 迭代，以减少显存开销
             with torch.no_grad():
                 # 提前初始化 R 和 t，若 ICP 对应点不足可保持单位变换
@@ -290,13 +346,16 @@ class ICPSlam:
                 H = None; U = Vt = None
                 U_cpu = Vt_cpu = None
                 # ICP 迭代过程
+                cur_thresh = first_thresh
                 for it in range(self.icp_max_iter):
                     icp_iterations = it + 1
                     # 计算源点集到目标点集的距离矩阵并寻找最近邻
                     dist_matrix = torch.cdist(src, tgt)  # [N_src, N_tgt]
                     min_dists, min_indices = torch.min(dist_matrix, dim=1)
-                    # 筛选出距离在阈值内的有效对应点对
-                    valid_mask = min_dists < self.icp_correspondence_thresh
+                    # 筛选出距离在阈值内的有效对应点对（退火阈值，首轮宽松以容忍大旋转残差）
+                    valid_mask = min_dists < cur_thresh
+                    # 向 base_thresh 衰减
+                    cur_thresh = max(base_thresh, cur_thresh * anneal_decay)
                     if torch.sum(valid_mask) < 3:
                         # 对应点太少，无法计算精确变换，退出 ICP
                         break
