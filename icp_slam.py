@@ -381,14 +381,20 @@ class ICPSlam:
 
         offset_body_x, offset_body_y = self.lidar_mount_offset
         max_range_val = self.get_max_range()
-        far_threshold = max_range_val * MAX_RANGE_FACTOR  # 80% 最大范围阈值
+        far_threshold = max_range_val * MAX_RANGE_FACTOR  # 95% 最大范围阈值（建图用）
+        # ICP 源点云的最大距离上限（米）。远距离激光返回横向噪声 ~ R·σθ，
+        # 在 SVD 里会主导旋转估计；在转弯时尤其放大角度误差。把 ICP 的输入
+        # 截到一个更近的范围（默认 4m），角度约束更干净，同时保留近处墙面
+        # 为主要残差。建图阶段不受此限制，仍使用 far_threshold。
+        icp_range_limit = float(os.environ.get("ICP_RANGE_LIMIT", "4.0"))
+        icp_range_limit = min(icp_range_limit, far_threshold) if icp_range_limit > 0 else far_threshold
         adjacent_diff_threshold = ADJACENCY_DIFF_THRESHOLD       # 相邻点距离差阈值
 
         # 向量化构造 body 坐标系下的有效激光点：
         #   1. 距离在可靠范围内；
         #   2. 与前后（含环形首尾）相邻点的跳变小于阈值。
         scan_np = np.asarray(scan, dtype=np.float64)
-        valid_dist = (scan_np < max_range_val) & (scan_np <= far_threshold)
+        valid_dist = (scan_np < max_range_val) & (scan_np <= icp_range_limit)
         if valid_dist.any():
             # 相邻点（含环形）均为可靠点才参与比较
             prev_scan = np.roll(scan_np, 1)
@@ -397,11 +403,10 @@ class ICPSlam:
             next_valid = np.roll(valid_dist, -1)
             jump_prev = prev_valid & (np.abs(scan_np - prev_scan) > adjacent_diff_threshold)
             jump_next = next_valid & (np.abs(scan_np - next_scan) > adjacent_diff_threshold)
-            # 仅在“两侧都跳变”时视为孤立离群点剔除；单侧跳变多半是墙角/门沿等
-            # 真实几何不连续点，转弯时大量出现，若一并剔除会让 ICP 源点云缺失，
-            # 导致转弯时姿态估计退化（建图抖动/偏移）。
-            isolated_outlier = jump_prev & jump_next
-            keep_mask = valid_dist & ~isolated_outlier
+            # 单侧或双侧跳变都剔除：这类点落在真实几何不连续处（墙角/门沿），
+            # 单点位置由噪声决定，给 ICP 只会引入偏差。墙角几何将由两侧连续
+            # 墙面上的稳定点隐式确定。
+            keep_mask = valid_dist & ~jump_prev & ~jump_next
         else:
             keep_mask = valid_dist
 
