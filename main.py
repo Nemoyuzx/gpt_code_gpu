@@ -1727,16 +1727,40 @@ def main():
                     return True
             return False
         
-        def score_frontier(x, y):
-            """计算前沿点的得分（如果有目标偏好）"""
+        # 信息增益评估窗口（格数）：统计前沿附近未知格密度，鼓励选择大片未知的入口
+        info_gain_radius = 3
+        info_gain_area = float((2 * info_gain_radius + 1) ** 2)
+
+        def score_frontier(x, y, path_len):
+            """计算前沿点的得分：
+            - 越靠近全局目标得分越高
+            - 实际 BFS 路径越短越好（避免 Euclidean 绕墙低估代价）
+            - 附近未知格越多信息增益越大，越值得去
+            """
+            # 信息增益：以前沿点为中心 7x7 窗口中未知格的比例
+            unknown_count = 0
+            x_min = max(0, x - info_gain_radius)
+            x_max = min(w - 1, x + info_gain_radius)
+            y_min = max(0, y - info_gain_radius)
+            y_max = min(h - 1, y + info_gain_radius)
+            for yy in range(y_min, y_max + 1):
+                for xx in range(x_min, x_max + 1):
+                    if occupancy[yy, xx] == -1:
+                        unknown_count += 1
+            info_gain_ratio = unknown_count / info_gain_area  # 0~1
+
+            # 无全局目标时：纯粹偏好信息增益大且近的前沿
             if target_bias is None:
-                return 0.0
+                return info_gain_ratio * 30.0 - path_len * 0.5
+
             tx, ty = target_bias
-            # 距离目标越近得分越高（使用负距离，因为要最大化）
             dist_to_target = math.hypot(x - tx, y - ty)
-            dist_to_start = math.hypot(x - sx, y - sy)
-            # 综合考虑：朝向目标且不太远
-            return -dist_to_target * 0.7 - dist_to_start * 0.3
+            # 单位同为栅格数：目标方向权重最大，实际路径代价次之，信息增益加成
+            return (
+                -dist_to_target * 0.6
+                - path_len * 0.3
+                + info_gain_ratio * 20.0
+            )
 
         if bounds_idx is not None:
             min_bx, max_bx, min_by, max_by = bounds_idx
@@ -1790,7 +1814,7 @@ def main():
         fallback_candidate = None
         best_frontier = None
         best_score = float('-inf')
-        max_search_frontiers = 10  # 最多搜索10个前沿候选再选择最优
+        max_search_frontiers = 25  # 扩大搜索预算：从 BFS 早期候选里挑最优，避免被最近但信息量少的点锁定
         found_frontiers = 0
         
         while container:
@@ -1824,23 +1848,17 @@ def main():
                     path_cells.insert(0, (sx, sy))
                     
                 if is_safe_cell(x, y):
-                    # 如果有目标偏好，收集候选并评分
-                    if target_bias is not None:
-                        score = score_frontier(x, y)
-                        found_frontiers += 1
-                        if score > best_score:
-                            best_score = score
-                            best_frontier = ((x, y), (nx, ny), path_cells)
-                        # 找到足够多的候选后返回最佳
-                        if found_frontiers >= max_search_frontiers:
-                            if debug_update is not None and debug_points is not None:
-                                debug_update(debug_points)
-                            return best_frontier
-                    else:
-                        # 没有目标偏好，返回第一个找到的
+                    # 对所有候选评分（无论是否提供 target_bias），择优返回
+                    score = score_frontier(x, y, len(path_cells))
+                    found_frontiers += 1
+                    if score > best_score:
+                        best_score = score
+                        best_frontier = ((x, y), (nx, ny), path_cells)
+                    # 达到候选预算即可返回当前最优
+                    if found_frontiers >= max_search_frontiers:
                         if debug_update is not None and debug_points is not None:
                             debug_update(debug_points)
-                        return (x, y), (nx, ny), path_cells
+                        return best_frontier
                 elif fallback_candidate is None:
                     fallback_candidate = ((x, y), (nx, ny), path_cells)
 
@@ -1955,21 +1973,21 @@ def main():
     # 全局路径与前瞻步长（用于DWA参考）
     global_path = None
     base_lookahead_steps = 12   # 默认前瞻栅格数（调近）
-    min_lookahead_steps = 2    # 弯曲段时的最小前瞻（调近）
-    max_lookahead_steps = 20   # 直线段时的最大前瞻（调近）
+    min_lookahead_steps = 4    # 弯曲段时的最小前瞻（提到 4 ≈12cm，避免高速下抖动）
+    max_lookahead_steps = 22   # 直线段时的最大前瞻（配合 max_speed=0.4 放宽）
 
     def compute_dynamic_lookahead(path_cells, current_idx,
                                   base_steps=base_lookahead_steps,
                                   min_steps=min_lookahead_steps,
-                                  max_steps=max_lookahead_steps):
-        """根据局部曲率动态调整前瞻距离：弯道越急，取值越靠近目标。
-        
-        Args:
-            path_cells: 路径栅格列表
-            current_idx: 当前在路径上的最近点索引
-            base_steps: 基准前瞻步数（中等曲率时使用）
-            min_steps: 最小前瞻步数（急弯时使用）
-            max_steps: 最大前瞻步数（直线时使用）
+                                  max_steps=max_lookahead_steps,
+                                  current_speed=None,
+                                  occupancy=None,
+                                  safety_cells=None):
+        """根据局部曲率 + 当前速度 + 路径通视性动态调整前瞻距离。
+
+        - 曲率越大 → 前瞻越近（便于急转）
+        - 速度越快 → 前瞻越远（给 DWA 留出提前规划窗口）
+        - 若在前瞻区间内存在障碍/不安全格，则截断到最后一个安全格
         """
         if not path_cells or len(path_cells) <= 1:
             return 1
@@ -2031,12 +2049,38 @@ def main():
         # 根据曲率在 min_steps 和 max_steps 之间动态调整
         # curvature_ratio=0 (直线) → max_steps; curvature_ratio=1 (急弯) → min_steps
         adjusted = max_steps - curvature_ratio * (max_steps - min_steps)
+
+        # 速度自适应：低速时拉近前瞻（响应急、转向灵活），高速时推远前瞻（留出制动/转向窗口）
+        # 以 DWA 的 max_speed=0.4 m/s 为参考，线性映射 0.5x ~ 1.25x
+        if current_speed is not None and current_speed > 0.0:
+            ref_speed = 0.4
+            speed_ratio = max(0.0, min(1.0, current_speed / ref_speed))
+            speed_factor = 0.5 + 0.75 * speed_ratio
+            adjusted *= speed_factor
+
         adjusted = max(min_steps, min(max_steps, int(round(adjusted))))
 
         remaining = len(path_cells) - 1 - clamped_idx
         if remaining <= 0:
             return 1
         adjusted = min(adjusted, remaining)
+
+        # 通视/安全性截断：若前瞻区间内存在障碍格，则把前瞻缩到最后一个可通行格
+        if occupancy is not None:
+            occ_h, occ_w = occupancy.shape
+            safe_limit = None
+            for step in range(1, adjusted + 1):
+                cx, cy = path_cells[clamped_idx + step]
+                if not (0 <= cx < occ_w and 0 <= cy < occ_h):
+                    safe_limit = step - 1
+                    break
+                if occupancy[cy, cx] == 1:  # 明确障碍
+                    safe_limit = step - 1
+                    break
+            if safe_limit is not None and safe_limit >= min_steps:
+                adjusted = safe_limit
+            elif safe_limit is not None:
+                adjusted = max(1, safe_limit)
         
         # 调试输出（每隔一段时间打印一次，避免刷屏）
         if hasattr(compute_dynamic_lookahead, '_debug_counter'):
@@ -2206,7 +2250,12 @@ def main():
                 if replan_callback and idx == 0:
                     last_replan_idx = idx
 
-            lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
+            lookahead = compute_dynamic_lookahead(
+                path_cells,
+                nearest_idx,
+                current_speed=abs(getattr(robot, "linear_vel", 0.0)),
+                occupancy=slam.get_occupancy(),
+            )
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
             short_term_cell = path_cells[follow_idx]
             gx, gy = path_arr[follow_idx]
@@ -2670,8 +2719,13 @@ def main():
                     min_d2 = d2
                     nearest_idx = i
             
-            # 使用动态前瞻计算跟随索引
-            dynamic_steps = compute_dynamic_lookahead(current_path, nearest_idx)
+            # 使用动态前瞻计算跟随索引（加入速度自适应 + 障碍截断）
+            dynamic_steps = compute_dynamic_lookahead(
+                current_path,
+                nearest_idx,
+                current_speed=abs(getattr(robot, "linear_vel", 0.0)),
+                occupancy=occupancy,
+            )
             follow_idx = min(len(current_path) - 1, nearest_idx + dynamic_steps)
             follow_cell = current_path[follow_idx]
             
