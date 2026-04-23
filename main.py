@@ -3525,9 +3525,11 @@ def main():
         def compute_waypoint_indices(points: np.ndarray,
                                      *,
                                      curvature_scale: float = 3.5,
-                                     budget_threshold: float = 4.0,
-                                     min_span: int = 1,
-                                     max_span: int = 6) -> List[int]:
+                                     budget_threshold: float = 8.0,
+                                     min_span: int = 2,
+                                     max_span: int = 14) -> List[int]:
+            # budget_threshold 4 -> 8、max_span 6 -> 14：显著拉长直道段
+            # 长度，避免 DWA 每 ~18cm 就刹车到 arrival_tol 造成返程停顿。
             n = points.shape[0]
             if n <= 2:
                 return [0, n - 1]
@@ -3708,10 +3710,16 @@ def main():
             segment_path = path_segments[segment_idx]
             segment_label = f"{label}-段{segment_idx + 1}/{len(path_segments)}"
             print(f"{segment_label}: 目标包含 {len(segment_path) - 1} 栅格，使用DWA跟随节点")
+            # 中间 waypoint 用宽松 arrival_tol（不要求减速停车），
+            # 仅在最后一段（真正回到起点）才用严格阈值。
+            is_final_segment = (segment_idx == len(path_segments) - 1)
+            segment_arrival_tol = (
+                GRID_TARGET_REACHED_THRESHOLD if is_final_segment else 0.22
+            )
             reached = drive_path_with_dwa_segment(
                 segment_path,
                 label=segment_label,
-                arrival_tol=GRID_TARGET_REACHED_THRESHOLD,  # 与探索时保持一致
+                arrival_tol=segment_arrival_tol,
                 max_iter_factor=80,
                 path_safety_cells=path_safety_val,
                 viz_context_provider=return_viz_context
