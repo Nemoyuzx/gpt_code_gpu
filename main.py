@@ -132,14 +132,14 @@ FRONTIER_SAFETY_DISTANCE_METERS = (
 
 # 迷宫和机器人参数
 MAZE_FILE = "4.json"  # 默认迷宫文件
-ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
+ROBOT_ODOM_NOISE = (0.01, math.radians(0.001))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 1  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
 LIDAR_ANGLE_RESOLUTION = 1.44  # 激光雷达角度分辨率（度）：360度/250点=1.44度
-LIDAR_NOISE = 0.003  # 激光雷达噪声
+LIDAR_NOISE = 0.0003  # 激光雷达噪声
 LIDAR_ANGLE_OFFSET_DEG = float(os.getenv("LIDAR_ANGLE_OFFSET_DEG", "0.0"))
 
 CONTROL_STARTUP_DELAY = float(os.getenv("CONTROL_STARTUP_DELAY", "2.0"))
@@ -2401,8 +2401,18 @@ def main():
             # 保持可视化运行，让用户查看结果
             while True:
                 plt.pause(0.1)
-                if not plt.fignum_exists(viz.fig.number):
-                    break
+                viz_fig = getattr(viz, "fig", None)
+                if viz_fig is not None:
+                    if not plt.fignum_exists(viz_fig.number):
+                        break
+                else:
+                    # 共享内存/多进程可视化没有本地 figure，检查子进程是否仍在运行
+                    viz_proc = getattr(viz, "process", None)
+                    if viz_proc is not None and not viz_proc.is_alive():
+                        break
+                    # 若两者都没有可判定的句柄，则不 spin；退出等待循环
+                    if viz_fig is None and viz_proc is None:
+                        break
             break
         
         # 3. 出口检测
