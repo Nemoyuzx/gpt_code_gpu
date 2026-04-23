@@ -20,7 +20,7 @@ class Visualizer:
         self.robot = robot
         self.slam = slam
         # 主SLAM窗口
-        self.fig, self.ax = plt.subplots(figsize=(8,8))
+        self.fig, self.ax = plt.subplots(figsize=(8, 8))
         plt.ion()
         plt.show()
         # 边界和刻度
@@ -53,6 +53,11 @@ class Visualizer:
         self._obstacle_rect_artist = None
         self._bfs_scatter_artist = None
         self._legend_done = False
+        # 占用栅格节流：imshow.set_data 每帧约十几 ms，且占用图变化缓慢，
+        # 每 N 帧才真正刷新一次（其他动态艺术家仍每帧更新，不降帧率）。
+        self._occ_update_interval = 3
+        self._occ_frame_counter = 0
+        self._last_occ_id = None
 
     def _on_key_press(self, event):
         """键盘事件回调。'p'暂停/继续， 's'保存地图和路径。"""
@@ -94,18 +99,28 @@ class Visualizer:
         ax = self.ax
         # --- 栅格地图：复用 AxesImage，仅 set_data ---
         if occupancy is not None:
-            h, w = occupancy.shape
-            display_grid = np.full((h, w), 0.5, dtype=float)
-            display_grid[occupancy == 0] = 1.0
-            display_grid[occupancy == 1] = 0.0
             min_x, min_y, max_x, max_y = self.maze.bounds
             extent = (min_x, max_x, min_y, max_y)
             if self._img_artist is None:
+                # 首帧必须创建 artist
+                h, w = occupancy.shape
+                display_grid = np.full((h, w), 0.5, dtype=float)
+                display_grid[occupancy == 0] = 1.0
+                display_grid[occupancy == 1] = 0.0
                 self._img_artist = ax.imshow(display_grid, origin='lower', cmap='gray',
                                              extent=extent, vmin=0.0, vmax=1.0, zorder=0,
                                              interpolation='nearest')
+                self._last_occ_id = id(occupancy)
             else:
-                self._img_artist.set_data(display_grid)
+                # 节流：每 N 帧才真正刷新 imshow 数据（占用变化缓慢，节流看不出差异）
+                self._occ_frame_counter += 1
+                if self._occ_frame_counter >= self._occ_update_interval:
+                    self._occ_frame_counter = 0
+                    h, w = occupancy.shape
+                    display_grid = np.full((h, w), 0.5, dtype=float)
+                    display_grid[occupancy == 0] = 1.0
+                    display_grid[occupancy == 1] = 0.0
+                    self._img_artist.set_data(display_grid)
 
         # --- 障碍物搜索区域边界 ---
         if self.obstacle_search_region is not None:
@@ -318,8 +333,14 @@ class Visualizer:
                 pass
             self._legend_done = True
 
+        # plt.pause 会内部调用 draw_idle + start_event_loop，
+        # 强制每帧都走一次事件循环处理渲染队列，避免 draw_idle/flush_events
+        # 组合下出现的奇偶帧批量（0.3ms / 30ms 交替）。
         self.fig.canvas.draw_idle()
-        self.fig.canvas.flush_events()
+        try:
+            self.fig.canvas.start_event_loop(0.001)
+        except Exception:
+            self.fig.canvas.flush_events()
         
     def set_emergency_path(self, path):
         """设置紧急路径（无安全距离的最短路径），用红色线条显示"""
