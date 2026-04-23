@@ -20,14 +20,14 @@ FRONTIER_SAFETY_DISTANCE = 5  # 前沿探索器与障碍物的安全距离 (提�
 
 # 迷宫和机器人参数
 MAZE_FILE = "2.json"  # 默认迷宫文件
-ROBOT_ODOM_NOISE = (0.01, math.radians(0.01))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
+ROBOT_ODOM_NOISE = (0.001, math.radians(0.0001))  # trans_noise, self.rot_noise = odom_noise (0.01, math.radians(1)))
 VIRTUAL_WALL_RESOLUTION_FACTOR = 2  # 虚拟墙分辨率因子
 VIRTUAL_WALL_Y_OFFSET = -1  # 虚拟墙Y方向偏移
 
 # 激光雷达参数没有可达的未知区域，探索结束。
 LIDAR_MAX_RANGE = 12.0  # 激光雷达扫描半径
-LIDAR_ANGLE_RESOLUTION = 3.0  # 激光雷达角度分辨率（度）：改为每3度一束，约120束
-LIDAR_NOISE = 0.03  # 激光雷达噪声
+LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率（度）：改为每1度一束，约360束
+LIDAR_NOISE = 0.005  # 激光雷达噪声
 
 # 出口检测参数
 MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
