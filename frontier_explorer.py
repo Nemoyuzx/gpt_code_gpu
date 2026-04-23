@@ -221,30 +221,71 @@ class FrontierExplorer:
         # 预计算“禁入”掩码（障碍或距离障碍 ≤ sd），A* 内只做 O(1) 查表
         blocked_mask = self._compute_blocked_mask(occupancy, sd)
 
-        # 修复：当机器人被 DWA 带入膨胀安全区内时，起点自身被标记为 blocked，
-        # 其所有邻居也多半 blocked -> A* 立即无解。此时从起点做一次 BFS，
-        # 仅在“被膨胀但非障碍本体”的连通泡内清除 blocked，开辟一条逃生通道；
-        # 离开泡之后仍受正常安全距离约束。
-        if 0 <= sy < h and 0 <= sx < w and blocked_mask[sy, sx] and occupancy[sy, sx] != 1:
-            blocked_mask = blocked_mask.copy()  # 缓存不可变更
-            blocked_mask[sy, sx] = False
-            carve_q = deque()
-            carve_q.append((sx, sy))
+        # 修复：当机器人被 DWA 带入膨胀安全区内时，起点自身被 blocked_mask 标记，
+        # 其所有邻居也多半 blocked -> A* 立即无解。
+        # 策略：首要任务 = 脱离膨胀区。在“blocked-but-not-obstacle”连通泡内做 BFS，
+        # 找到距起点最近的“真正安全格”(blocked_mask==False 且 occupancy==0)，
+        # 记录逃脱路径；随后从该安全格继续向 goal 跑正常 A*，最后把两段拼接返回。
+        # 这样机器人会沿最短距离先走出安全区，再按常规安全约束前往目标。
+        escape_prefix = None
+        effective_start = (sx, sy)
+        if (0 <= sy < h and 0 <= sx < w and blocked_mask[sy, sx]
+                and occupancy[sy, sx] != 1):
             nbr8 = ((-1, 0), (1, 0), (0, -1), (0, 1),
                     (-1, -1), (1, -1), (-1, 1), (1, 1))
-            while carve_q:
-                cx, cy = carve_q.popleft()
+            parent = {(sx, sy): None}
+            escape_q = deque()
+            escape_q.append((sx, sy))
+            safe_cell = None
+            while escape_q:
+                cx, cy = escape_q.popleft()
+                # 目标格若就在泡内直接可达，允许提前命中
+                if (cx, cy) == (gx, gy):
+                    safe_cell = (cx, cy)
+                    break
                 for dx, dy in nbr8:
                     nx, ny = cx + dx, cy + dy
                     if not (0 <= nx < w and 0 <= ny < h):
                         continue
-                    if not blocked_mask[ny, nx]:
+                    if (nx, ny) in parent:
                         continue
                     if occupancy[ny, nx] == 1:
                         continue
-                    blocked_mask[ny, nx] = False
-                    carve_q.append((nx, ny))
+                    if occupancy[ny, nx] == -1:
+                        # 泡内搜索阶段不穿越未知格（未知在 A* 层按 allow_unknown 处理）
+                        continue
+                    # 对角需避免穿墙角
+                    if dx != 0 and dy != 0:
+                        if occupancy[cy, nx] == 1 or occupancy[ny, cx] == 1:
+                            continue
+                    parent[(nx, ny)] = (cx, cy)
+                    if not blocked_mask[ny, nx]:
+                        # 找到真正安全格：首要任务完成
+                        safe_cell = (nx, ny)
+                        break
+                    escape_q.append((nx, ny))
+                if safe_cell is not None:
+                    break
+            if safe_cell is None:
+                # 整个泡都找不到出口（整张图都在膨胀区内的罕见情形），
+                # 退化为“碎盘”以保留可行性：把泡内全部清 blocked，让 A* 直接找目标。
+                blocked_mask = blocked_mask.copy()
+                for cell in parent:
+                    blocked_mask[cell[1], cell[0]] = False
+            else:
+                # 回溯逃脱路径 start -> ... -> safe_cell
+                escape_prefix = []
+                node = safe_cell
+                while node is not None:
+                    escape_prefix.append(node)
+                    node = parent[node]
+                escape_prefix.reverse()
+                # 若 safe_cell 即 goal，直接返回逃脱路径
+                if safe_cell == (gx, gy):
+                    return escape_prefix
+                effective_start = safe_cell
 
+        sx, sy = effective_start
         start_state = (sx, sy, 0)
         open_set = []
         start_h = self._heuristic((sx, sy), (gx, gy))
@@ -281,8 +322,11 @@ class FrontierExplorer:
                     cx, cy, _ = current_state
                     path.append((cx, cy))
                     current_state = came_from[current_state]
-                path.append(start)
+                path.append(effective_start)
                 path.reverse()
+                if escape_prefix is not None:
+                    # escape_prefix 尾端 == path 首端 (== effective_start)，合并去重
+                    return escape_prefix[:-1] + path
                 return path
 
             for dx, dy, cost in directions:
@@ -328,7 +372,10 @@ class FrontierExplorer:
                     heuristic = self._heuristic((nx, ny), (gx, gy))
                     f_score = tentative_g + heuristic + next_unknown_used * 0.25
                     heapq.heappush(open_set, (f_score, tentative_g, next_unknown_used, nx, ny))
-        
+
+        # A* 从安全格到 goal 也失败：至少返回逃脱片段，让机器人先离开危险区
+        if escape_prefix is not None and len(escape_prefix) >= 2:
+            return escape_prefix
         return None  # 无法找到路径
     
     def plan_path_no_safety(self, occupancy, start, goal):
