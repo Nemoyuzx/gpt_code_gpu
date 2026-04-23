@@ -61,7 +61,7 @@ RECOVERY_MAX_ADVANCE = 0.80         # 挤出最大前进距离(m)
 RECOVERY_EXTRA_MARGIN = 0.05        # 在膨胀半径基础上额外预留的安全裕度(m)
 
 # 可视化参数
-VISUALIZATION_PAUSE_TIME = 0.005  # 暂停时的等待时间
+VISUALIZATION_PAUSE_TIME = 0.0005  # 暂停时的等待时间
 VISUALIZATION_UPDATE_TIME = 0.0001  # 可视化更新时间
 
 # 未探索区域搜索参数
