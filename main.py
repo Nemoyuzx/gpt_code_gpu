@@ -69,7 +69,7 @@ OBSTACLE_SEARCH_EXPANSION = -0.5  # 障碍物区域搜索范围扩大距离（�
 # 前沿探索节流参数
 FRONTIER_LONG_PATH_THRESHOLD_CELLS = 120  # A*规划路径超过该栅格数，则触发短期冷却
 FRONTIER_COOLDOWN_STEPS = 20              # 冷却期间暂停A*与前沿刷新（冻结提示）
-FRONTIER_UPDATE_INTERVAL = 2              # 前沿刷新间隔（每两轮刷新一次）
+FRONTIER_UPDATE_INTERVAL = 3              # 前沿刷新间隔（每3轮刷新一次，降低BFS平均耗时）
 FRONTIER_COOLDOWN_REFERENCE_INDEX = 80    # 冷却期间参考的旧路径索引（截取原路径前缀）
 
 # 冷却提前解除条件：基于路径进度提前允许刷新

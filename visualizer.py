@@ -37,6 +37,22 @@ class Visualizer:
         self.obstacle_search_region = None
         self.bfs_debug_points = None
         self.bfs_debug_color = 'cyan'
+        # 持久 artist 缓存（避免每帧 cla()+重建）
+        self._img_artist = None
+        self._scan_artist = None
+        self._path_artist = None
+        self._emergency_artist = None
+        self._predicted_artist = None
+        self._actual_artist = None
+        self._extra_artists = []
+        self._target_artist = None
+        self._robot_pt_artist = None
+        self._robot_arrow_artist = None
+        self._robot_circle_artist = None
+        self._robot_heading_artist = None
+        self._obstacle_rect_artist = None
+        self._bfs_scatter_artist = None
+        self._legend_done = False
 
     def _on_key_press(self, event):
         """键盘事件回调。'p'暂停/继续， 's'保存地图和路径。"""
@@ -72,156 +88,238 @@ class Visualizer:
                        predicted_traj=None, robot_radius=None, actual_traj=None, actual_traj_style=None,
                        extra_trajs=None):
         """
-        更新绘制当前状态。
-        robot_pose: 机器人位姿 (x, y, theta)。
-        scan: 当前激光雷达扫描距离列表。
-        frontiers: 当前所有前沿的栅格坐标列表 [(ix,iy), ...] （可选，用于显示前沿区域）。
-        target: 当前目标前沿栅格 (ix, iy) （可选，用于突出显示目标）。
-        path: 导航路径栅格序列 [(ix,iy), ...] （可选，用于显示规划路径）。
-        occupancy: 当前栅格地图 (numpy数组) （可选，用于绘制地图）。
-        predicted_traj: 由DWA预测的轨迹 (N×5 numpy数组，使用 [:,0],[ :,1 ] 作为XY)（可选）。
-        robot_radius: 机器人半径（米），若提供则以圆形边界显示机器人（可选）。
+        更新绘制当前状态（持久 artist + set_data，避免 cla() 重建）。
         """
         x, y, theta = robot_pose
-        # 清除之前的绘图
-        self.ax.cla()
-        # 绘制栅格地图
+        ax = self.ax
+        # --- 栅格地图：复用 AxesImage，仅 set_data ---
         if occupancy is not None:
             h, w = occupancy.shape
-            # 使用矢量化构建显示矩阵：未知=灰(0.5), 空闲=白(1), 占据=黑(0)
             display_grid = np.full((h, w), 0.5, dtype=float)
             display_grid[occupancy == 0] = 1.0
             display_grid[occupancy == 1] = 0.0
-            # 显示栅格地图
             min_x, min_y, max_x, max_y = self.maze.bounds
             extent = (min_x, max_x, min_y, max_y)
-            self.ax.imshow(display_grid, origin='lower', cmap='gray', extent=extent, vmin=0.0, vmax=1.0)
-        
-        # 绘制障碍物搜索区域边界
+            if self._img_artist is None:
+                self._img_artist = ax.imshow(display_grid, origin='lower', cmap='gray',
+                                             extent=extent, vmin=0.0, vmax=1.0, zorder=0,
+                                             interpolation='nearest')
+            else:
+                self._img_artist.set_data(display_grid)
+
+        # --- 障碍物搜索区域边界 ---
         if self.obstacle_search_region is not None:
             min_x, min_y, max_x, max_y = self.obstacle_search_region
-            try:
-                rect = Rectangle(
-                    (min_x, min_y),
-                    max_x - min_x,
-                    max_y - min_y,
-                    linewidth=1.8,
-                    edgecolor='yellow',
-                    facecolor='none',
-                    linestyle='--',
-                    label='Obstacle Search Bounds'
-                )
-                self.ax.add_patch(rect)
-            except Exception:
-                pass
+            if self._obstacle_rect_artist is None:
+                self._obstacle_rect_artist = Rectangle(
+                    (min_x, min_y), max_x - min_x, max_y - min_y,
+                    linewidth=1.8, edgecolor='yellow', facecolor='none', linestyle='--',
+                    label='Obstacle Search Bounds')
+                ax.add_patch(self._obstacle_rect_artist)
+            else:
+                self._obstacle_rect_artist.set_bounds(min_x, min_y, max_x - min_x, max_y - min_y)
+                self._obstacle_rect_artist.set_visible(True)
+        elif self._obstacle_rect_artist is not None:
+            self._obstacle_rect_artist.set_visible(False)
 
-        # 绘制BFS调试点
+        # --- BFS 调试点 ---
         if self.bfs_debug_points:
             try:
                 pts = np.asarray(self.bfs_debug_points, dtype=float)
                 if pts.ndim == 2 and pts.shape[0] > 0:
                     wx = self.maze.bounds[0] + (pts[:, 0] + 0.5) * self.maze.resolution
                     wy = self.maze.bounds[1] + (pts[:, 1] + 0.5) * self.maze.resolution
-                    self.ax.scatter(wx, wy, s=12, c=self.bfs_debug_color, alpha=0.25, marker='s', label='BFS Region')
+                    coords = np.column_stack([wx, wy])
+                    if self._bfs_scatter_artist is None:
+                        self._bfs_scatter_artist = ax.scatter(wx, wy, s=12, c=self.bfs_debug_color,
+                                                              alpha=0.25, marker='s', label='BFS Region')
+                    else:
+                        self._bfs_scatter_artist.set_offsets(coords)
+                        self._bfs_scatter_artist.set_visible(True)
             except Exception:
                 pass
+        elif self._bfs_scatter_artist is not None:
+            self._bfs_scatter_artist.set_visible(False)
 
-        # 绘制目标前沿
+        # --- 目标前沿 ---
         if target:
             tx = self.maze.bounds[0] + (target[0] + 0.5) * self.maze.resolution
             ty = self.maze.bounds[1] + (target[1] + 0.5) * self.maze.resolution
-            self.ax.scatter([tx], [ty], c='r', marker='*', s=100, label='Target Frontier')
-        # 绘制规划路径
-        if path:
+            if self._target_artist is None:
+                self._target_artist, = ax.plot([tx], [ty], c='r', marker='*',
+                                               markersize=12, linestyle='None', label='Target Frontier')
+            else:
+                self._target_artist.set_data([tx], [ty])
+                self._target_artist.set_visible(True)
+        elif self._target_artist is not None:
+            self._target_artist.set_visible(False)
+
+        # --- 规划路径 ---
+        if path and len(path) > 1:
             px = [self.maze.bounds[0] + (ix + 0.5) * self.maze.resolution for (ix, iy) in path]
             py = [self.maze.bounds[1] + (iy + 0.5) * self.maze.resolution for (ix, iy) in path]
-            if len(px) > 1:
-                self.ax.plot(px, py, color='g', linestyle='--', label='Path')
-                
-        # 绘制紧急路径（红色线条）
-        if self.emergency_path:
+            if self._path_artist is None:
+                self._path_artist, = ax.plot(px, py, color='g', linestyle='--', label='Path')
+            else:
+                self._path_artist.set_data(px, py)
+                self._path_artist.set_visible(True)
+        elif self._path_artist is not None:
+            self._path_artist.set_visible(False)
+
+        # --- 紧急路径 ---
+        if self.emergency_path and len(self.emergency_path) > 1:
             epx = [self.maze.bounds[0] + (ix + 0.5) * self.maze.resolution for (ix, iy) in self.emergency_path]
             epy = [self.maze.bounds[1] + (iy + 0.5) * self.maze.resolution for (ix, iy) in self.emergency_path]
-            if len(epx) > 1:
-                self.ax.plot(epx, epy, color='red', linewidth=2, label='Emergency Path (No Safety)')
-        # 绘制激光雷达当前扫描点云
-        if scan and self.slam:
-            scan_pts_x = []
-            scan_pts_y = []
-            num_beams = len(scan)
-            max_range = LIDAR_DISPLAY_MAX_RANGE  # 使用固定的最大范围
-            for i, dist in enumerate(scan):
-                if dist < max_range:
-                    angle = theta + math.radians(i * (360.0/num_beams))
-                    sx = x + dist * math.cos(angle)
-                    sy = y + dist * math.sin(angle)
-                    scan_pts_x.append(sx)
-                    scan_pts_y.append(sy)
-            self.ax.scatter(scan_pts_x, scan_pts_y, c='b', s=5, label='Lidar Points')
-        # 绘制DWA预测轨迹（绿色折线）
+            if self._emergency_artist is None:
+                self._emergency_artist, = ax.plot(epx, epy, color='red', linewidth=2,
+                                                  label='Emergency Path (No Safety)')
+            else:
+                self._emergency_artist.set_data(epx, epy)
+                self._emergency_artist.set_visible(True)
+        elif self._emergency_artist is not None:
+            self._emergency_artist.set_visible(False)
+
+        # --- 激光雷达扫描点云（向量化）---
+        if scan is not None and self.slam and len(scan) > 0:
+            scan_arr = np.asarray(scan, dtype=float)
+            num_beams = scan_arr.shape[0]
+            angles = theta + np.arange(num_beams) * (2.0 * math.pi / num_beams)
+            mask = scan_arr < LIDAR_DISPLAY_MAX_RANGE
+            if np.any(mask):
+                sx = x + scan_arr[mask] * np.cos(angles[mask])
+                sy = y + scan_arr[mask] * np.sin(angles[mask])
+                if self._scan_artist is None:
+                    self._scan_artist, = ax.plot(sx, sy, linestyle='None', marker='.',
+                                                 markersize=3, color='b', label='Lidar Points')
+                else:
+                    self._scan_artist.set_data(sx, sy)
+                    self._scan_artist.set_visible(True)
+            elif self._scan_artist is not None:
+                self._scan_artist.set_visible(False)
+
+        # --- DWA 预测轨迹 ---
         if predicted_traj is not None and len(predicted_traj) >= 2:
             try:
-                px = predicted_traj[:, 0]
-                py = predicted_traj[:, 1]
-                self.ax.plot(px, py, "-g", linewidth=2, alpha=0.8, label="Predicted Traj")
+                pxv = predicted_traj[:, 0]
+                pyv = predicted_traj[:, 1]
+                if self._predicted_artist is None:
+                    self._predicted_artist, = ax.plot(pxv, pyv, "-g", linewidth=2,
+                                                      alpha=0.8, label="Predicted Traj")
+                else:
+                    self._predicted_artist.set_data(pxv, pyv)
+                    self._predicted_artist.set_visible(True)
             except Exception:
                 pass
-        # 绘制实际轨迹（橙色折线）
+        elif self._predicted_artist is not None:
+            self._predicted_artist.set_visible(False)
+
+        # --- 实际轨迹 ---
         if actual_traj is not None and len(actual_traj) >= 2:
             try:
                 traj_arr = np.asarray(actual_traj, dtype=float)
-                style = {
-                    'color': 'orange',
-                    'linewidth': 1.2,
-                    'alpha': 0.9,
-                    'label': 'Actual Traj'
-                }
-                if isinstance(actual_traj_style, dict):
-                    style.update(actual_traj_style)
-                self.ax.plot(traj_arr[:, 0], traj_arr[:, 1], **style)
+                if self._actual_artist is None:
+                    style = {'color': 'orange', 'linewidth': 1.2, 'alpha': 0.9, 'label': 'Actual Traj'}
+                    if isinstance(actual_traj_style, dict):
+                        style.update(actual_traj_style)
+                    self._actual_artist, = ax.plot(traj_arr[:, 0], traj_arr[:, 1], **style)
+                else:
+                    self._actual_artist.set_data(traj_arr[:, 0], traj_arr[:, 1])
+                    if isinstance(actual_traj_style, dict):
+                        for k, v in actual_traj_style.items():
+                            if k == 'label':
+                                self._actual_artist.set_label(v)
+                            elif k == 'color':
+                                self._actual_artist.set_color(v)
+                            elif k == 'linewidth':
+                                self._actual_artist.set_linewidth(v)
+                            elif k == 'alpha':
+                                self._actual_artist.set_alpha(v)
+                    self._actual_artist.set_visible(True)
             except Exception:
                 pass
+        elif self._actual_artist is not None:
+            self._actual_artist.set_visible(False)
+
+        # --- 额外轨迹（探索段等）---
+        # 复用已有条目，超出/不足时增删
         if extra_trajs:
-            for entry in extra_trajs:
+            for i, entry in enumerate(extra_trajs):
                 try:
                     pts = entry.get('points', None)
                     if pts is None or len(pts) < 2:
                         continue
                     pts_arr = np.asarray(pts, dtype=float)
-                    style = {
-                        'color': 'orange',
-                        'linewidth': 1.2,
-                        'alpha': 0.8,
-                        'label': 'Trajectory'
-                    }
-                    custom_style = entry.get('style')
-                    if isinstance(custom_style, dict):
-                        style.update(custom_style)
-                    self.ax.plot(pts_arr[:, 0], pts_arr[:, 1], **style)
+                    if i < len(self._extra_artists):
+                        art = self._extra_artists[i]
+                        art.set_data(pts_arr[:, 0], pts_arr[:, 1])
+                        art.set_visible(True)
+                    else:
+                        style = {'color': 'orange', 'linewidth': 1.2, 'alpha': 0.8, 'label': 'Trajectory'}
+                        custom_style = entry.get('style')
+                        if isinstance(custom_style, dict):
+                            style.update(custom_style)
+                        art, = ax.plot(pts_arr[:, 0], pts_arr[:, 1], **style)
+                        self._extra_artists.append(art)
                 except Exception:
                     continue
-        # 绘制机器人当前位置和朝向 (箭头表示朝向)
+            # 多余的隐藏
+            for j in range(len(extra_trajs), len(self._extra_artists)):
+                self._extra_artists[j].set_visible(False)
+        else:
+            for art in self._extra_artists:
+                art.set_visible(False)
+
+        # --- 机器人位置与朝向 ---
         arrow_length = 0.5
-        self.ax.arrow(x, y, arrow_length * math.cos(theta), arrow_length * math.sin(theta),
-                      head_width=0.2, head_length=0.2, fc='r', ec='r')
-        self.ax.scatter([x], [y], c='r')  # 机器人位置
-        # 机器人圆形边界（若提供半径）
+        # matplotlib Arrow 不能 set_data，改用 FancyArrow：每帧移除重建开销比线段大，改用 plot 线表示箭头
+        hx_tip = x + arrow_length * math.cos(theta)
+        hy_tip = y + arrow_length * math.sin(theta)
+        if self._robot_arrow_artist is None:
+            self._robot_arrow_artist, = ax.plot([x, hx_tip], [y, hy_tip],
+                                                color='r', linewidth=2.0)
+        else:
+            self._robot_arrow_artist.set_data([x, hx_tip], [y, hy_tip])
+        if self._robot_pt_artist is None:
+            self._robot_pt_artist, = ax.plot([x], [y], linestyle='None', marker='o',
+                                             markersize=6, color='r')
+        else:
+            self._robot_pt_artist.set_data([x], [y])
+
+        # --- 机器人半径圆 + 朝向线 ---
         if robot_radius is not None and robot_radius > 0:
+            if self._robot_circle_artist is None:
+                self._robot_circle_artist = Circle((x, y), robot_radius, edgecolor='c',
+                                                   facecolor='none', linewidth=1.5, alpha=0.9)
+                ax.add_artist(self._robot_circle_artist)
+            else:
+                self._robot_circle_artist.center = (x, y)
+                self._robot_circle_artist.set_radius(robot_radius)
+                self._robot_circle_artist.set_visible(True)
+            hx = x + robot_radius * math.cos(theta)
+            hy = y + robot_radius * math.sin(theta)
+            if self._robot_heading_artist is None:
+                self._robot_heading_artist, = ax.plot([x, hx], [y, hy], color='c', linewidth=1.2)
+            else:
+                self._robot_heading_artist.set_data([x, hx], [y, hy])
+                self._robot_heading_artist.set_visible(True)
+        else:
+            if self._robot_circle_artist is not None:
+                self._robot_circle_artist.set_visible(False)
+            if self._robot_heading_artist is not None:
+                self._robot_heading_artist.set_visible(False)
+
+        # --- 标题与图例：只在第一次绘制时设置 legend，避免每帧重建 ---
+        if not self._legend_done:
+            ax.set_title("SLAM Exploration")
+            ax.set_aspect('equal', adjustable='box')
             try:
-                circle = Circle((x, y), robot_radius, edgecolor='c', facecolor='none', linewidth=1.5, alpha=0.9)
-                self.ax.add_artist(circle)
-                # 朝向指示到圆周
-                hx = x + robot_radius * math.cos(theta)
-                hy = y + robot_radius * math.sin(theta)
-                self.ax.plot([x, hx], [y, hy], color='c', linewidth=1.2)
+                ax.legend(loc='upper right', fontsize=8)
             except Exception:
                 pass
-        # 图例和标题
-        self.ax.set_title("SLAM Exploration")
-        self.ax.set_aspect('equal', adjustable='box')
-        self.ax.legend(loc='upper right')
-        plt.draw()
-        plt.pause(VISUALIZATION_UPDATE_TIME)  
+            self._legend_done = True
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
         
     def set_emergency_path(self, path):
         """设置紧急路径（无安全距离的最短路径），用红色线条显示"""
