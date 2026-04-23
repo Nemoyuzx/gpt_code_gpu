@@ -33,6 +33,48 @@ class FastPathPlanner:
         # 路径缓存（简单的LRU缓存）
         self.path_cache = {}
         self.cache_size_limit = 100
+
+        # 膨胀圆盘偏移缓存（安全检查预计算用）
+        self._disk_cache: Dict[int, List[Tuple[int, int]]] = {}
+        # 当前规划过程中的不安全缩晓图：True=与障碍物距离≤safety_distance
+        self._unsafe_mask: Optional[np.ndarray] = None
+        self._unsafe_mask_sd: float = -1.0
+
+    def _disk_offsets(self, sd: int) -> List[Tuple[int, int]]:
+        off = self._disk_cache.get(sd)
+        if off is None:
+            off = []
+            sd_f = float(sd)
+            for dy in range(-sd, sd + 1):
+                for dx in range(-sd, sd + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    if (dx * dx + dy * dy) <= sd_f * sd_f:
+                        off.append((dx, dy))
+            self._disk_cache[sd] = off
+        return off
+
+    def _compute_unsafe_mask(self, occupancy: np.ndarray, safety_distance: float) -> None:
+        """以障碍物==1的格子为中心，按 safety_distance 做圆盘膨胀，得到不安全蒙板。"""
+        if safety_distance <= 0:
+            self._unsafe_mask = None
+            self._unsafe_mask_sd = 0.0
+            return
+        sd = int(np.ceil(safety_distance))
+        obstacle = (occupancy == 1)
+        h, w = obstacle.shape
+        unsafe = obstacle.copy()
+        for dx, dy in self._disk_offsets(sd):
+            # 将障碍按 (dx, dy) 偏移后归入 unsafe
+            sx_src = max(0, -dx); sx_dst = max(0, dx)
+            ex_src = w - max(0, dx); ex_dst = w - max(0, -dx)
+            sy_src = max(0, -dy); sy_dst = max(0, dy)
+            ey_src = h - max(0, dy); ey_dst = h - max(0, -dy)
+            if ex_src <= sx_src or ey_src <= sy_src:
+                continue
+            unsafe[sy_dst:ey_dst, sx_dst:ex_dst] |= obstacle[sy_src:ey_src, sx_src:ex_src]
+        self._unsafe_mask = unsafe
+        self._unsafe_mask_sd = float(safety_distance)
         
     def plan_path(self, occupancy: np.ndarray, start: Tuple[int, int], 
                   goal: Tuple[int, int], safety_distance: Optional[float] = None,
@@ -45,7 +87,10 @@ class FastPathPlanner:
             return [start]
         
         sd = self.safety_distance if safety_distance is None else safety_distance
-        
+
+        # 为本次规划预计算不安全蒙板，让内循环的安全检查降为 O(1)
+        self._compute_unsafe_mask(occupancy, sd)
+
         # 检查缓存
         cache_key = (start, goal, sd, max_unknown_cells)
         if cache_key in self.path_cache:
@@ -103,6 +148,7 @@ class FastPathPlanner:
         parent: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {start: None}
         
         allow_unknown = max_unknown_cells > 0
+        unsafe = self._unsafe_mask  # 局部绑定，配合预计算膀胀掩码，O(1) 安全检查
         
         while queue:
             x, y, unknown_used = queue.popleft()
@@ -144,9 +190,8 @@ class FastPathPlanner:
                     if next_unknown > max_unknown_cells:
                         continue
                 
-                # 安全距离检查
-                if not self._is_safe_fast(occupancy, nx, ny, safety_distance, 
-                                         allow_unknown=(cell_value == -1)):
+                # 安全距离检查（查预计算的膀胀蒙板）
+                if unsafe is not None and unsafe[ny, nx]:
                     continue
                 
                 # 对角线穿墙检查
@@ -185,10 +230,13 @@ class FastPathPlanner:
         
         allow_unknown = max_unknown_cells > 0
         meeting_point = None
+        unsafe = self._unsafe_mask  # 局部绑定，配合预计算的膀胀蒙板
         
         # 交替进行前向和后向搜索
         iteration = 0
-        max_iter = min(h * w, 5000)
+        # 原来是 min(h*w, 5000)，对 ~300 格曼哈顿距离的复杂地形过紧；
+        # 放宽到可覆盖整个栅格，避免过早放弃（Bidi-BFS 每侧已被 visited 约束）。
+        max_iter = h * w
         
         while queue_fwd and queue_bwd and iteration < max_iter:
             iteration += 1
@@ -217,8 +265,7 @@ class FastPathPlanner:
                     if cell_value == -1 and not allow_unknown:
                         continue
                     
-                    if not self._is_safe_fast(occupancy, nx, ny, safety_distance,
-                                             allow_unknown=(cell_value == -1)):
+                    if unsafe is not None and unsafe[ny, nx]:
                         continue
                     
                     if abs(dx) == 1 and abs(dy) == 1:
@@ -253,8 +300,7 @@ class FastPathPlanner:
                     if cell_value == -1 and not allow_unknown:
                         continue
                     
-                    if not self._is_safe_fast(occupancy, nx, ny, safety_distance,
-                                             allow_unknown=(cell_value == -1)):
+                    if unsafe is not None and unsafe[ny, nx]:
                         continue
                     
                     if abs(dx) == 1 and abs(dy) == 1:
@@ -297,16 +343,16 @@ class FastPathPlanner:
         2. 减少方向数（去掉马步跳跃）
         3. 更激进的剪枝
         """
-        h, w = occupancy.shape
+        height, w = occupancy.shape
         sx, sy = start
         gx, gy = goal
         
         # 使用numpy数组存储g_score（初始化为无穷大）
-        g_score = np.full((h, w), np.inf, dtype=np.float32)
+        g_score = np.full((height, w), np.inf, dtype=np.float32)
         g_score[sy, sx] = 0.0
         
         # 使用numpy数组标记closed
-        closed = np.zeros((h, w), dtype=bool)
+        closed = np.zeros((height, w), dtype=bool)
         
         # 优先队列
         open_set = []
@@ -318,9 +364,11 @@ class FastPathPlanner:
         
         allow_unknown = max_unknown_cells > 0
         iterations = 0
-        
-        # 更激进的代价限制
-        cost_limit = start_h * 1.5
+        unsafe = self._unsafe_mask  # 局部绑定
+
+        # 代价上限放宽：start_h * 1.5 过于激进，复杂地形下经常提前放弃导致规划失败。
+        # 设为 None 则不剪枝；保留属性以便需要时再启用。
+        cost_limit = None
         
         while open_set and iterations < max_iterations:
             f_current, g_current, x, y, unknown_used = heapq.heappop(open_set)
@@ -332,7 +380,7 @@ class FastPathPlanner:
             closed[y, x] = True
             
             # 早期终止
-            if g_current > cost_limit:
+            if cost_limit is not None and g_current > cost_limit:
                 continue
             
             # 到达目标
@@ -350,7 +398,7 @@ class FastPathPlanner:
             for dx, dy in self.directions_8:
                 nx, ny = x + dx, y + dy
                 
-                if not (0 <= nx < w and 0 <= ny < h):
+                if not (0 <= nx < w and 0 <= ny < height):
                     continue
                 
                 if closed[ny, nx]:
@@ -370,8 +418,7 @@ class FastPathPlanner:
                         continue
                     step_penalty = unknown_step_penalty
                 
-                if not self._is_safe_fast(occupancy, nx, ny, safety_distance,
-                                         allow_unknown=(cell_value == -1)):
+                if unsafe is not None and unsafe[ny, nx]:
                     continue
                 
                 # 对角线穿墙检查
@@ -388,8 +435,8 @@ class FastPathPlanner:
                     g_score[ny, nx] = tentative_g
                     parent[(nx, ny)] = (x, y)
                     
-                    h = self._heuristic((nx, ny), goal)
-                    f = tentative_g + h
+                    h_cost = self._heuristic((nx, ny), goal)
+                    f = tentative_g + h_cost
                     heapq.heappush(open_set, (f, tentative_g, nx, ny, next_unknown))
         
         return None
@@ -397,37 +444,21 @@ class FastPathPlanner:
     def _is_safe_fast(self, occupancy: np.ndarray, x: int, y: int,
                      safety_distance: float, allow_unknown: bool = False) -> bool:
         """
-        快速安全检查（使用numpy切片）
+        快速安全检查：内循环热点，依赖预计算的 _unsafe_mask 完成 O(1) 查询。
+        若蒙板尚未初始化（理论上不会发生），则回退到旧逻辑。
         """
         if safety_distance <= 0:
             return True
-        
+        mask = self._unsafe_mask
+        if mask is not None and self._unsafe_mask_sd == safety_distance:
+            return not bool(mask[y, x])
+        # 回退：以圆盘偏移遍历附近格
         h, w = occupancy.shape
         sd = int(np.ceil(safety_distance))
-        
-        # 计算检查区域
-        y_min = max(0, y - sd)
-        y_max = min(h, y + sd + 1)
-        x_min = max(0, x - sd)
-        x_max = min(w, x + sd + 1)
-        
-        # 使用numpy切片检查区域
-        region = occupancy[y_min:y_max, x_min:x_max]
-        
-        # 检查是否有障碍物
-        if np.any(region == 1):
-            # 需要精确距离检查
-            for dy in range(y_min - y, y_max - y):
-                for dx in range(x_min - x, x_max - x):
-                    if dx == 0 and dy == 0:
-                        continue
-                    ny, nx = y + dy, x + dx
-                    if 0 <= nx < w and 0 <= ny < h:
-                        if occupancy[ny, nx] == 1:
-                            dist = np.sqrt(dx*dx + dy*dy)
-                            if dist <= safety_distance:
-                                return False
-        
+        for dx, dy in self._disk_offsets(sd):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < w and 0 <= ny < h and occupancy[ny, nx] == 1:
+                return False
         return True
     
     @staticmethod
