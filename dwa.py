@@ -125,6 +125,8 @@ class DWAConfig:
     forward_pref_gap_thresh: float = 0.35  # gap 大且角度小则抑制倒车的阈值。
     forward_pref_cost_gain: float = 0.0  # 违反前进偏好(仍倒车)的惩罚增益（禁用）。
     forward_pref_initial_gain: float = 2.0  # 启动阶段的附加惩罚倍增。
+    # 滞回：正在倒车时，收紧“切换到前进”的角度阈值，避免对齐稍好就过早退出倒车。
+    reverse_exit_angle_scale: float = 0.5  # 倒车中时 forward_pref_angle_deg 的缩放(<1 更晚切前进)。
     # ---- 墙距奖励（越远离墙奖励越大；靠墙奖励越低/甚至无） ----
     wall_reward_gain: float = 0.9           # 墙距奖励增益（加入为负成本，数值越大越鼓励离墙）
     wall_reward_max_gap: float = 0.6        # 超过该净空(gap)视为满奖励，上限封顶（米）
@@ -238,6 +240,11 @@ class DWAPlanner:
         gdist = math.hypot(gdx, gdy) + 1e-9
         gdir = (gdx / gdist, gdy / gdist)
         forward_pref_angle_rad = math.radians(self.cfg.forward_pref_angle_deg)
+        # 倒车滞回：上一步在倒车则收紧“切换前进”的角度窗口，推迟切换时机。
+        _was_reversing = (self._last_u[0] < -self.cfg.reverse_sample_eps)
+        fwd_pref_angle_rad_eff = forward_pref_angle_rad * (
+            self.cfg.reverse_exit_angle_scale if _was_reversing else 1.0
+        )
         reverse_reward_angle_rad = math.radians(self.cfg.reverse_reward_angle_gate_deg)
         reverse_deadband_angle_rad = math.radians(self.cfg.reverse_deadband_turn_angle_deg)
         reverse_deadband_w = self.cfg.reverse_deadband_turn_w
@@ -326,8 +333,8 @@ class DWAPlanner:
                 if (abs(v) < self.cfg.reverse_deadband) and not allow_small_reverse:
                     timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
                     continue
-                small_heading = (heading_diff < forward_pref_angle_rad)
-                small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < forward_pref_angle_rad)
+                small_heading = (heading_diff < fwd_pref_angle_rad_eff)
+                small_path_align = (getattr(self, '_path_align_diff_for_dw', math.inf) < fwd_pref_angle_rad_eff)
                 if ((small_heading or small_path_align) and 
                     self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
                     timing['sample_filter'] += (time.perf_counter() - t_filter) * 1000.0
@@ -375,7 +382,7 @@ class DWAPlanner:
             # 前进偏好代价：小角度且gap充足仍倒车
             forward_pref_c = 0.0
             if v < -reverse_sample_eps:
-                if (ang_c < forward_pref_angle_rad and 
+                if (ang_c < fwd_pref_angle_rad_eff and 
                     self._front_gap_cache > self.cfg.forward_pref_gap_thresh):
                     gain = self.cfg.forward_pref_cost_gain
                     if self._global_step < self.cfg.initial_no_reverse_steps:

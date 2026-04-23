@@ -221,6 +221,30 @@ class FrontierExplorer:
         # 预计算“禁入”掩码（障碍或距离障碍 ≤ sd），A* 内只做 O(1) 查表
         blocked_mask = self._compute_blocked_mask(occupancy, sd)
 
+        # 修复：当机器人被 DWA 带入膨胀安全区内时，起点自身被标记为 blocked，
+        # 其所有邻居也多半 blocked -> A* 立即无解。此时从起点做一次 BFS，
+        # 仅在“被膨胀但非障碍本体”的连通泡内清除 blocked，开辟一条逃生通道；
+        # 离开泡之后仍受正常安全距离约束。
+        if 0 <= sy < h and 0 <= sx < w and blocked_mask[sy, sx] and occupancy[sy, sx] != 1:
+            blocked_mask = blocked_mask.copy()  # 缓存不可变更
+            blocked_mask[sy, sx] = False
+            carve_q = deque()
+            carve_q.append((sx, sy))
+            nbr8 = ((-1, 0), (1, 0), (0, -1), (0, 1),
+                    (-1, -1), (1, -1), (-1, 1), (1, 1))
+            while carve_q:
+                cx, cy = carve_q.popleft()
+                for dx, dy in nbr8:
+                    nx, ny = cx + dx, cy + dy
+                    if not (0 <= nx < w and 0 <= ny < h):
+                        continue
+                    if not blocked_mask[ny, nx]:
+                        continue
+                    if occupancy[ny, nx] == 1:
+                        continue
+                    blocked_mask[ny, nx] = False
+                    carve_q.append((nx, ny))
+
         start_state = (sx, sy, 0)
         open_set = []
         start_h = self._heuristic((sx, sy), (gx, gy))
