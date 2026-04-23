@@ -397,7 +397,11 @@ class ICPSlam:
             next_valid = np.roll(valid_dist, -1)
             jump_prev = prev_valid & (np.abs(scan_np - prev_scan) > adjacent_diff_threshold)
             jump_next = next_valid & (np.abs(scan_np - next_scan) > adjacent_diff_threshold)
-            keep_mask = valid_dist & ~jump_prev & ~jump_next
+            # 仅在“两侧都跳变”时视为孤立离群点剔除；单侧跳变多半是墙角/门沿等
+            # 真实几何不连续点，转弯时大量出现，若一并剔除会让 ICP 源点云缺失，
+            # 导致转弯时姿态估计退化（建图抖动/偏移）。
+            isolated_outlier = jump_prev & jump_next
+            keep_mask = valid_dist & ~isolated_outlier
         else:
             keep_mask = valid_dist
 
