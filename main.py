@@ -30,7 +30,7 @@ LIDAR_ANGLE_RESOLUTION = 1.0  # 激光雷达角度分辨率（度）：改为每
 LIDAR_NOISE = 0.005  # 激光雷达噪声
 
 # 出口检测参数
-MIN_NO_OBSTACLE_COUNT = 34  # 无障碍点数阈值，超过此数值认为走出迷宫
+MIN_NO_OBSTACLE_COUNT = 100  # 无障碍点数阈值，超过此数值认为走出迷宫
 
 # 探索阈值参数
 MIN_EXPLORATION_DISTANCE = 60.0  # 最小探索距离阈值
