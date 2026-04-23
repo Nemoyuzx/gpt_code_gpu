@@ -304,6 +304,11 @@ def main():
     def find_nearest_unexplored(occupancy, start, bounds_idx=None, unknown_limit=0,
                                 visited_out=None, debug_update=None, debug_interval=80,
                                 search_mode="bfs"):
+        """BFS 找最近可达的前沿点。
+
+        从附近候选中按得分选最优：-0.3·BFS路径长 + 20·信息增益率
+        (前沿点 7x7 窗口内未知格占比)，鼓励进入大片未知区而非角落零散格。
+        """
         h, w = occupancy.shape
         sx, sy = int(start[0]), int(start[1])
         if not (0 <= sx < w and 0 <= sy < h):
@@ -375,6 +380,27 @@ def main():
             return True
 
         fallback_candidate = None
+        # 信息增益评估窗口：前沿点 7x7 内未知格占比
+        info_gain_radius = 3
+        info_gain_area = float((2 * info_gain_radius + 1) ** 2)
+        best_frontier = None
+        best_score = float('-inf')
+        max_search_frontiers = 25  # 候选预算：找到足够多再挑最优
+        found_frontiers = 0
+
+        def score_frontier(fx, fy, path_len):
+            unknown_count = 0
+            x_min = max(0, fx - info_gain_radius)
+            x_max = min(w - 1, fx + info_gain_radius)
+            y_min = max(0, fy - info_gain_radius)
+            y_max = min(h - 1, fy + info_gain_radius)
+            for yy in range(y_min, y_max + 1):
+                for xx in range(x_min, x_max + 1):
+                    if occupancy[yy, xx] == -1:
+                        unknown_count += 1
+            info_gain_ratio = unknown_count / info_gain_area  # 0~1
+            return info_gain_ratio * 20.0 - path_len * 0.3
+
         while container:
             x, y, used_unknown = pop_item()
             debug_counter += 1
@@ -405,9 +431,16 @@ def main():
                 if len(path_cells) == 0 or path_cells[0] != (sx, sy):
                     path_cells.insert(0, (sx, sy))
                 if is_safe_cell(x, y):
-                    if debug_update is not None and debug_points is not None:
-                        debug_update(debug_points)
-                    return (x, y), (nx, ny), path_cells
+                    # 评分记录候选，等预算耗尽再返回最优前沿
+                    score = score_frontier(x, y, len(path_cells))
+                    found_frontiers += 1
+                    if score > best_score:
+                        best_score = score
+                        best_frontier = ((x, y), (nx, ny), path_cells)
+                    if found_frontiers >= max_search_frontiers:
+                        if debug_update is not None and debug_points is not None:
+                            debug_update(debug_points)
+                        return best_frontier
                 elif fallback_candidate is None:
                     fallback_candidate = ((x, y), (nx, ny), path_cells)
 
@@ -443,6 +476,12 @@ def main():
                 debug_update(debug_points)
             return fallback_candidate
 
+        # BFS 完全结束，如果之前搜集到候选但未耗尽预算，返回最优
+        if best_frontier is not None:
+            if debug_update is not None and debug_points is not None:
+                debug_update(debug_points)
+            return best_frontier
+
         if debug_update is not None and debug_points is not None:
             debug_update(debug_points)
         return None, None, None
@@ -474,8 +513,15 @@ def main():
 
     def compute_dynamic_lookahead(path_cells, current_idx,
                                   min_steps=min_lookahead_steps,
-                                  max_steps=max_lookahead_steps):
-        """根据局部路径曲率自适应选择前瞻步数。"""
+                                  max_steps=max_lookahead_steps,
+                                  current_speed=None,
+                                  occupancy=None):
+        """根据局部路径曲率 + 当前速度 + 通视性自适应选择前瞻步数。
+
+        - 曲率越大 → 前瞻越近（急转更及时）
+        - 速度越快 → 前瞻越远（给 DWA 留出提前规划窗口）
+        - 若前瞻窗口内出现障碍格，截断到最后一个安全格
+        """
         if not path_cells or len(path_cells) <= 1:
             return 1
         candidate = base_lookahead_steps
@@ -512,12 +558,39 @@ def main():
                     factor = ((curvature - straight_threshold) /
                               (curve_threshold - straight_threshold))
                 candidate = max_steps - factor * (max_steps - min_steps)
-                candidate = int(round(candidate))
+
+        # 速度自适应：以 DWA max_speed 为参考，线性映射 0.5x ~ 1.25x
+        if current_speed is not None and current_speed > 0.0:
+            ref_speed = max(0.1, getattr(dwa_cfg, "max_speed", 1.0))
+            speed_ratio = max(0.0, min(1.0, current_speed / ref_speed))
+            speed_factor = 0.5 + 0.75 * speed_ratio
+            candidate *= speed_factor
+
+        candidate = int(round(candidate))
         candidate = max(min_steps, min(max_steps, candidate))
         remaining = len(path_cells) - 1 - current_idx
         if remaining <= 0:
             return 1
         candidate = min(candidate, remaining)
+
+        # 通视/安全截断：前瞻窗口内若有障碍格，缩到最后一个可通行格
+        if occupancy is not None:
+            occ_h, occ_w = occupancy.shape
+            safe_limit = None
+            for step in range(1, candidate + 1):
+                cx, cy = path_cells[current_idx + step]
+                if not (0 <= cx < occ_w and 0 <= cy < occ_h):
+                    safe_limit = step - 1
+                    break
+                if occupancy[cy, cx] == 1:
+                    safe_limit = step - 1
+                    break
+            if safe_limit is not None:
+                if safe_limit >= min_steps:
+                    candidate = safe_limit
+                else:
+                    candidate = max(1, safe_limit)
+
         return max(1, candidate)
 
     def plan_path_with_safety(occupancy_grid, start_cell, goal_cell,
@@ -667,7 +740,12 @@ def main():
                 if replan_callback and idx == 0:
                     last_replan_idx = idx
 
-            lookahead = compute_dynamic_lookahead(path_cells, nearest_idx)
+            lookahead = compute_dynamic_lookahead(
+                path_cells,
+                nearest_idx,
+                current_speed=abs(getattr(robot, "linear_vel", 0.0)),
+                occupancy=slam.get_occupancy(),
+            )
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
             short_term_cell = path_cells[follow_idx]
             gx, gy = path_arr[follow_idx]
@@ -988,7 +1066,12 @@ def main():
                     if d2 < min_d2:
                         min_d2 = d2
                         nearest_idx = i
-            dynamic_steps = compute_dynamic_lookahead(current_path, nearest_idx)
+            dynamic_steps = compute_dynamic_lookahead(
+                current_path,
+                nearest_idx,
+                current_speed=abs(getattr(robot, "linear_vel", 0.0)),
+                occupancy=occupancy,
+            )
             follow_idx = min(len(current_path) - 1, nearest_idx + dynamic_steps)
             follow_cell = current_path[follow_idx]
         else:
@@ -1691,7 +1774,12 @@ def main():
 
             dists = np.hypot(path_arr[:, 0] - est_pose[0], path_arr[:, 1] - est_pose[1])
             nearest_idx = int(np.argmin(dists))
-            lookahead = compute_dynamic_lookahead(current_path_cells, nearest_idx)
+            lookahead = compute_dynamic_lookahead(
+                current_path_cells,
+                nearest_idx,
+                current_speed=abs(getattr(robot, "linear_vel", 0.0)),
+                occupancy=slam.get_occupancy(),
+            )
             follow_idx = min(len(path_arr) - 1, nearest_idx + lookahead)
             follow_cell = current_path_cells[min(len(current_path_cells) - 1, nearest_idx)]
             goal_point = (float(path_arr[follow_idx, 0]), float(path_arr[follow_idx, 1]))
