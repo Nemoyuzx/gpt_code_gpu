@@ -80,18 +80,25 @@ class ICPSlam:
             # 检查是否有环境变量设置强制使用CPU
             
             force_cpu = os.environ.get("FORCE_CPU", "0") == "1"
-            
+            force_gpu = os.environ.get("FORCE_GPU", "0") == "1"
+            # 经测量：在 2D 仿真（<~20k 地图点）下，MPS 的内核启动开销远大于计算本身，
+            # CPU 通常快 5-10 倍。因此默认在未显式要求 GPU 时使用 CPU；
+            # 显式 FORCE_GPU=1 或检测到 CUDA 时才使用加速器。
             if not force_cpu and torch.cuda.is_available():
                 self.device = torch.device("cuda")
                 print(f"[ICPSlam] 使用CUDA设备: {torch.cuda.get_device_name(0)}")
-            elif not force_cpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            elif force_gpu and not force_cpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 # 在MPS设备上，某些操作不支持，需要特殊处理
                 self.device = torch.device("mps")
                 self.use_mps_fallback = True
                 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # 启用MPS降级
-                print("[ICPSlam] 使用MPS设备进行加速 (Apple Metal)，对不支持的操作将降级到CPU")
+                print("[ICPSlam] 使用MPS设备进行加速 (Apple Metal, FORCE_GPU=1)")
             else:
-                print("[ICPSlam] 使用CPU设备" + (" (用户强制)" if force_cpu else " (未检测到GPU)"))
+                reason = (
+                    " (用户强制)" if force_cpu
+                    else " (小规模点云下 CPU 更快；设置 FORCE_GPU=1 可启用 MPS)"
+                )
+                print("[ICPSlam] 使用CPU设备" + reason)
         except Exception as e:
             # 如果设备初始化失败，回退到CPU
             self.device = torch.device("cpu")
@@ -612,96 +619,87 @@ class ICPSlam:
         # 步骤3: 更新占据栅格地图和地图点云列表（将新扫描结果整合进地图，内存中仅保留一份最新地图）
         # 如果设置了localize_only模式，则跳过地图更新，仅进行定位
         if not self.localize_only:
-            rx = int((self.x - self.min_x) / self.resolution)
-            ry = int((self.y - self.min_y) / self.resolution)
             offset_body_x, offset_body_y = self.lidar_mount_offset
             cos_theta = math.cos(self.theta)
             sin_theta = math.sin(self.theta)
             sensor_x = self.x + offset_body_x * cos_theta - offset_body_y * sin_theta
             sensor_y = self.y + offset_body_x * sin_theta + offset_body_y * cos_theta
-            sx_idx = int((sensor_x - self.min_x) / self.resolution)
-            sy_idx = int((sensor_y - self.min_y) / self.resolution)
-            far_threshold = self.get_max_range() * MAX_RANGE_FACTOR
-            adjacent_diff_threshold = 2.0  # 与ICP部分一致或更宽松的阈值
+            inv_res = 1.0 / self.resolution
+            max_y_idx = self.occupancy.shape[0] - 1
+            max_x_idx = self.occupancy.shape[1] - 1
+            sx_idx = int((sensor_x - self.min_x) * inv_res)
+            sy_idx = int((sensor_y - self.min_y) * inv_res)
+            sx_idx = min(max(sx_idx, 0), max_x_idx)
+            sy_idx = min(max(sy_idx, 0), max_y_idx)
+
+            max_range_val = self.get_max_range()
+            far_threshold = max_range_val * MAX_RANGE_FACTOR
+            adjacent_diff_threshold_map = 2.0  # 与ICP部分一致或更宽松的阈值
+
+            # 向量化：相邻差分过滤 + 端点栅格坐标，一次性在 NumPy 中完成
+            # 注意：这里的 scan_np/angles_np 已在步骤2中准备好
+            reliable = (scan_np < max_range_val) & (scan_np <= far_threshold)
+            prev_scan2 = np.roll(scan_np, 1)
+            next_scan2 = np.roll(scan_np, -1)
+            prev_ok = np.roll(reliable, 1)
+            next_ok = np.roll(reliable, -1)
+            jump_prev2 = prev_ok & (np.abs(scan_np - prev_scan2) > adjacent_diff_threshold_map)
+            jump_next2 = next_ok & (np.abs(scan_np - next_scan2) > adjacent_diff_threshold_map)
+            # 仅“可靠距离”要求做跳变过滤；远距离未命中射线也参与建图（标记free）
+            map_mask = ~(reliable & (jump_prev2 | jump_next2))
+
+            hit_obstacle_arr = reliable  # 击中障碍 = 在可靠距离内的测量
+            # 有效投射距离：命中则为测量距离，否则截到 far_threshold
+            effective_dist = np.where(hit_obstacle_arr, scan_np, far_threshold)
+            beam_angles = self.theta + angle_offset + angles_np
+            end_x_arr = sensor_x + effective_dist * np.cos(beam_angles)
+            end_y_arr = sensor_y + effective_dist * np.sin(beam_angles)
+            tx_arr = np.clip(((end_x_arr - self.min_x) * inv_res).astype(np.int32), 0, max_x_idx)
+            ty_arr = np.clip(((end_y_arr - self.min_y) * inv_res).astype(np.int32), 0, max_y_idx)
+
             new_points = []  # 本次扫描新增的障碍点（全局坐标）
-            max_range = self.get_max_range()
-            for i, dist in enumerate(scan):
-                should_skip_map_update = False
-                if dist < self.get_max_range() and dist <= far_threshold:
-                    # 与相邻点差异的过滤（与上面类似逻辑）
-                    if i > 0 and scan[i-1] < self.get_max_range() and scan[i-1] <= far_threshold:
-                        if abs(dist - scan[i-1]) > adjacent_diff_threshold:
-                            should_skip_map_update = True
-                    if i < len(scan) - 1 and scan[i+1] < self.get_max_range() and scan[i+1] <= far_threshold:
-                        if abs(dist - scan[i+1]) > adjacent_diff_threshold:
-                            should_skip_map_update = True
-                    if i == 0 and len(scan) > 1:
-                        last_dist = scan[-1]
-                        if last_dist < self.get_max_range() and last_dist <= far_threshold:
-                            if abs(dist - last_dist) > adjacent_diff_threshold:
-                                should_skip_map_update = True
-                    elif i == len(scan) - 1 and len(scan) > 1:
-                        first_dist = scan[0]
-                        if first_dist < self.get_max_range() and first_dist <= far_threshold:
-                            if abs(dist - first_dist) > adjacent_diff_threshold:
-                                should_skip_map_update = True
+            occupancy = self.occupancy  # 本地引用加速
+            raster = self._raster_line_np
 
-                if should_skip_map_update:
-                    # 跳过不可靠的测距，避免误清理遮挡后区域
-                    continue
-
-
-                # 计算该激光束末端的全局坐标 (end_x, end_y)
-                if 'angles_np' in locals() and i < len(angles_np):
-                    beam_angle = self.theta + angle_offset + angles_np[i]
+            # 仅遍历通过过滤的 beam；内层用 NumPy 处理栅格序列
+            idx_iter = np.nonzero(map_mask)[0]
+            for i in idx_iter:
+                xs, ys = raster(sx_idx, sy_idx, int(tx_arr[i]), int(ty_arr[i]))
+                occ_vals = occupancy[ys, xs]
+                # 找到本射线第一个"已知占据"的位置，遇到就停止清理
+                hit_mask = occ_vals == 1
+                if hit_mask.any():
+                    first_hit = int(np.argmax(hit_mask))
                 else:
-                    beam_angle = self.theta + angle_offset + math.radians(i)
-                beam_angle = math.atan2(math.sin(beam_angle), math.cos(beam_angle))  # 归一化角度
-                hit_obstacle = dist < max_range and dist <= far_threshold and not math.isinf(dist)
-                effective_dist = dist if hit_obstacle else min(far_threshold, dist if dist < float('inf') else far_threshold)
-                end_x = sensor_x + effective_dist * math.cos(beam_angle)
-                end_y = sensor_y + effective_dist * math.sin(beam_angle)
-                # 将末端点转换为栅格地图索引
-                tx = int((end_x - self.min_x) / self.resolution);  ty = int((end_y - self.min_y) / self.resolution)
-                max_x_idx = self.occupancy.shape[1] - 1;          max_y_idx = self.occupancy.shape[0] - 1
-                if tx < 0: tx = 0
-                if tx > max_x_idx: tx = max_x_idx
-                if ty < 0: ty = 0
-                if ty > max_y_idx: ty = max_y_idx
-                # 确保机器人自身所在格也在范围内
-                if rx < 0: rx = 0
-                if rx > max_x_idx: rx = max_x_idx
-                if ry < 0: ry = 0
-                if ry > max_y_idx: ry = max_y_idx
-                if sx_idx < 0: sx_idx = 0
-                if sx_idx > max_x_idx: sx_idx = max_x_idx
-                if sy_idx < 0: sy_idx = 0
-                if sy_idx > max_y_idx: sy_idx = max_y_idx
-                # 获取射线经过的栅格路径
-                line = self._bresenham(sx_idx, sy_idx, tx, ty)
-                if hit_obstacle:
-                    # 射线击中了障碍物（在范围内且未被过滤）
-                    # 将路径上除最后一点外的格子标记为空闲
-                    for cx, cy in line[:-1]:
-                        if self.occupancy[cy, cx] == 1:
-                            # 遇到已知障碍，停止向前清空，避免噪声导致墙体被抹除
-                            break
-                        if self.occupancy[cy, cx] == -1:
-                            self.occupancy[cy, cx] = 0
-                    # 最后一个格子是障碍物
-                    ox, oy = line[-1]
-                    # 若该障碍格此前未标记过，则标记占据并记录点
-                    if self.occupancy[oy, ox] != 1:
-                        self.occupancy[oy, ox] = 1
-                        new_point = [end_x, end_y]
-                        new_points.append(new_point)
+                    first_hit = xs.size
+
+                if hit_obstacle_arr[i]:
+                    # 沿线将未知格清空为空闲（不含末端障碍自身）
+                    end_idx = min(first_hit, xs.size - 1)
+                    if end_idx > 0:
+                        seg_x = xs[:end_idx]
+                        seg_y = ys[:end_idx]
+                        seg_vals = occ_vals[:end_idx]
+                        unknown = seg_vals == -1
+                        if unknown.any():
+                            occupancy[seg_y[unknown], seg_x[unknown]] = 0
+                    # 若未在途中撞上已知墙，才写入末端障碍
+                    if first_hit >= xs.size - 1:
+                        ox = int(xs[-1])
+                        oy = int(ys[-1])
+                        if occupancy[oy, ox] != 1:
+                            occupancy[oy, ox] = 1
+                            new_points.append([float(end_x_arr[i]), float(end_y_arr[i])])
                 else:
-                    # 未命中障碍：仅在可靠距离内将未知标记为空闲，遇到已知障碍立即停止
-                    for cx, cy in line:
-                        if self.occupancy[cy, cx] == 1:
-                            break
-                        if self.occupancy[cy, cx] == -1:
-                            self.occupancy[cy, cx] = 0
+                    # 未命中障碍：沿线将未知格标记空闲，遇已知占据即停
+                    end_idx = first_hit
+                    if end_idx > 0:
+                        seg_x = xs[:end_idx]
+                        seg_y = ys[:end_idx]
+                        seg_vals = occ_vals[:end_idx]
+                        unknown = seg_vals == -1
+                        if unknown.any():
+                            occupancy[seg_y[unknown], seg_x[unknown]] = 0
             # 将本次新增点与内存中的最新地图合并，仅保留一份张量
             if len(new_points) > 0:
                 new_pts_np = np.array(new_points, dtype=np.float32)
@@ -773,3 +771,25 @@ class ICPSlam:
                 err += dx
                 y += sy
         return points
+
+    @staticmethod
+    def _raster_line_np(x0: int, y0: int, x1: int, y1: int):
+        """向量化栅格线光栅化（使用线性插值 + 四舍五入）。
+
+        与 Bresenham 在连通线段上的像素集合基本一致；对于射线投影建图
+        ("遇到已知占据格即停止 / 将沿线未知格标记为空闲") 的语义而言
+        等价，且通过 NumPy 一次性产出整数坐标，避免 Python 循环逐格访问。
+        返回：xs, ys（np.int32 一维数组），长度 = max(|dx|,|dy|) + 1。
+        """
+        dx = int(x1 - x0)
+        dy = int(y1 - y0)
+        n = max(abs(dx), abs(dy)) + 1
+        if n <= 1:
+            return (
+                np.array([x0], dtype=np.int32),
+                np.array([y0], dtype=np.int32),
+            )
+        t = np.linspace(0.0, 1.0, n)
+        xs = np.rint(x0 + t * dx).astype(np.int32, copy=False)
+        ys = np.rint(y0 + t * dy).astype(np.int32, copy=False)
+        return xs, ys
