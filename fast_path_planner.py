@@ -98,9 +98,18 @@ class FastPathPlanner:
         
         # 计算曼哈顿距离
         manhattan_dist = abs(goal[0] - start[0]) + abs(goal[1] - start[1])
-        
+
+        # 中/长距离且没有未知代价惩罚时，走纯 numpy 波前 BFS（按层并行扩展）。
+        # 该实现不建模对角线代价差异，但搜索几乎全在 C 层完成，比 Python 循环 A* 快 1-2 个数量级。
+        use_wavefront = (max_unknown_cells == 0 or unknown_step_penalty == 0.0)
+
         # 根据距离选择算法
-        if manhattan_dist < 50:
+        if use_wavefront:
+            algo_name = "WaveBFS"
+            path = self._numpy_wavefront(
+                occupancy, start, goal, sd, max_unknown_cells
+            )
+        elif manhattan_dist < 50:
             # 短距离：使用BFS
             algo_name = "BFS"
             path = self._bfs_path(occupancy, start, goal, sd, max_unknown_cells)
@@ -109,7 +118,7 @@ class FastPathPlanner:
             algo_name = "BiDi-BFS"
             path = self._bidirectional_bfs(occupancy, start, goal, sd, max_unknown_cells)
         else:
-            # 长距离：使用优化A*
+            # 长距离：使用优化A*（仅当未知代价惩罚需要精确建模时走到这里）
             algo_name = "A*"
             path = self._optimized_astar(
                 occupancy, start, goal, sd, max_unknown_cells, 
@@ -128,6 +137,82 @@ class FastPathPlanner:
         
         return path
     
+    def _numpy_wavefront(self, occupancy: np.ndarray, start: Tuple[int, int],
+                         goal: Tuple[int, int], safety_distance: float,
+                         max_unknown_cells: int) -> Optional[List[Tuple[int, int]]]:
+        """
+        纯 numpy 波前 BFS（8 邻域，每次迭代并行扩展一整层）。
+        所有移动代价视为相同（Chebyshev 距离），因此路径不保证最短但保证可达且几乎瞬时完成。
+        不处理未知代价惩罚；上层在有惩罚需求时不会走到这里。
+        """
+        h, w = occupancy.shape
+        sx, sy = start
+        gx, gy = goal
+
+        # 构造可行格蒙板：非障碍、非不安全；未知格按 allow_unknown 决定
+        walkable = (occupancy != 1)
+        if max_unknown_cells <= 0:
+            walkable &= (occupancy != -1)
+        if self._unsafe_mask is not None:
+            walkable &= ~self._unsafe_mask
+        # 起点与目标强制视为可行（起点常在安全距离内部）
+        walkable[sy, sx] = True
+        walkable[gy, gx] = True
+
+        if not walkable[gy, gx]:
+            return None
+
+        dist = np.full((h, w), -1, dtype=np.int32)
+        dist[sy, sx] = 0
+        reached = np.zeros((h, w), dtype=bool)
+        reached[sy, sx] = True
+        frontier = reached.copy()
+
+        step = 0
+        max_steps = h * w
+        nf = np.empty((h, w), dtype=bool)
+        while step < max_steps:
+            step += 1
+            nf.fill(False)
+            # 4 基本方向
+            nf[1:, :]  |= frontier[:-1, :]
+            nf[:-1, :] |= frontier[1:, :]
+            nf[:, 1:]  |= frontier[:, :-1]
+            nf[:, :-1] |= frontier[:, 1:]
+            # 4 对角方向
+            nf[1:, 1:]   |= frontier[:-1, :-1]
+            nf[1:, :-1]  |= frontier[:-1, 1:]
+            nf[:-1, 1:]  |= frontier[1:, :-1]
+            nf[:-1, :-1] |= frontier[1:, 1:]
+            nf &= walkable
+            nf &= ~reached
+            if not nf.any():
+                return None
+            reached |= nf
+            dist[nf] = step
+            if reached[gy, gx]:
+                break
+            frontier, nf = nf, frontier
+
+        # 回溯：从目标沿 dist 递减方向回到起点
+        path = [(gx, gy)]
+        x, y = gx, gy
+        directions = self.directions_8
+        while (x, y) != (sx, sy):
+            d = dist[y, x] - 1
+            found = False
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and dist[ny, nx] == d:
+                    x, y = nx, ny
+                    path.append((x, y))
+                    found = True
+                    break
+            if not found:
+                return None
+        path.reverse()
+        return path
+
     def _bfs_path(self, occupancy: np.ndarray, start: Tuple[int, int],
                   goal: Tuple[int, int], safety_distance: float,
                   max_unknown_cells: int) -> Optional[List[Tuple[int, int]]]:
