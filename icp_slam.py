@@ -21,6 +21,12 @@ ICP_TOLERANCE = float(os.environ.get("ICP_TOLERANCE", "1e-4"))  # ICP收敛容�
 # 原为 30m（几乎不限制）。对应点距离上限过宽会让错匹配拉偏ICP，
 # 收紧到 1.0m：在帧间位姿增量更安静的分辨率下这个值足够宽遗，又能有效剥离外点。
 ICP_CORRESPONDENCE_THRESH = float(os.environ.get("ICP_CORR_THRESH", "1.0"))
+# 逐代收紧对应阈值：初值相对较宽，随迭代指数衰减到 final，使 ICP 先粗对齐再精修。
+ICP_CORR_THRESH_FINAL = float(os.environ.get("ICP_CORR_THRESH_FINAL", "0.2"))
+ICP_CORR_THRESH_DECAY = float(os.environ.get("ICP_CORR_THRESH_DECAY", "0.85"))
+# Trimmed ICP：每次迭代在硬阈值筛选之后，再按残差排序仅保留最好的这比例对应点。
+# 1.0 表示关闭 trimming。0.8 表示丢掉残差最大的 20% 对应点。
+ICP_TRIM_RATIO = float(os.environ.get("ICP_TRIM_RATIO", "0.8"))
 ICP_DEBUG = os.environ.get("ICP_DEBUG", "0") == "1"  # 是否输出ICP调试信息（默认关闭以减少I/O开销）
 ICP_MEM_LOG = os.environ.get("ICP_MEM_LOG", "0") == "1"  # 是否每帧打印内存使用（默认关闭）
 ICP_GC_EVERY = int(os.environ.get("ICP_GC_EVERY", "0"))  # 每N帧显式gc；0表示关闭
@@ -68,7 +74,10 @@ class ICPSlam:
         # ICP参数
         self.icp_max_iter = ICP_MAX_ITER
         self.icp_tolerance = ICP_TOLERANCE  # 收敛容忍度
-        self.icp_correspondence_thresh = ICP_CORRESPONDENCE_THRESH  # 对应点匹配距离阈值
+        self.icp_correspondence_thresh = ICP_CORRESPONDENCE_THRESH  # 对应点匹配距离阈值（初始值）
+        self.icp_corr_thresh_final = max(0.0, ICP_CORR_THRESH_FINAL)
+        self.icp_corr_thresh_decay = max(0.0, min(1.0, ICP_CORR_THRESH_DECAY))
+        self.icp_trim_ratio = max(0.1, min(1.0, ICP_TRIM_RATIO))
 
         self.icp_accum_trans_threshold = max(0.0, ICP_ACCUM_TRANS_THRESHOLD)
         self.icp_accum_rot_threshold = max(0.0, ICP_ACCUM_ROT_THRESHOLD)
@@ -480,14 +489,35 @@ class ICPSlam:
                 prev_error = float('inf')  # 追踪误差变化
                 stagnation_count = 0  # 连续停滞计数
                 # ICP 迭代过程
+                # 对应阈值逐代衰减：init -> final（指数衰减）
+                corr_thresh_init = self.icp_correspondence_thresh
+                corr_thresh_final = min(self.icp_corr_thresh_final, corr_thresh_init)
+                corr_decay = self.icp_corr_thresh_decay
+                trim_ratio = self.icp_trim_ratio
                 for it in range(self.icp_max_iter):
                     icp_iterations = it + 1
+                    # 本次迭代使用的对应阈值
+                    current_corr_thresh = max(
+                        corr_thresh_final,
+                        corr_thresh_init * (corr_decay ** it),
+                    )
                     # 计算源点集到目标点集的距离矩阵并寻找最近邻
                     dist_matrix = torch.cdist(src_world_prev, tgt)  # [N_src, N_tgt]
                     min_dists, min_indices = torch.min(dist_matrix, dim=1)
                     # 筛选出距离在阈值内的有效对应点对
-                    valid_mask = min_dists < self.icp_correspondence_thresh
+                    valid_mask = min_dists < current_corr_thresh
                     valid_count = int(torch.sum(valid_mask).item())
+                    # Trimmed ICP：在硬阈值之上，按残差再保留最好的 trim_ratio 部分，
+                    # 消除离群对应点对 SVD 的拖拽。只在有足够对应点时启用。
+                    if trim_ratio < 1.0 and valid_count >= 10:
+                        kept_dists = min_dists[valid_mask]
+                        k_keep = max(3, int(math.ceil(valid_count * trim_ratio)))
+                        if k_keep < valid_count:
+                            # 取前 k_keep 小的残差阈值
+                            kth = torch.kthvalue(kept_dists, k_keep).values
+                            trim_mask = min_dists <= kth
+                            valid_mask = valid_mask & trim_mask
+                            valid_count = int(torch.sum(valid_mask).item())
                     current_error = float(torch.mean(min_dists[valid_mask]).item()) if valid_count > 0 else float('inf')
                     icp_valid_pairs = valid_count
                     if math.isfinite(current_error):
