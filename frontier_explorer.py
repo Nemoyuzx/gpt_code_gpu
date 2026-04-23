@@ -1,6 +1,7 @@
 from collections import deque
 import heapq
 import math
+import numpy as np
 
 class FrontierExplorer:
     """前沿探索与路径规划模块。确定下一个目标前沿并规划路径。"""
@@ -12,35 +13,94 @@ class FrontierExplorer:
         - safety_distance: 路径规划时与障碍物保持的安全距离（栅格单位）
         """
         self.safety_distance = safety_distance
+        # _is_safe 的邻域偏移缓存：{safety_distance: [(dy, dx), ...]}（仅圆盘内点）
+        self._safe_offset_cache = {}
+        # 膨胀障碍掩码缓存：避免在同一 occupancy 上重复以相同 safety 计算
+        self._blocked_mask_cache = None  # (id, shape, data_tobytes_hash, sd) -> np.ndarray
+
+    def _get_disk_offsets(self, safety_distance):
+        """返回圆盘内 (dy, dx) 偏移列表（不含原点），按 safety_distance 缓存。"""
+        key = float(safety_distance)
+        cached = self._safe_offset_cache.get(key)
+        if cached is not None:
+            return cached
+        r = int(math.ceil(safety_distance))
+        sd_sq = safety_distance * safety_distance
+        offsets = []
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                if dx * dx + dy * dy <= sd_sq:
+                    offsets.append((dy, dx))
+        self._safe_offset_cache[key] = offsets
+        return offsets
+
+    def _compute_blocked_mask(self, occupancy, safety_distance):
+        """
+        使用 numpy 一次性计算“近障碍物”的布尔掩码：blocked[y,x]=True 表示该格
+        距离任一 occupancy==1 栅格的欧氏距离 ≤ safety_distance（含障碍格自身）。
+        配合 A* 可把每步 O(safety²) 的 _is_safe 扫描降为 O(1) 查表。
+        """
+        occ = occupancy
+        # 快速缓存（按对象身份 + 形状 + safety_distance；占用图在 SLAM 中是同一 ndarray
+        # 被原地更新，这里再用 data hash 近似判定是否已更新）
+        sd = float(safety_distance)
+        try:
+            buf_ver = occ.ctypes.data  # 内存地址作弱签名
+        except Exception:
+            buf_ver = id(occ)
+        cache = self._blocked_mask_cache
+        if cache is not None:
+            c_id, c_shape, c_ver, c_sd, c_sum, c_mask = cache
+            if (c_id == id(occ) and c_shape == occ.shape and c_sd == sd
+                    and c_ver == buf_ver and c_sum == int((occ == 1).sum())):
+                return c_mask
+
+        h, w = occ.shape
+        obstacle = (occ == 1)
+        if not obstacle.any():
+            mask = np.zeros_like(obstacle)
+        else:
+            mask = obstacle.copy()
+            offsets = self._get_disk_offsets(sd)
+            for dy, dx in offsets:
+                src_y0 = max(0, -dy); src_y1 = h - max(0, dy)
+                dst_y0 = max(0, dy);  dst_y1 = h - max(0, -dy)
+                src_x0 = max(0, -dx); src_x1 = w - max(0, dx)
+                dst_x0 = max(0, dx);  dst_x1 = w - max(0, -dx)
+                if src_y1 > src_y0 and src_x1 > src_x0:
+                    mask[dst_y0:dst_y1, dst_x0:dst_x1] |= obstacle[src_y0:src_y1, src_x0:src_x1]
+        self._blocked_mask_cache = (id(occ), occ.shape, buf_ver, sd, int(obstacle.sum()), mask)
+        return mask
 
     def find_frontiers(self, occupancy):
         """
         查找所有前沿单元（frontier）。前沿定义为：已知空闲且邻接未知区域的栅格。
         返回前沿单元列表，每个为(tuple: (x_idx, y_idx))。
+
+        说明：无安全距离过滤版本；向量化实现。
         """
-        frontiers = []
-        h, w = occupancy.shape
-        # 遍历每个栅格
-        for j in range(h):
-            for i in range(w):
-                if occupancy[j, i] == 0:  # 空闲
-                    # 检查邻居是否存在未知栅格
-                    frontier = False
-                    for dj in [-1, 0, 1]:
-                        for di in [-1, 0, 1]:
-                            if di == 0 and dj == 0:
-                                continue
-                            nj = j + dj
-                            ni = i + di
-                            if 0 <= nj < h and 0 <= ni < w:
-                                if occupancy[nj, ni] == -1:
-                                    frontier = True
-                                    break
-                        if frontier:
-                            break
-                    if frontier:
-                        frontiers.append((i, j))
-        return frontiers
+        occ = occupancy
+        h, w = occ.shape
+        free = (occ == 0)
+        unknown = (occ == -1)
+        if not free.any() or not unknown.any():
+            return []
+        has_unknown_nbr = np.zeros_like(free)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                src_y0 = max(0, -dy); src_y1 = h - max(0, dy)
+                dst_y0 = max(0, dy);  dst_y1 = h - max(0, -dy)
+                src_x0 = max(0, -dx); src_x1 = w - max(0, dx)
+                dst_x0 = max(0, dx);  dst_x1 = w - max(0, -dx)
+                if src_y1 > src_y0 and src_x1 > src_x0:
+                    has_unknown_nbr[dst_y0:dst_y1, dst_x0:dst_x1] |= unknown[src_y0:src_y1, src_x0:src_x1]
+        valid = free & has_unknown_nbr
+        ys, xs = np.where(valid)
+        return list(zip(xs.tolist(), ys.tolist()))
 
     def find_nearest_frontier(self, occupancy, start):
         """
@@ -158,6 +218,9 @@ class FrontierExplorer:
         sd = self.safety_distance if (safety_distance is None) else safety_distance
         allow_unknown = max_unknown_cells is not None and max_unknown_cells > 0
 
+        # 预计算“禁入”掩码（障碍或距离障碍 ≤ sd），A* 内只做 O(1) 查表
+        blocked_mask = self._compute_blocked_mask(occupancy, sd)
+
         start_state = (sx, sy, 0)
         open_set = []
         start_h = self._heuristic((sx, sy), (gx, gy))
@@ -221,13 +284,13 @@ class FrontierExplorer:
                     allow_unknown_cell = True
                     step_penalty = unknown_step_penalty
                 
-                if not self._is_safe(occupancy, nx, ny, safety_distance=sd, allow_unknown_cell=allow_unknown_cell):
+                # O(1) 安全查表（未知格若允许则不做障碍膨胀检查）
+                if not allow_unknown_cell and blocked_mask[ny, nx]:
                     continue
                 
                 # 对于对角线移动，检查是否会穿过墙角
-                if abs(dx) == 1 and abs(dy) == 1:
-                    if (0 <= x + dx < w and 0 <= y < h and occupancy[y, x + dx] == 1) or \
-                       (0 <= x < w and 0 <= y + dy < h and occupancy[y + dy, x] == 1):
+                if dx != 0 and dy != 0:
+                    if occupancy[y, nx] == 1 or occupancy[ny, x] == 1:
                         continue
                 
                 next_state = (nx, ny, next_unknown_used)
@@ -357,23 +420,15 @@ class FrontierExplorer:
             return False
         if cell_value == -1 and not allow_unknown_cell:
             return False
-            
-        # 检查周围一定范围内是否有障碍物
-        search_range = math.ceil(safety_distance)
-        for dy in range(-search_range, search_range + 1):
-            for dx in range(-search_range, search_range + 1):
-                # 跳过超出边界的点
-                nx, ny = x + dx, y + dy
-                if not (0 <= nx < w and 0 <= ny < h):
-                    continue
-                    
-                # 如果是障碍物，计算实际距离
-                if occupancy[ny, nx] == 1:  # 1表示障碍物
-                    # 计算与障碍物的欧氏距离
-                    actual_dist = math.sqrt(dx * dx + dy * dy)
-                    if actual_dist <= safety_distance:
-                        return False
-                        
+
+        # 使用缓存的圆盘偏移，避免 sqrt 与包围盒冗余扫描
+        offsets = self._get_disk_offsets(safety_distance)
+        for dy, dx in offsets:
+            nx = x + dx
+            ny = y + dy
+            if 0 <= nx < w and 0 <= ny < h:
+                if occupancy[ny, nx] == 1:
+                    return False
         return True
     
     def _find_all_frontiers(self, occupancy):
@@ -388,23 +443,34 @@ class FrontierExplorer:
         - list of (x, y): 所有前沿点的坐标列表
         """
         h, w = occupancy.shape
-        frontiers = []
-        directions = [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (1,1), (-1,1), (1,-1)]
-        
-        for y in range(h):
-            for x in range(w):
-                # 只检查空闲格
-                if occupancy[y, x] == 0:
-                    # 检查周围8个方向是否有未知区域
-                    for dx, dy in directions:
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < w and 0 <= ny < h:
-                            if occupancy[ny, nx] == -1:  # -1表示未知区域
-                                # 检查安全距离
-                                if self._is_safe(occupancy, x, y, self.safety_distance):
-                                    frontiers.append((x, y))
-                                    break
-        return frontiers
+        occ = occupancy
+        free = (occ == 0)
+        unknown = (occ == -1)
+        if not free.any() or not unknown.any():
+            return []
+
+        # 通过 numpy 位移 OR，计算“任一 8 邻居为未知”的掩码
+        has_unknown_nbr = np.zeros_like(free)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                src_y0 = max(0, -dy); src_y1 = h - max(0, dy)
+                dst_y0 = max(0, dy);  dst_y1 = h - max(0, -dy)
+                src_x0 = max(0, -dx); src_x1 = w - max(0, dx)
+                dst_x0 = max(0, dx);  dst_x1 = w - max(0, -dx)
+                if src_y1 > src_y0 and src_x1 > src_x0:
+                    has_unknown_nbr[dst_y0:dst_y1, dst_x0:dst_x1] |= unknown[src_y0:src_y1, src_x0:src_x1]
+
+        candidates = free & has_unknown_nbr
+        if not candidates.any():
+            return []
+
+        # 安全距离：复用 A* 的膨胀障碍掩码做 O(1) 过滤
+        blocked = self._compute_blocked_mask(occ, self.safety_distance)
+        valid = candidates & ~blocked
+        ys, xs = np.where(valid)
+        return list(zip(xs.tolist(), ys.tolist()))
 
     def calculate_path_length(self, path, resolution):
         """

@@ -30,7 +30,7 @@ class DWAConfig:
     max_speed: float = 1.0  # 最大线速度上限。路径较直、环境宽阔可调大；窄通道建议 ≤1.0。
     min_speed: float = -1.0  # 默认禁倒车（如需倒车可设为负）。
     max_yaw_rate: float = 120.0 * math.pi / 180.0  # 最大角速度上限，适当提高以便小半径转弯。
-    max_accel: float = 1.2  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
+    max_accel: float = 0.8  # 最大线加速度(m/s^2)。直接影响刹车距离：d≈v^2/(2a)。过小会显得“刹不住”。
     max_delta_yaw_rate: float = 120.0 * math.pi / 180.0  # 角速度变化率上限(配合更大的角速)。
     v_resolution: float = 0.05  # 速度采样步长。越小越细但更慢；常取 0.03~0.06。
     yaw_rate_resolution: float = 0.5 * math.pi / 180.0  # 角速度采样步长。更细的 1° 提升转向精度。
