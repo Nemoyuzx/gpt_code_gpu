@@ -1917,10 +1917,14 @@ def main():
     # 使用 DWA 默认配置，只设置机器人半径
     dwa_cfg = DWAConfig(
         robot_radius=ROBOT_COLLISION_RADIUS,
+        # 提高最大线速度（默认 0.2 m/s），支持更快巡航
+        max_speed=0.4,
+        # 转弯时也放宽，否则 turn_speed_limit 会把速度拉回来
+        turn_speed_limit=0.16,
         # 提高控制灵敏度配置
         to_goal_cost_gain=1.2,           # 提高朝向目标代价权重，增强转向响应
         max_yaw_rate=140.0 * math.pi / 180.0,  # 提高最大角速度至140°/s，支持更快转向
-        max_accel=0.20,                  # 提高线速度加速度，增强加速响应
+        max_accel=0.30,                  # 匹配更高的巡航速度，避免加速段拖慢
         smoothing_alpha=0.75,            # 提高平滑系数，更快响应当前指令
         rotation_cost_gain=0.12,         # 降低旋转代价，允许更积极转向
     )
